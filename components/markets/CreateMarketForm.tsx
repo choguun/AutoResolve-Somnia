@@ -56,44 +56,45 @@ export function CreateMarketForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="mx-auto max-w-2xl space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/15 sm:p-7">
       <div>
-        <label className="mb-2 block text-sm font-medium text-zinc-300">Question</label>
+        <label className="mb-2 block text-sm font-medium text-zinc-200">Question</label>
         <textarea
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="Will Team A win the championship?"
           rows={3}
-          className="w-full rounded-lg border border-white/10 bg-black/40 px-4 py-3 text-white placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none"
+          maxLength={500}
+          className="w-full resize-none rounded-lg border border-white/10 bg-black/30 px-4 py-3 text-white placeholder:text-zinc-600 outline-none transition focus:border-cyan-400/60 focus:ring-4 focus:ring-cyan-400/10"
         />
-        <p className="mt-1 text-xs text-zinc-500">{question.length}/500 characters</p>
+        <p className="mt-2 text-xs text-zinc-500">{question.length}/500 characters</p>
       </div>
 
       <div>
-        <label className="mb-2 block text-sm font-medium text-zinc-300">Resolution Source</label>
+        <label className="mb-2 block text-sm font-medium text-zinc-200">Resolution Source</label>
         <input
           value={source}
           onChange={(e) => setSource(e.target.value)}
           placeholder="https://en.wikipedia.org/wiki/Paris"
-          className="w-full rounded-lg border border-white/10 bg-black/40 px-4 py-3 text-white placeholder:text-zinc-600 focus:border-violet-500 focus:outline-none"
+          className="w-full rounded-lg border border-white/10 bg-black/30 px-4 py-3 text-white placeholder:text-zinc-600 outline-none transition focus:border-cyan-400/60 focus:ring-4 focus:ring-cyan-400/10"
         />
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="mt-2 text-xs text-zinc-500">
           URL or domain the Somnia agent will scrape at resolution time
         </p>
       </div>
 
       <div>
-        <label className="mb-2 block text-sm font-medium text-zinc-300">Duration</label>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <label className="mb-2 block text-sm font-medium text-zinc-200">Duration</label>
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           {DURATIONS.map((d) => (
             <button
               key={d.seconds}
               type="button"
               onClick={() => setDuration(d.seconds)}
-              className={`rounded-lg border px-3 py-2 text-sm transition ${
+              className={`rounded-lg border px-3 py-3 text-sm font-medium transition ${
                 duration === d.seconds
-                  ? 'border-violet-500 bg-violet-500/20 text-violet-200'
-                  : 'border-white/10 text-zinc-400 hover:border-white/20'
+                  ? 'border-cyan-400/40 bg-cyan-400/15 text-cyan-100'
+                  : 'border-white/10 bg-black/20 text-zinc-400 hover:border-white/20 hover:text-white'
               }`}
             >
               {d.label}
@@ -102,15 +103,16 @@ export function CreateMarketForm() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 p-4 text-sm text-zinc-300">
-        At end time, an AI agent will scrape <strong className="text-white">{source || '[source]'}</strong>{' '}
-        to determine: <strong className="text-white">{question || '[question]'}</strong>
+      <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-4 text-sm leading-6 text-zinc-300">
+        At end time, an AI agent will scrape{' '}
+        <strong className="break-all text-white">{source || '[source]'}</strong> to determine:{' '}
+        <strong className="text-white">{question || '[question]'}</strong>
       </div>
 
       <button
         type="submit"
         disabled={isPending || isConfirming}
-        className="w-full rounded-lg bg-gradient-to-r from-violet-600 to-cyan-600 px-6 py-3 font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+        className="w-full rounded-lg bg-white px-6 py-3 font-semibold text-zinc-950 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isPending || isConfirming ? 'Creating...' : 'Create Market'}
       </button>

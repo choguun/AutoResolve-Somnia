@@ -43,7 +43,7 @@ export function ResolutionPanel({
 
   if (isResolving) {
     return (
-      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-6">
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-5 sm:p-6">
         <div className="flex items-center gap-3">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-amber-400 border-t-transparent" />
           <div>
@@ -60,14 +60,14 @@ export function ResolutionPanel({
   if (!canResolve) return null;
 
   return (
-    <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-6">
-      <h2 className="mb-2 font-semibold text-cyan-200">Request Autonomous Resolution</h2>
-      <p className="mb-4 text-sm text-zinc-400">
+    <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-5 sm:p-6">
+      <h2 className="mb-2 text-lg font-semibold text-cyan-100">Request Autonomous Resolution</h2>
+      <p className="mb-4 max-w-3xl text-sm leading-6 text-zinc-400">
         Trigger the two-stage Somnia agent pipeline: web scrape → YES/NO classification.
         Validators reach byte-identical consensus on the result.
       </p>
       {deposit && (
-        <p className="mb-4 text-sm text-zinc-300">
+        <p className="mb-4 rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-300">
           Agent cost: <span className="font-mono text-white">{formatStt(deposit)}</span>
           <span className="text-zinc-500"> · Pool: {formatStt(poolBalance)}</span>
           {topUp > 0n && (
@@ -78,7 +78,7 @@ export function ResolutionPanel({
       <button
         onClick={requestResolution}
         disabled={isPending || isConfirming || !deposit}
-        className="rounded-lg bg-gradient-to-r from-cyan-600 to-violet-600 px-6 py-3 font-semibold text-white hover:opacity-90 disabled:opacity-50"
+        className="rounded-lg bg-white px-6 py-3 font-semibold text-zinc-950 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isPending || isConfirming ? 'Submitting...' : 'Request Resolution'}
       </button>

@@ -20,19 +20,20 @@ export default function MarketDetailPage({
     useResolutionStatus(marketId);
 
   if (isLoading) {
-    return <div className="h-64 animate-pulse rounded-xl bg-white/5" />;
+    return <div className="h-72 animate-pulse rounded-lg border border-white/10 bg-white/5" />;
   }
 
   if (!market) {
     return (
-      <div className="rounded-xl border border-white/10 p-12 text-center text-zinc-400">
-        Market not found
+      <div className="rounded-lg border border-white/10 bg-white/[0.04] p-12 text-center">
+        <p className="font-medium text-white">Market not found</p>
+        <p className="mt-2 text-sm text-zinc-500">This market may not exist on the configured contract.</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <MarketHeader market={market} />
 
       {isResolved && <OutcomeDisplay market={market} />}

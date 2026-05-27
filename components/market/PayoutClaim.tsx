@@ -8,17 +8,19 @@ import { useUserBets } from '@/hooks/useMarkets';
 export function OutcomeDisplay({ market }: { market: Market }) {
   return (
     <div
-      className={`rounded-xl border p-6 ${
+      className={`rounded-lg border p-5 sm:p-6 ${
         market.outcome
-          ? 'border-emerald-500/30 bg-emerald-500/10'
-          : 'border-rose-500/30 bg-rose-500/10'
+          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-50'
+          : 'border-rose-500/30 bg-rose-500/10 text-rose-50'
       }`}
     >
       <h2 className="mb-2 text-lg font-semibold">
         Resolved: {market.outcome ? 'YES' : 'NO'}
       </h2>
       {market.resolutionReason && (
-        <p className="font-mono text-sm text-zinc-300">{market.resolutionReason}</p>
+        <p className="break-words rounded-lg border border-white/10 bg-black/20 p-3 font-mono text-sm text-zinc-300">
+          {market.resolutionReason}
+        </p>
       )}
     </div>
   );
@@ -54,7 +56,7 @@ export function PayoutClaim({ marketId, market }: { marketId: bigint; market: Ma
     <button
       onClick={claim}
       disabled={isPending || isConfirming}
-      className="w-full rounded-lg bg-violet-600 px-6 py-3 font-semibold text-white hover:bg-violet-500 disabled:opacity-50"
+      className="w-full rounded-lg bg-white px-6 py-3 font-semibold text-zinc-950 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {isPending || isConfirming ? 'Claiming...' : 'Claim Winnings'}
     </button>

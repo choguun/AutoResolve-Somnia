@@ -21,7 +21,7 @@ function StatusBadge({ status }: { status?: string }) {
 
 function ReceiptSkeleton() {
   return (
-    <div className="animate-pulse space-y-4 rounded-xl border border-white/10 bg-white/5 p-6">
+    <div className="animate-pulse space-y-4 rounded-lg border border-white/10 bg-white/5 p-6">
       <div className="h-6 w-48 rounded bg-white/10" />
       <div className="h-32 rounded bg-white/10" />
       <div className="h-24 rounded bg-white/10" />
@@ -35,15 +35,15 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
   if (isLoading) return <ReceiptSkeleton />;
   if (error || !receipt) {
     return (
-      <div className="rounded-xl border border-white/10 bg-white/5 p-6">
-        <p className="text-zinc-400">Receipt not available yet.</p>
+      <div className="rounded-lg border border-white/10 bg-white/[0.045] p-6">
+        <p className="font-medium text-white">Receipt not available yet.</p>
         <p className="mt-2 text-xs text-zinc-600">Request ID: {requestId}</p>
         <Link
           href={receiptExplorerUrl(requestId)}
           target="_blank"
-          className="mt-3 inline-block text-sm text-cyan-400 hover:underline"
+          className="mt-4 inline-flex rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm text-cyan-200 transition hover:bg-cyan-400/15"
         >
-          View on agents.testnet.somnia.network ↗
+          View in Agent Explorer
         </Link>
       </div>
     );
@@ -55,8 +55,8 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
   const status = receipt.status || (hasError ? 'failure' : receipt.result ? 'success' : 'pending');
 
   return (
-    <div className="space-y-6 rounded-xl border border-white/10 bg-zinc-900/80 p-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/15 sm:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-xl font-bold text-white">Execution Receipt</h3>
         <StatusBadge status={status} />
       </div>
@@ -77,7 +77,7 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
           <h4 className="mb-2 text-lg font-semibold text-white">Execution Steps</h4>
           <div className="space-y-2">
             {steps.map((step, i) => (
-              <div key={i} className="rounded-lg bg-zinc-800/80 p-3 text-sm">
+              <div key={i} className="rounded-lg border border-white/10 bg-black/20 p-3 text-sm">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium text-violet-300">{step.name || 'step'}</span>
                   {step.duration_ms !== undefined && (
@@ -112,7 +112,7 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
             {nodes.map((node, i) => (
               <div
                 key={i}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-zinc-800/80 p-3 text-sm"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 p-3 text-sm"
               >
                 <span className="font-mono text-xs text-zinc-400">
                   {node.address?.slice(0, 10)}...
@@ -134,7 +134,7 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
       {receipt.payload && (
         <div>
           <h4 className="mb-2 text-lg font-semibold text-white">Agent Payload</h4>
-          <pre className="overflow-x-auto rounded-lg bg-zinc-800 p-3 text-xs text-zinc-300">
+          <pre className="overflow-x-auto rounded-lg border border-white/10 bg-black/25 p-3 text-xs text-zinc-300">
             {JSON.stringify(receipt.payload, null, 2)}
           </pre>
         </div>
@@ -143,7 +143,7 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
       {receipt.result && (
         <div>
           <h4 className="mb-2 text-lg font-semibold text-white">Result</h4>
-          <div className="rounded-lg bg-zinc-800 p-3 font-mono text-emerald-400 break-all">
+          <div className="rounded-lg border border-white/10 bg-black/25 p-3 font-mono text-emerald-300 break-all">
             {receipt.result}
           </div>
         </div>
@@ -152,7 +152,7 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
       {steps.length === 0 && !receipt.result && !receipt.payload && (
         <div>
           <h4 className="mb-2 text-lg font-semibold text-white">Raw Receipt</h4>
-          <pre className="overflow-x-auto rounded-lg bg-zinc-800 p-3 text-xs text-zinc-300">
+          <pre className="overflow-x-auto rounded-lg border border-white/10 bg-black/25 p-3 text-xs text-zinc-300">
             {JSON.stringify(receipt, null, 2)}
           </pre>
         </div>
@@ -160,17 +160,17 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
 
       <div className="flex flex-wrap gap-4 text-xs text-zinc-500">
         {receipt.blockNumber && <span>Block: {receipt.blockNumber}</span>}
-        <Link href={receiptExplorerUrl(requestId)} target="_blank" className="text-cyan-400 hover:underline">
-          Open in Agent Explorer ↗
+        <Link href={receiptExplorerUrl(requestId)} target="_blank" className="text-cyan-300 transition hover:text-cyan-200">
+          Open in Agent Explorer
         </Link>
         {receipt.txHash && (
           <a
             href={txExplorerUrl(receipt.txHash)}
             target="_blank"
             rel="noreferrer"
-            className="text-cyan-400 hover:underline"
+            className="text-cyan-300 transition hover:text-cyan-200"
           >
-            View on Shannon Explorer ↗
+            View on Shannon Explorer
           </a>
         )}
       </div>

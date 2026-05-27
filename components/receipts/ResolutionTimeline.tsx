@@ -37,8 +37,8 @@ export function ResolutionTimeline({
   ];
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-6">
-      <h2 className="mb-4 text-lg font-semibold">Resolution Pipeline</h2>
+    <div className="rounded-lg border border-white/10 bg-white/[0.045] p-5 sm:p-6">
+      <h2 className="mb-5 text-lg font-semibold text-white">Resolution Pipeline</h2>
       <div className="space-y-4">
         {stages.map((stage, i) => (
           <div key={i} className="flex gap-4">
@@ -62,9 +62,9 @@ export function ResolutionTimeline({
               {stage.requestId !== undefined && stage.requestId > 0n && (
                 <Link
                   href={`/receipt/${stage.requestId.toString()}`}
-                  className="mt-1 inline-block text-xs text-cyan-400 hover:underline"
+                  className="mt-2 inline-flex rounded-md border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-cyan-200 transition hover:bg-cyan-400/15"
                 >
-                  View receipt #{stage.requestId.toString()} ↗
+                  View receipt #{stage.requestId.toString()}
                 </Link>
               )}
             </div>

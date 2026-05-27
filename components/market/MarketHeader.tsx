@@ -6,8 +6,8 @@ export function MarketHeader({ market }: { market: Market }) {
   const totalPool = market.yesTotal + market.noTotal;
 
   return (
-    <div className="rounded-xl border border-white/10 bg-gradient-to-br from-violet-500/10 to-cyan-500/5 p-6">
-      <div className="mb-3 flex flex-wrap items-center gap-3">
+    <div className="rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/15 sm:p-7">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <span
           className={`rounded-full border px-3 py-1 text-xs font-medium ${
             market.status === MarketStatus.Open
@@ -20,17 +20,32 @@ export function MarketHeader({ market }: { market: Market }) {
           {statusLabel(market.status)}
         </span>
         {market.status !== MarketStatus.Resolved && (
-          <span className="text-sm text-cyan-400">{formatCountdown(market.endTime)}</span>
+          <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
+            {formatCountdown(market.endTime)}
+          </span>
         )}
       </div>
 
-      <h1 className="mb-2 text-2xl font-bold text-white">{market.question}</h1>
-      <p className="mb-4 text-sm text-zinc-400">Source: {market.resolutionSource}</p>
+      <h1 className="max-w-4xl text-2xl font-bold leading-tight tracking-tight text-white sm:text-4xl">
+        {market.question}
+      </h1>
+      <p className="mt-4 break-all rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-400">
+        Source: <span className="text-zinc-200">{market.resolutionSource}</span>
+      </p>
 
-      <div className="flex gap-6 text-sm text-zinc-300">
-        <span>Total Pool: {formatStt(totalPool)}</span>
-        <span>YES: {formatStt(market.yesTotal)}</span>
-        <span>NO: {formatStt(market.noTotal)}</span>
+      <div className="mt-5 grid gap-3 text-sm sm:grid-cols-3">
+        <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+          <div className="text-xs text-zinc-500">Total Pool</div>
+          <div className="mt-1 text-lg font-semibold text-white">{formatStt(totalPool)}</div>
+        </div>
+        <div className="rounded-lg border border-emerald-400/15 bg-emerald-400/10 p-4">
+          <div className="text-xs text-emerald-200/70">YES</div>
+          <div className="mt-1 text-lg font-semibold text-emerald-200">{formatStt(market.yesTotal)}</div>
+        </div>
+        <div className="rounded-lg border border-rose-400/15 bg-rose-400/10 p-4">
+          <div className="text-xs text-rose-200/70">NO</div>
+          <div className="mt-1 text-lg font-semibold text-rose-200">{formatStt(market.noTotal)}</div>
+        </div>
       </div>
     </div>
   );
