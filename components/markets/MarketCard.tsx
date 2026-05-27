@@ -1,5 +1,3 @@
-'use client';
-
 import Link from 'next/link';
 import {
   formatCountdown,
@@ -24,9 +22,23 @@ function StatusBadge({ status }: { status: MarketStatus }) {
   );
 }
 
-export function MarketCard({ id, market }: { id: bigint; market: Market }) {
+export function MarketCard({
+  id,
+  market,
+  userBet,
+}: {
+  id: bigint;
+  market: Market;
+  userBet?: { yes: bigint; no: bigint };
+}) {
   const totalPool = market.yesTotal + market.noTotal;
   const yesOdds = oddsPercent(market.yesTotal, market.noTotal, 'yes');
+  const yourSide =
+    userBet && userBet.yes > 0n
+      ? `YES · ${formatStt(userBet.yes)}`
+      : userBet && userBet.no > 0n
+        ? `NO · ${formatStt(userBet.no)}`
+        : null;
 
   return (
     <Link
@@ -43,9 +55,14 @@ export function MarketCard({ id, market }: { id: bigint; market: Market }) {
       <p className="mb-4 truncate text-sm text-zinc-500">{market.resolutionSource}</p>
 
       <div className="flex items-center justify-between text-sm">
-        <div className="flex gap-4 text-zinc-400">
-          <span>Pool: {formatStt(totalPool)}</span>
-          <span>YES {yesOdds.toFixed(0)}%</span>
+        <div className="flex flex-col gap-1 text-zinc-400">
+          <div className="flex gap-4">
+            <span>Pool: {formatStt(totalPool)}</span>
+            <span>YES {yesOdds.toFixed(0)}%</span>
+          </div>
+          {yourSide && (
+            <span className="text-violet-300">Your bet: {yourSide}</span>
+          )}
         </div>
         <span className="text-cyan-400">
           {market.status === MarketStatus.Resolved

@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { type AgentReceipt, receiptIsComplete, receiptUrl } from '@/lib-web/agents';
+import { type AgentReceipt, receiptIsComplete } from '@/lib-web/agents';
 
 export function useAgentReceipt(requestId?: string | bigint) {
   const id = requestId?.toString();
@@ -10,7 +10,7 @@ export function useAgentReceipt(requestId?: string | bigint) {
     queryKey: ['agent-receipt', id],
     enabled: !!id && id !== '0',
     queryFn: async () => {
-      const response = await fetch(receiptUrl(id!));
+      const response = await fetch(`/api/receipt/${id}`);
       if (!response.ok) {
         throw new Error('Failed to fetch receipt');
       }

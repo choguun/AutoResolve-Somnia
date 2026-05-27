@@ -1,13 +1,20 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { usePublicClient } from 'wagmi';
+import { useAccount, usePublicClient } from 'wagmi';
 import {
   CONTRACT_ABI,
   CONTRACT_ADDRESS,
   type Market,
   type Bet,
 } from '@/lib-web/contract';
+
+export type UserMarketPosition = {
+  id: bigint;
+  market: Market;
+  yes: bigint;
+  no: bigint;
+};
 
 export function useNextMarketId() {
   const publicClient = usePublicClient();
@@ -108,6 +115,57 @@ export function useResolutionDeposit() {
     },
     refetchInterval: 30_000,
   });
+}
+
+export function useMyBetsMarkets(
+  markets: Array<{ id: bigint; market: Market }> | undefined,
+  address?: `0x${string}`
+) {
+  const publicClient = usePublicClient();
+
+  return useQuery({
+    queryKey: ['myBetsMarkets', address, markets?.map(({ id }) => id.toString()).join(',')],
+    enabled: !!publicClient && !!address && !!markets?.length,
+    queryFn: async () => {
+      const positions = await Promise.all(
+        markets!.map(async ({ id, market }) => {
+          const [yes, no] = await Promise.all([
+            publicClient!.readContract({
+              address: CONTRACT_ADDRESS,
+              abi: CONTRACT_ABI,
+              functionName: 'userYesBets',
+              args: [address!, id],
+            }) as Promise<bigint>,
+            publicClient!.readContract({
+              address: CONTRACT_ADDRESS,
+              abi: CONTRACT_ABI,
+              functionName: 'userNoBets',
+              args: [address!, id],
+            }) as Promise<bigint>,
+          ]);
+
+          if (yes === 0n && no === 0n) return null;
+          return { id, market, yes, no } satisfies UserMarketPosition;
+        })
+      );
+
+      return positions.filter((p): p is UserMarketPosition => p !== null);
+    },
+    refetchInterval: 10_000,
+  });
+}
+
+export function useMyBets() {
+  const { address } = useAccount();
+  const { data: markets, isLoading: marketsLoading, error: marketsError } = useMarkets();
+  const query = useMyBetsMarkets(markets, address);
+
+  return {
+    ...query,
+    isLoading: marketsLoading || query.isLoading,
+    error: marketsError || query.error,
+    isConnected: !!address,
+  };
 }
 
 export function useUserBets(marketId: bigint | undefined, address?: `0x${string}`) {

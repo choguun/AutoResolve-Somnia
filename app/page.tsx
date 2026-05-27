@@ -1,21 +1,39 @@
 'use client';
 
 import { useState } from 'react';
-import { MarketCard } from '@/components/markets/MarketCard';
-import { useMarkets } from '@/hooks/useMarkets';
-import { MarketStatus } from '@/lib-web/contract';
 import Link from 'next/link';
+import { useAccount } from 'wagmi';
+import { MarketCard } from '@/components/markets/MarketCard';
+import { useMarkets, useMyBetsMarkets } from '@/hooks/useMarkets';
+import { MarketStatus } from '@/lib-web/contract';
 
-type Tab = 'active' | 'resolved';
+type Tab = 'active' | 'resolved' | 'my-bets';
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'active', label: 'Active' },
+  { id: 'resolved', label: 'Resolved' },
+  { id: 'my-bets', label: 'My Bets' },
+];
 
 export default function HomePage() {
   const [tab, setTab] = useState<Tab>('active');
+  const { address, isConnected } = useAccount();
   const { data: markets, isLoading, error } = useMarkets();
+  const { data: myBets, isLoading: myBetsLoading } = useMyBetsMarkets(markets, address);
 
-  const filtered = markets?.filter(({ market }) => {
-    if (tab === 'active') return market.status !== MarketStatus.Resolved;
-    return market.status === MarketStatus.Resolved;
-  });
+  const myBetsById = new Map(
+    myBets?.map(({ id, yes, no }) => [id.toString(), { yes, no }]) ?? []
+  );
+
+  const filtered =
+    tab === 'my-bets'
+      ? myBets?.map(({ id, market }) => ({ id, market }))
+      : markets?.filter(({ market }) => {
+          if (tab === 'active') return market.status !== MarketStatus.Resolved;
+          return market.status === MarketStatus.Resolved;
+        });
+
+  const showLoading = isLoading || (tab === 'my-bets' && myBetsLoading);
 
   return (
     <div>
@@ -34,23 +52,28 @@ export default function HomePage() {
         </Link>
       </div>
 
-      <div className="mb-6 flex gap-2">
-        {(['active', 'resolved'] as Tab[]).map((t) => (
+      <div className="mb-6 flex flex-wrap gap-2">
+        {TABS.map(({ id, label }) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`rounded-lg px-4 py-2 text-sm capitalize transition ${
-              tab === t
+            key={id}
+            onClick={() => setTab(id)}
+            className={`rounded-lg px-4 py-2 text-sm transition ${
+              tab === id
                 ? 'bg-white/10 text-white'
                 : 'text-zinc-500 hover:text-zinc-300'
             }`}
           >
-            {t}
+            {label}
+            {id === 'my-bets' && myBets && myBets.length > 0 && (
+              <span className="ml-2 rounded-full bg-violet-500/30 px-2 py-0.5 text-xs text-violet-200">
+                {myBets.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
-      {isLoading && (
+      {showLoading && (
         <div className="grid gap-4 md:grid-cols-2">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-36 animate-pulse rounded-xl bg-white/5" />
@@ -65,18 +88,33 @@ export default function HomePage() {
         </div>
       )}
 
-      {!isLoading && filtered?.length === 0 && (
+      {!showLoading && tab === 'my-bets' && !isConnected && (
         <div className="rounded-xl border border-white/10 bg-white/5 p-12 text-center">
-          <p className="text-zinc-400">No {tab} markets yet.</p>
+          <p className="text-zinc-400">Connect your wallet to see markets you&apos;ve bet on.</p>
+        </div>
+      )}
+
+      {!showLoading && filtered?.length === 0 && (tab !== 'my-bets' || isConnected) && (
+        <div className="rounded-xl border border-white/10 bg-white/5 p-12 text-center">
+          <p className="text-zinc-400">
+            {tab === 'my-bets'
+              ? 'No bets placed yet.'
+              : `No ${tab} markets yet.`}
+          </p>
           <Link href="/create" className="mt-4 inline-block text-violet-400 hover:underline">
-            Create the first market →
+            {tab === 'my-bets' ? 'Browse markets →' : 'Create the first market →'}
           </Link>
         </div>
       )}
 
       <div className="grid gap-4 md:grid-cols-2">
         {filtered?.map(({ id, market }) => (
-          <MarketCard key={id.toString()} id={id} market={market} />
+          <MarketCard
+            key={id.toString()}
+            id={id}
+            market={market}
+            userBet={myBetsById.get(id.toString())}
+          />
         ))}
       </div>
     </div>

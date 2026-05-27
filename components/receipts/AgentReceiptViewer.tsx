@@ -89,8 +89,13 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
                 )}
                 {step.url && <p className="mt-1 truncate text-xs text-cyan-400">{step.url}</p>}
                 {step.message && <p className="mt-1 text-xs text-rose-300">{step.message}</p>}
-                {step.output && (
-                  <p className="mt-1 font-mono text-xs text-emerald-400">{String(step.output)}</p>
+                {step.content && (
+                  <p className="mt-1 font-mono text-xs text-emerald-400 break-all">{step.content}</p>
+                )}
+                {step.output && !step.content && (
+                  <p className="mt-1 font-mono text-xs text-emerald-400 break-all">
+                    {String(step.output)}
+                  </p>
                 )}
               </div>
             ))}
@@ -117,7 +122,7 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
                 )}
                 {node.output && (
                   <span className="max-w-xs truncate font-mono text-xs text-cyan-400">
-                    {node.output.slice(0, 60)}...
+                    {node.output}
                   </span>
                 )}
               </div>
