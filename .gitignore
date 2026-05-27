@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Next.js
+.next/
+
+# Foundry (lib/forge-std is a dependency — keep lib/ tracked)
+cache/
+broadcast/
+out/
+
+# Generated contract ABI (regenerate: forge build && pnpm export-abi)
+lib-web/abi.json
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+wallet.json
+keystore/
+
+# Logs & debug
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Lint & tooling
+.eslintcache
+
+# Cursor / local IDE
+.cursor/
+.idea/
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Vercel / deployment
+.vercel
+
+# Test & coverage
+coverage/
+.nyc_output/
+
+# TypeScript
+*.tsbuildinfo
+
+# Misc
+.turbo
+*.local

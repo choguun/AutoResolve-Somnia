@@ -1,0 +1,76 @@
+'use client';
+
+import Link from 'next/link';
+import { MarketStatus } from '@/lib-web/contract';
+
+export function ResolutionTimeline({
+  status,
+  parseRequestId,
+  inferenceRequestId,
+}: {
+  status: MarketStatus;
+  parseRequestId?: bigint;
+  inferenceRequestId?: bigint;
+}) {
+  const stages = [
+    {
+      label: 'Stage 1: Web Scrape',
+      description: 'LLM Parse Website agent extracts evidence',
+      requestId: parseRequestId,
+      done: status === MarketStatus.Resolved || (inferenceRequestId !== undefined && inferenceRequestId > 0n),
+      active: status === MarketStatus.Resolving && parseRequestId !== undefined && parseRequestId > 0n && (!inferenceRequestId || inferenceRequestId === 0n),
+    },
+    {
+      label: 'Stage 2: Classification',
+      description: 'LLM Inference agent resolves YES or NO',
+      requestId: inferenceRequestId,
+      done: status === MarketStatus.Resolved,
+      active: status === MarketStatus.Resolving && inferenceRequestId !== undefined && inferenceRequestId > 0n,
+    },
+    {
+      label: 'Market Resolved',
+      description: 'Outcome recorded on-chain',
+      requestId: undefined,
+      done: status === MarketStatus.Resolved,
+      active: false,
+    },
+  ];
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/5 p-6">
+      <h2 className="mb-4 text-lg font-semibold">Resolution Pipeline</h2>
+      <div className="space-y-4">
+        {stages.map((stage, i) => (
+          <div key={i} className="flex gap-4">
+            <div className="flex flex-col items-center">
+              <div
+                className={`h-3 w-3 rounded-full ${
+                  stage.done
+                    ? 'bg-emerald-400'
+                    : stage.active
+                      ? 'animate-pulse bg-amber-400'
+                      : 'bg-zinc-600'
+                }`}
+              />
+              {i < stages.length - 1 && (
+                <div className={`mt-1 h-10 w-0.5 ${stage.done ? 'bg-emerald-400/50' : 'bg-zinc-700'}`} />
+              )}
+            </div>
+            <div className="flex-1 pb-4">
+              <div className="font-medium text-white">{stage.label}</div>
+              <div className="text-sm text-zinc-500">{stage.description}</div>
+              {stage.requestId !== undefined && stage.requestId > 0n && (
+                <Link
+                  href={`/receipt/${stage.requestId.toString()}`}
+                  className="mt-1 inline-block text-xs text-cyan-400 hover:underline"
+                >
+                  View receipt #{stage.requestId.toString()} ↗
+                </Link>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
