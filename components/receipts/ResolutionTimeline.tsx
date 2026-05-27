@@ -16,6 +16,7 @@ export function ResolutionTimeline({
     {
       label: 'Stage 1: Web Scrape',
       description: 'LLM Parse Website agent extracts evidence',
+      receiptLabel: 'Parse validator receipt',
       requestId: parseRequestId,
       done: status === MarketStatus.Resolved || (inferenceRequestId !== undefined && inferenceRequestId > 0n),
       active: status === MarketStatus.Resolving && parseRequestId !== undefined && parseRequestId > 0n && (!inferenceRequestId || inferenceRequestId === 0n),
@@ -23,6 +24,7 @@ export function ResolutionTimeline({
     {
       label: 'Stage 2: Classification',
       description: 'LLM Inference agent resolves YES or NO',
+      receiptLabel: 'Inference validator receipt',
       requestId: inferenceRequestId,
       done: status === MarketStatus.Resolved,
       active: status === MarketStatus.Resolving && inferenceRequestId !== undefined && inferenceRequestId > 0n,
@@ -30,6 +32,7 @@ export function ResolutionTimeline({
     {
       label: 'Market Resolved',
       description: 'Outcome recorded on-chain',
+      receiptLabel: undefined,
       requestId: undefined,
       done: status === MarketStatus.Resolved,
       active: false,
@@ -64,7 +67,7 @@ export function ResolutionTimeline({
                   href={`/receipt/${stage.requestId.toString()}`}
                   className="mt-2 inline-flex rounded-md border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-cyan-200 transition hover:bg-cyan-400/15"
                 >
-                  View receipt #{stage.requestId.toString()}
+                  {stage.receiptLabel} #{stage.requestId.toString()}
                 </Link>
               )}
             </div>

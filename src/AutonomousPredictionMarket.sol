@@ -5,14 +5,13 @@ import {IAgentRequester, Response, ResponseStatus, Request} from "./interfaces/I
 import {ILLMInferenceAgent, IParseWebsiteAgent} from "./interfaces/ILLMAgents.sol";
 
 contract AutonomousPredictionMarket {
-    IAgentRequester public constant PLATFORM =
-        IAgentRequester(0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776);
+    IAgentRequester public constant PLATFORM = IAgentRequester(0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776);
 
     uint256 public constant LLM_PARSE_WEBSITE_AGENT_ID = 12875401142070969085;
     uint256 public constant LLM_INFERENCE_AGENT_ID = 12847293847561029384;
     uint256 public constant SUBCOMMITTEE_SIZE = 3;
-    uint256 public constant LLM_PARSE_WEBSITE_COST_PER_AGENT = 0.10 ether;
-    uint256 public constant LLM_INFERENCE_COST_PER_AGENT = 0.10 ether;
+    uint256 public constant LLM_PARSE_WEBSITE_COST_PER_AGENT = 0.1 ether;
+    uint256 public constant LLM_INFERENCE_COST_PER_AGENT = 0.1 ether;
     uint256 public constant MIN_DURATION = 300;
 
     uint256 public nextMarketId;
@@ -63,15 +62,14 @@ contract AutonomousPredictionMarket {
     mapping(uint256 => RequestStage) public requestStage;
 
     event MarketCreated(
-        uint256 indexed marketId,
-        address indexed creator,
-        string question,
-        string resolutionSource,
-        uint256 endTime
+        uint256 indexed marketId, address indexed creator, string question, string resolutionSource, uint256 endTime
     );
     event BetPlaced(uint256 indexed marketId, address indexed better, BetOption option, uint256 amount);
     event ResolutionRequested(uint256 indexed marketId, uint256 requestId, RequestStage stage);
     event MarketResolved(uint256 indexed marketId, bool outcome, string reason, uint256 timestamp);
+    event ResolutionFailed(
+        uint256 indexed marketId, uint256 indexed requestId, RequestStage stage, ResponseStatus status
+    );
     event WinningsClaimed(uint256 indexed marketId, address indexed winner, uint256 amount);
     event RebateReceived(uint256 amount);
 
@@ -79,11 +77,10 @@ contract AutonomousPredictionMarket {
         nextMarketId = 1;
     }
 
-    function createMarket(
-        string calldata question,
-        string calldata resolutionSource,
-        uint256 durationSeconds
-    ) external returns (uint256 marketId) {
+    function createMarket(string calldata question, string calldata resolutionSource, uint256 durationSeconds)
+        external
+        returns (uint256 marketId)
+    {
         require(bytes(question).length > 0, "Question required");
         require(bytes(resolutionSource).length > 0, "Source required");
         require(durationSeconds >= MIN_DURATION, "Min 5 min duration");
@@ -149,6 +146,8 @@ contract AutonomousPredictionMarket {
         uint256 parseDeposit = getParseDeposit();
         uint256 inferDeposit = getInferenceDeposit();
         uint256 totalDeposit = parseDeposit + inferDeposit;
+        uint256 balanceBeforeTopUp = address(this).balance - msg.value;
+        uint256 topUpNeeded = balanceBeforeTopUp >= totalDeposit ? 0 : totalDeposit - balanceBeforeTopUp;
         require(address(this).balance >= totalDeposit, "Insufficient contract balance");
 
         market.status = MarketStatus.Resolving;
@@ -167,10 +166,7 @@ contract AutonomousPredictionMarket {
         );
 
         uint256 requestId = PLATFORM.createRequest{value: parseDeposit}(
-            LLM_PARSE_WEBSITE_AGENT_ID,
-            address(this),
-            this.handleAgentResponse.selector,
-            parsePayload
+            LLM_PARSE_WEBSITE_AGENT_ID, address(this), this.handleAgentResponse.selector, parsePayload
         );
 
         market.parseRequestId = requestId;
@@ -179,8 +175,8 @@ contract AutonomousPredictionMarket {
 
         emit ResolutionRequested(marketId, requestId, RequestStage.ParseWebsite);
 
-        if (msg.value > 0) {
-            payable(msg.sender).transfer(msg.value);
+        if (msg.value > topUpNeeded) {
+            payable(msg.sender).transfer(msg.value - topUpNeeded);
         }
     }
 
@@ -202,11 +198,14 @@ contract AutonomousPredictionMarket {
         if (status == ResponseStatus.Success && responses.length > 0) {
             string memory result = abi.decode(responses[0].result, (string));
             _resolveWithLLMInference(marketId, result);
+            delete requestToMarket[requestId];
+            delete requestStage[requestId];
         } else {
             market.status = MarketStatus.Open;
             market.parseRequestId = 0;
             delete requestToMarket[requestId];
             delete requestStage[requestId];
+            emit ResolutionFailed(marketId, requestId, RequestStage.ParseWebsite, status);
         }
     }
 
@@ -236,10 +235,7 @@ contract AutonomousPredictionMarket {
         uint256 deposit = getInferenceDeposit();
 
         uint256 requestId = PLATFORM.createRequest{value: deposit}(
-            LLM_INFERENCE_AGENT_ID,
-            address(this),
-            this.handleInferenceCallback.selector,
-            inferPayload
+            LLM_INFERENCE_AGENT_ID, address(this), this.handleInferenceCallback.selector, inferPayload
         );
 
         requestToMarket[requestId] = marketId;
@@ -265,7 +261,17 @@ contract AutonomousPredictionMarket {
 
         if (status == ResponseStatus.Success && responses.length > 0) {
             string memory result = abi.decode(responses[0].result, (string));
-            bool outcome = _parseYesNo(result);
+            (bool valid, bool outcome) = _parseYesNo(result);
+
+            if (!valid) {
+                market.status = MarketStatus.Open;
+                market.parseRequestId = 0;
+                market.inferenceRequestId = 0;
+                emit ResolutionFailed(marketId, requestId, RequestStage.Inference, status);
+                delete requestToMarket[requestId];
+                delete requestStage[requestId];
+                return;
+            }
 
             market.outcome = outcome;
             market.status = MarketStatus.Resolved;
@@ -277,27 +283,27 @@ contract AutonomousPredictionMarket {
             market.status = MarketStatus.Open;
             market.parseRequestId = 0;
             market.inferenceRequestId = 0;
+            emit ResolutionFailed(marketId, requestId, RequestStage.Inference, status);
         }
 
         delete requestToMarket[requestId];
         delete requestStage[requestId];
     }
 
-    function _parseYesNo(string memory result) private pure returns (bool) {
+    function _parseYesNo(string memory result) private pure returns (bool valid, bool outcome) {
         bytes memory resultBytes = bytes(result);
         if (resultBytes.length >= 3) {
-            if (resultBytes[0] == "Y" || resultBytes[0] == "y") return true;
-            if (resultBytes[0] == "N" || resultBytes[0] == "n") return false;
+            if (resultBytes[0] == "Y" || resultBytes[0] == "y") return (true, true);
+            if (resultBytes[0] == "N" || resultBytes[0] == "n") return (true, false);
         }
-        return false;
+        return (false, false);
     }
 
     function claimWinnings(uint256 marketId) external {
         Market storage market = markets[marketId];
         require(market.status == MarketStatus.Resolved, "Not resolved");
 
-        uint256 userWinningBets =
-            market.outcome ? userYesBets[msg.sender][marketId] : userNoBets[msg.sender][marketId];
+        uint256 userWinningBets = market.outcome ? userYesBets[msg.sender][marketId] : userNoBets[msg.sender][marketId];
         require(userWinningBets > 0, "No winning bets");
 
         uint256 totalPool = market.yesTotal + market.noTotal;
