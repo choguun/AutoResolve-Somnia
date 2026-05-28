@@ -10,9 +10,6 @@ cache/
 broadcast/
 out/
 
-# Generated contract ABI (regenerate: forge build && pnpm export-abi)
-lib-web/abi.json
-
 # Environment & secrets
 .env
 .env.*
