@@ -18,6 +18,7 @@ export default function MarketDetailPage({
   const marketId = BigInt(id);
   const { market, isLoading, canResolve, isResolving, isResolved, parseRequestId, inferenceRequestId } =
     useResolutionStatus(marketId);
+  const hasResolutionRequest = parseRequestId !== undefined && parseRequestId > 0n;
 
   if (isLoading) {
     return <div className="h-72 animate-pulse rounded-lg border border-white/10 bg-white/5" />;
@@ -38,7 +39,7 @@ export default function MarketDetailPage({
 
       {isResolved && <OutcomeDisplay market={market} />}
 
-      {(isResolving || isResolved || (parseRequestId && parseRequestId > 0n)) && (
+      {(isResolving || isResolved || hasResolutionRequest) && (
         <ResolutionTimeline
           status={market.status}
           parseRequestId={parseRequestId}
