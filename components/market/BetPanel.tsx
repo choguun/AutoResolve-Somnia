@@ -54,7 +54,7 @@ export function BetPanel({ marketId, market }: { marketId: bigint; market: Marke
   const noOdds = oddsPercent(market.yesTotal, market.noTotal, 'no');
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-xl shadow-black/10 sm:p-6">
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl shadow-2xl shadow-black/20 sm:p-8">
       <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="text-lg font-semibold text-white">Place Bet</h2>
@@ -62,19 +62,19 @@ export function BetPanel({ marketId, market }: { marketId: bigint; market: Marke
         </div>
       </div>
 
-      <div className="mb-5 grid grid-cols-2 gap-3">
-        <div className="rounded-lg border border-emerald-400/15 bg-emerald-400/10 p-4 text-center">
-          <div className="text-2xl font-bold text-emerald-200">{yesOdds.toFixed(1)}%</div>
-          <div className="text-xs text-zinc-400">YES · {formatStt(market.yesTotal)}</div>
+      <div className="mb-6 grid grid-cols-2 gap-4">
+        <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-5 text-center shadow-inner backdrop-blur-sm">
+          <div className="text-3xl font-extrabold text-emerald-300 drop-shadow-sm">{yesOdds.toFixed(1)}%</div>
+          <div className="mt-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">YES · {formatStt(market.yesTotal)}</div>
         </div>
-        <div className="rounded-lg border border-rose-400/15 bg-rose-400/10 p-4 text-center">
-          <div className="text-2xl font-bold text-rose-200">{noOdds.toFixed(1)}%</div>
-          <div className="text-xs text-zinc-400">NO · {formatStt(market.noTotal)}</div>
+        <div className="rounded-xl border border-rose-400/20 bg-rose-400/10 p-5 text-center shadow-inner backdrop-blur-sm">
+          <div className="text-3xl font-extrabold text-rose-300 drop-shadow-sm">{noOdds.toFixed(1)}%</div>
+          <div className="mt-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">NO · {formatStt(market.noTotal)}</div>
         </div>
       </div>
 
-      <div className="mb-5">
-        <label className="mb-2 block text-sm font-medium text-zinc-300">Amount (STT)</label>
+      <div className="mb-6">
+        <label className="mb-2 block text-sm font-semibold uppercase tracking-wider text-zinc-300">Amount (STT)</label>
         <input
           type="number"
           min="0.001"
@@ -82,22 +82,22 @@ export function BetPanel({ marketId, market }: { marketId: bigint; market: Marke
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           disabled={disabled}
-          className="w-full rounded-lg border border-white/10 bg-black/30 px-4 py-3 text-white outline-none transition focus:border-cyan-400/60 focus:ring-4 focus:ring-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-50"
+          className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white shadow-inner outline-none transition-all duration-300 focus:border-cyan-400/50 focus:bg-black/60 focus:ring-4 focus:ring-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-4">
         <button
           onClick={() => placeBet(BetOption.Yes)}
           disabled={disabled || isPending || isConfirming}
-          className="rounded-lg bg-emerald-500 px-4 py-3 font-semibold text-emerald-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-xl bg-gradient-to-r from-emerald-400 to-emerald-500 px-4 py-3.5 font-bold text-emerald-950 shadow-[0_0_15px_rgba(52,211,153,0.3)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_20px_rgba(52,211,153,0.5)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
         >
           Bet YES
         </button>
         <button
           onClick={() => placeBet(BetOption.No)}
           disabled={disabled || isPending || isConfirming}
-          className="rounded-lg bg-rose-500 px-4 py-3 font-semibold text-rose-950 transition hover:bg-rose-400 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-xl bg-gradient-to-r from-rose-400 to-rose-500 px-4 py-3.5 font-bold text-rose-950 shadow-[0_0_15px_rgba(251,113,133,0.3)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_20px_rgba(251,113,133,0.5)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
         >
           Bet NO
         </button>

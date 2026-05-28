@@ -11,17 +11,17 @@ import { TransactionStatus } from '@/components/shared/TransactionStatus';
 export function OutcomeDisplay({ market }: { market: Market }) {
   return (
     <div
-      className={`rounded-lg border p-5 sm:p-6 ${
+      className={`rounded-2xl border p-6 backdrop-blur-md shadow-xl sm:p-8 ${
         market.outcome
-          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-50'
-          : 'border-rose-500/30 bg-rose-500/10 text-rose-50'
+          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-50 shadow-[0_0_30px_rgba(16,185,129,0.15)]'
+          : 'border-rose-500/40 bg-rose-500/10 text-rose-50 shadow-[0_0_30px_rgba(244,63,94,0.15)]'
       }`}
     >
       <h2 className="mb-2 text-lg font-semibold">
         Resolved: {market.outcome ? 'YES' : 'NO'}
       </h2>
       {market.resolutionReason && (
-        <p className="break-words rounded-lg border border-white/10 bg-black/20 p-3 font-mono text-sm text-zinc-300">
+        <p className="break-words rounded-xl border border-white/5 bg-black/40 p-4 font-mono text-sm leading-relaxed text-zinc-300 shadow-inner backdrop-blur-sm">
           {market.resolutionReason}
         </p>
       )}
@@ -66,7 +66,7 @@ export function PayoutClaim({ marketId, market }: { marketId: bigint; market: Ma
       <button
         onClick={claim}
         disabled={isPending || isConfirming}
-        className="w-full rounded-lg bg-white px-6 py-3 font-semibold text-zinc-950 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+        className="w-full rounded-xl bg-gradient-to-r from-white to-violet-100 px-6 py-3.5 font-bold text-zinc-950 shadow-[0_0_15px_rgba(255,255,255,0.3)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_20px_rgba(255,255,255,0.4)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
       >
         {isPending || isConfirming ? 'Claiming...' : 'Claim Winnings'}
       </button>

@@ -40,23 +40,23 @@ export function ResolutionTimeline({
   ];
 
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.045] p-5 sm:p-6">
-      <h2 className="mb-5 text-lg font-semibold text-white">Resolution Pipeline</h2>
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl shadow-2xl shadow-black/20 sm:p-8">
+      <h2 className="mb-6 text-xl font-bold text-white drop-shadow-sm">Resolution Pipeline</h2>
       <div className="space-y-4">
         {stages.map((stage, i) => (
           <div key={i} className="flex gap-4">
             <div className="flex flex-col items-center">
               <div
-                className={`h-3 w-3 rounded-full ${
+                className={`h-4 w-4 rounded-full border-2 border-[#090b10] shadow-[0_0_10px_rgba(0,0,0,0.5)] ${
                   stage.done
-                    ? 'bg-emerald-400'
+                    ? 'bg-emerald-400 shadow-[0_0_15px_rgba(52,211,153,0.4)]'
                     : stage.active
-                      ? 'animate-pulse bg-amber-400'
-                      : 'bg-zinc-600'
+                      ? 'animate-pulse bg-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.4)]'
+                      : 'bg-zinc-700'
                 }`}
               />
               {i < stages.length - 1 && (
-                <div className={`mt-1 h-10 w-0.5 ${stage.done ? 'bg-emerald-400/50' : 'bg-zinc-700'}`} />
+                <div className={`mt-2 h-12 w-0.5 rounded-full ${stage.done ? 'bg-emerald-400/50 shadow-[0_0_10px_rgba(52,211,153,0.3)]' : 'bg-zinc-700/50'}`} />
               )}
             </div>
             <div className="flex-1 pb-4">

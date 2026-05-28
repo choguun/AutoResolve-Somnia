@@ -53,7 +53,7 @@ export function ResolutionPanel({
 
   if (isResolving) {
     return (
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-5 sm:p-6">
+      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 backdrop-blur-md shadow-[0_0_20px_rgba(245,158,11,0.15)] sm:p-8">
         <div className="flex items-center gap-3">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-amber-400 border-t-transparent" />
           <div>
@@ -70,14 +70,14 @@ export function ResolutionPanel({
   if (!canResolve) return null;
 
   return (
-    <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-5 sm:p-6">
+    <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-6 backdrop-blur-md shadow-xl shadow-black/20 sm:p-8">
       <h2 className="mb-2 text-lg font-semibold text-cyan-100">Request Autonomous Resolution</h2>
       <p className="mb-4 max-w-3xl text-sm leading-6 text-zinc-400">
         Trigger the two-stage Somnia agent pipeline: web scrape → YES/NO classification.
         Validators reach byte-identical consensus on the result.
       </p>
       {deposit && (
-        <p className="mb-4 rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-300">
+        <p className="mb-6 rounded-xl border border-white/5 bg-black/40 px-5 py-4 text-sm text-zinc-300 shadow-inner backdrop-blur-sm">
           Agent cost: <span className="font-mono text-white">{formatStt(deposit)}</span>
           <span className="text-zinc-500"> · Pool: {formatStt(poolBalance)}</span>
           {topUp > 0n && (
@@ -88,7 +88,7 @@ export function ResolutionPanel({
       <button
         onClick={requestResolution}
         disabled={isPending || isConfirming || !deposit}
-        className="rounded-lg bg-white px-6 py-3 font-semibold text-zinc-950 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+        className="w-full sm:w-auto rounded-xl bg-gradient-to-r from-white to-cyan-100 px-6 py-3.5 font-bold text-zinc-950 shadow-[0_0_15px_rgba(255,255,255,0.3)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_20px_rgba(255,255,255,0.4)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
       >
         {isPending || isConfirming ? 'Submitting...' : 'Request Resolution'}
       </button>
