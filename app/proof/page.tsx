@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { AgentCommandCenter } from '@/components/proof/AgentCommandCenter';
 import { CONTRACT_ADDRESS } from '@/lib-web/contract';
 import {
   addressExplorerUrl,
@@ -62,6 +63,8 @@ export default function ProofPage() {
           </div>
         ))}
       </section>
+
+      <AgentCommandCenter />
 
       <section className="rounded-lg border border-white/10 bg-white/[0.045] p-5 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -145,7 +148,7 @@ export default function ProofPage() {
           <code className="rounded bg-black/25 px-1.5 py-0.5">getAgentMarketContext</code>,
           and call{' '}
           <code className="rounded bg-black/25 px-1.5 py-0.5">requestResolution</code>
-          with the reported top-up.
+          {' '}with the reported top-up.
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
           <Link
