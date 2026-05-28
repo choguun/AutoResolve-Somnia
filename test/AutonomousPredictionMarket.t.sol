@@ -93,6 +93,16 @@ contract AutonomousPredictionMarketTest is Test {
         market.createMarket("Will it rain?", "https://example.com", 60);
     }
 
+    function testCreateMarketRejectsOverlongQuestion() public {
+        bytes memory longQuestion = new bytes(market.MAX_QUESTION_LENGTH() + 1);
+        for (uint256 i = 0; i < longQuestion.length; i++) {
+            longQuestion[i] = "a";
+        }
+
+        vm.expectRevert("Question too long");
+        market.createMarket(string(longQuestion), "https://example.com", 300);
+    }
+
     function testBetUpdatesTotals() public {
         uint256 marketId = market.createMarket("Will it rain?", "https://example.com", 300);
 
@@ -157,6 +167,17 @@ contract AutonomousPredictionMarketTest is Test {
         assertEq(bob.balance - bobBefore, 1 ether);
     }
 
+    function testMissingMarketsCannotReceiveBetsResolutionOrClaims() public {
+        vm.expectRevert("Market not found");
+        market.bet{value: 0.1 ether}(404, AutonomousPredictionMarket.BetOption.Yes);
+
+        vm.expectRevert("Market not found");
+        market.requestResolution(404);
+
+        vm.expectRevert("Market not found");
+        market.claimWinnings(404);
+    }
+
     function testRequestResolutionKeepsOnlyNeededTopUpForInference() public {
         uint256 marketId = _createEndedMarket();
         uint256 parseDeposit = market.getParseDeposit();
@@ -187,6 +208,55 @@ contract AutonomousPredictionMarketTest is Test {
         market.requestResolution{value: 0.1 ether}(marketId);
 
         assertEq(resolver.balance, 0.1 ether);
+    }
+
+    function testFundingStatusReportsAgentTopUpNeed() public {
+        uint256 requiredDeposit = market.getRequiredDeposit();
+
+        (uint256 required, uint256 balance, uint256 topUpNeeded) = market.getResolutionFundingStatus();
+        assertEq(required, requiredDeposit);
+        assertEq(balance, 0);
+        assertEq(topUpNeeded, requiredDeposit);
+
+        (bool ok,) = address(market).call{value: 0.2 ether}("");
+        assertTrue(ok);
+
+        (required, balance, topUpNeeded) = market.getResolutionFundingStatus();
+        assertEq(required, requiredDeposit);
+        assertEq(balance, 0.2 ether);
+        assertEq(topUpNeeded, requiredDeposit - 0.2 ether);
+    }
+
+    function testAgentContextAndScanExposeResolvableMarkets() public {
+        uint256 resolvableMarket = _createEndedMarket();
+        uint256 activeMarket = market.createMarket("Will it rain tomorrow?", "https://example.com/weather", 300);
+
+        AutonomousPredictionMarket.AgentMarketContext memory context = market.getAgentMarketContext(resolvableMarket);
+        assertTrue(context.exists);
+        assertTrue(context.canResolve);
+        assertEq(context.marketId, resolvableMarket);
+        assertEq(context.question, "Is the capital of France Paris?");
+        assertEq(context.resolutionSource, "https://en.wikipedia.org/wiki/Paris");
+        assertEq(context.totalPool, 0);
+        assertEq(context.requiredDeposit, market.getRequiredDeposit());
+
+        context = market.getAgentMarketContext(activeMarket);
+        assertTrue(context.exists);
+        assertFalse(context.canResolve);
+
+        (uint256[] memory ids, uint256 nextCursor) = market.scanResolvableMarkets(1, 10);
+        assertEq(ids.length, 1);
+        assertEq(ids[0], resolvableMarket);
+        assertEq(nextCursor, market.nextMarketId());
+    }
+
+    function testScanResolvableMarketsRejectsInvalidLimit() public {
+        vm.expectRevert("Invalid limit");
+        market.scanResolvableMarkets(1, 0);
+
+        uint256 invalidLimit = market.MAX_AGENT_SCAN_LIMIT() + 1;
+        vm.expectRevert("Invalid limit");
+        market.scanResolvableMarkets(1, invalidLimit);
     }
 
     function testParseCallbackSuccessStartsInferenceAndCleansParseRequest() public {

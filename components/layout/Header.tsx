@@ -23,6 +23,9 @@ export function Header() {
             <Link href="/create" className="rounded-md px-3 py-1.5 transition-colors hover:bg-white/5 hover:text-white">
               Create
             </Link>
+            <Link href="/proof" className="rounded-md px-3 py-1.5 transition-colors hover:bg-white/5 hover:text-white">
+              Proof
+            </Link>
           </nav>
         </div>
         <div className="shrink-0">

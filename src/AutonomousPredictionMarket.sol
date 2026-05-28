@@ -13,6 +13,9 @@ contract AutonomousPredictionMarket {
     uint256 public constant LLM_PARSE_WEBSITE_COST_PER_AGENT = 0.1 ether;
     uint256 public constant LLM_INFERENCE_COST_PER_AGENT = 0.1 ether;
     uint256 public constant MIN_DURATION = 300;
+    uint256 public constant MAX_QUESTION_LENGTH = 500;
+    uint256 public constant MAX_SOURCE_LENGTH = 300;
+    uint256 public constant MAX_AGENT_SCAN_LIMIT = 50;
 
     uint256 public nextMarketId;
 
@@ -54,6 +57,22 @@ contract AutonomousPredictionMarket {
         BetOption option;
     }
 
+    struct AgentMarketContext {
+        uint256 marketId;
+        bool exists;
+        bool canResolve;
+        MarketStatus status;
+        uint256 endTime;
+        uint256 totalPool;
+        uint256 parseRequestId;
+        uint256 inferenceRequestId;
+        uint256 requiredDeposit;
+        uint256 contractBalance;
+        uint256 topUpNeeded;
+        string question;
+        string resolutionSource;
+    }
+
     mapping(uint256 => Market) public markets;
     mapping(uint256 => Bet[]) public marketBets;
     mapping(address => mapping(uint256 => uint256)) public userYesBets;
@@ -83,6 +102,8 @@ contract AutonomousPredictionMarket {
     {
         require(bytes(question).length > 0, "Question required");
         require(bytes(resolutionSource).length > 0, "Source required");
+        require(bytes(question).length <= MAX_QUESTION_LENGTH, "Question too long");
+        require(bytes(resolutionSource).length <= MAX_SOURCE_LENGTH, "Source too long");
         require(durationSeconds >= MIN_DURATION, "Min 5 min duration");
 
         marketId = nextMarketId++;
@@ -107,6 +128,7 @@ contract AutonomousPredictionMarket {
     }
 
     function bet(uint256 marketId, BetOption option) external payable {
+        require(marketExists(marketId), "Market not found");
         Market storage market = markets[marketId];
         require(market.status == MarketStatus.Open, "Market not open");
         require(block.timestamp < market.endTime, "Market ended");
@@ -138,16 +160,16 @@ contract AutonomousPredictionMarket {
     }
 
     function requestResolution(uint256 marketId) external payable {
+        require(marketExists(marketId), "Market not found");
         Market storage market = markets[marketId];
         require(market.status == MarketStatus.Open, "Market not open");
         require(block.timestamp >= market.endTime, "Market still active");
         require(market.parseRequestId == 0, "Already requested");
 
-        uint256 parseDeposit = getParseDeposit();
-        uint256 inferDeposit = getInferenceDeposit();
-        uint256 totalDeposit = parseDeposit + inferDeposit;
+        (uint256 totalDeposit,,) = getResolutionFundingStatus();
         uint256 balanceBeforeTopUp = address(this).balance - msg.value;
         uint256 topUpNeeded = balanceBeforeTopUp >= totalDeposit ? 0 : totalDeposit - balanceBeforeTopUp;
+        uint256 parseDeposit = getParseDeposit();
         require(address(this).balance >= totalDeposit, "Insufficient contract balance");
 
         market.status = MarketStatus.Resolving;
@@ -300,6 +322,7 @@ contract AutonomousPredictionMarket {
     }
 
     function claimWinnings(uint256 marketId) external {
+        require(marketExists(marketId), "Market not found");
         Market storage market = markets[marketId];
         require(market.status == MarketStatus.Resolved, "Not resolved");
 
@@ -341,5 +364,77 @@ contract AutonomousPredictionMarket {
     function getTotalPool(uint256 marketId) external view returns (uint256) {
         Market storage market = markets[marketId];
         return market.yesTotal + market.noTotal;
+    }
+
+    function marketExists(uint256 marketId) public view returns (bool) {
+        return marketId > 0 && marketId < nextMarketId && bytes(markets[marketId].question).length > 0;
+    }
+
+    function canResolveMarket(uint256 marketId) public view returns (bool) {
+        if (!marketExists(marketId)) return false;
+        Market storage market = markets[marketId];
+        return market.status == MarketStatus.Open && block.timestamp >= market.endTime && market.parseRequestId == 0;
+    }
+
+    function getResolutionFundingStatus()
+        public
+        view
+        returns (uint256 requiredDeposit, uint256 contractBalance, uint256 topUpNeeded)
+    {
+        requiredDeposit = getParseDeposit() + getInferenceDeposit();
+        contractBalance = address(this).balance;
+        topUpNeeded = contractBalance >= requiredDeposit ? 0 : requiredDeposit - contractBalance;
+    }
+
+    function getAgentMarketContext(uint256 marketId) external view returns (AgentMarketContext memory context) {
+        (uint256 requiredDeposit, uint256 contractBalance, uint256 topUpNeeded) = getResolutionFundingStatus();
+        Market storage market = markets[marketId];
+
+        context = AgentMarketContext({
+            marketId: marketId,
+            exists: marketExists(marketId),
+            canResolve: canResolveMarket(marketId),
+            status: market.status,
+            endTime: market.endTime,
+            totalPool: market.yesTotal + market.noTotal,
+            parseRequestId: market.parseRequestId,
+            inferenceRequestId: market.inferenceRequestId,
+            requiredDeposit: requiredDeposit,
+            contractBalance: contractBalance,
+            topUpNeeded: topUpNeeded,
+            question: market.question,
+            resolutionSource: market.resolutionSource
+        });
+    }
+
+    function scanResolvableMarkets(uint256 cursor, uint256 limit)
+        external
+        view
+        returns (uint256[] memory marketIds, uint256 nextCursor)
+    {
+        require(limit > 0 && limit <= MAX_AGENT_SCAN_LIMIT, "Invalid limit");
+
+        uint256 start = cursor < 1 ? 1 : cursor;
+        uint256 end = start + limit;
+        if (end > nextMarketId) end = nextMarketId;
+
+        uint256 count;
+        for (uint256 id = start; id < end; id++) {
+            if (canResolveMarket(id)) count++;
+        }
+
+        marketIds = new uint256[](count);
+        uint256 index;
+        for (uint256 id = start; id < end; id++) {
+            if (canResolveMarket(id)) {
+                marketIds[index++] = id;
+            }
+        }
+
+        nextCursor = end;
+    }
+
+    function agentManifest() external pure returns (string memory) {
+        return "AutoResolve agent interface: call scanResolvableMarkets(cursor,limit) to discover expired open markets; call getAgentMarketContext(marketId) for question, source, funding, and request IDs; call requestResolution(marketId) with topUpNeeded STT to trigger the Somnia Parse Website -> LLM Inference resolver pipeline.";
     }
 }
