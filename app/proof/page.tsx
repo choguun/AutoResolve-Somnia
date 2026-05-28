@@ -41,45 +41,52 @@ const criteria = [
 export default function ProofPage() {
   return (
     <div className="space-y-8">
-      <section className="rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/15 sm:p-7">
-        <div className="mb-3 inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
-          Resolution Proof Pack
+      <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl shadow-2xl shadow-black/40 sm:p-10">
+        <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 via-transparent to-violet-500/10 pointer-events-none" />
+        <div className="relative">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold tracking-wide text-cyan-300 shadow-[0_0_15px_rgba(6,182,212,0.2)]">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+            </span>
+            Resolution Proof Pack
+          </div>
+          <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl text-transparent bg-clip-text bg-gradient-to-r from-white via-cyan-100 to-emerald-200 drop-shadow-sm">
+            Agent-Native Settlement, Proved End to End
+          </h1>
+          <p className="mt-4 max-w-3xl text-base leading-relaxed text-zinc-300 sm:text-lg">
+            AutoResolve is designed so an autonomous resolver can discover expired markets,
+            inspect funding requirements, invoke Somnia agents, and let validator callbacks
+            settle the result on-chain.
+          </p>
         </div>
-        <h1 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-          Agent-Native Settlement, Proved End to End
-        </h1>
-        <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-400 sm:text-base">
-          AutoResolve is designed so an autonomous resolver can discover expired markets,
-          inspect funding requirements, invoke Somnia agents, and let validator callbacks
-          settle the result on-chain.
-        </p>
       </section>
 
       <section className="grid gap-4 md:grid-cols-2">
         {criteria.map((item) => (
-          <div key={item.label} className="rounded-lg border border-white/10 bg-white/[0.04] p-5">
-            <h2 className="font-semibold text-white">{item.label}</h2>
-            <p className="mt-2 text-sm leading-6 text-zinc-400">{item.detail}</p>
+          <div key={item.label} className="group rounded-xl border border-white/10 bg-white/5 p-6 backdrop-blur-md shadow-lg shadow-black/20 transition-all duration-300 hover:-translate-y-1 hover:border-cyan-400/40 hover:bg-white/10 hover:shadow-[0_8px_30px_rgb(6,182,212,0.12)]">
+            <h2 className="text-lg font-bold text-white transition-colors group-hover:text-cyan-100">{item.label}</h2>
+            <p className="mt-2 text-sm leading-relaxed text-zinc-400">{item.detail}</p>
           </div>
         ))}
       </section>
 
       <AgentCommandCenter />
 
-      <section className="rounded-lg border border-white/10 bg-white/[0.045] p-5 sm:p-6">
+      <section className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-md shadow-xl shadow-black/20">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-white">Latest Agent-Discoverable Deployment</h2>
-            <p className="mt-1 text-sm text-zinc-500">
+            <h2 className="text-2xl font-bold text-white">Latest Agent-Discoverable Deployment</h2>
+            <p className="mt-1 text-sm text-zinc-400">
               The current frontend points at the v3 contract with autonomous discovery methods.
             </p>
           </div>
-          <span className="w-fit rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
+          <span className="w-fit rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold text-cyan-300 shadow-[0_0_10px_rgba(6,182,212,0.1)]">
             Shannon Testnet
           </span>
         </div>
 
-        <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <ProofLink label="Current Contract" href={addressExplorerUrl(CONTRACT_ADDRESS)} value={CONTRACT_ADDRESS} />
           <ProofLink label="Agent Manifest" href="/api/agent-manifest" value="/api/agent-manifest" external={false} />
           <ProofLink
@@ -88,42 +95,42 @@ export default function ProofPage() {
             value="/.well-known/autoresolve-agent.json"
             external={false}
           />
-          <ProofLink label="Seeded Markets" href={addressExplorerUrl(CONTRACT_ADDRESS)} value="Markets #1 and #2" />
+          <ProofLink label="Seeded Markets" href={addressExplorerUrl(CONTRACT_ADDRESS)} value="Markets #3-#6" />
         </div>
       </section>
 
-      <section className="rounded-lg border border-white/10 bg-white/[0.045] p-5 sm:p-6">
+      <section className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-md shadow-xl shadow-black/20">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-white">Completed Historical Proof Run</h2>
-            <p className="mt-1 text-sm text-zinc-500">
+            <h2 className="text-2xl font-bold text-white">Completed Historical Proof Run</h2>
+            <p className="mt-1 text-sm text-zinc-400">
               Previous deployment market #{proofRun.marketId} resolved through Parse Website and LLM Inference receipts.
             </p>
           </div>
-          <span className="w-fit rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-200">
+          <span className="w-fit rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.1)]">
             Outcome {proofRun.outcome}
           </span>
         </div>
 
-        <div className="mt-5 grid gap-3 text-sm md:grid-cols-2">
-          <div className="rounded-lg border border-white/10 bg-black/20 p-4">
-            <div className="text-xs text-zinc-500">Question</div>
-            <div className="mt-1 font-medium text-white">{proofRun.question}</div>
+        <div className="mt-6 grid gap-4 text-sm md:grid-cols-2">
+          <div className="rounded-xl border border-white/5 bg-black/40 p-5 shadow-inner backdrop-blur-sm">
+            <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Question</div>
+            <div className="mt-2 font-bold text-white text-base drop-shadow-sm">{proofRun.question}</div>
           </div>
-          <div className="rounded-lg border border-white/10 bg-black/20 p-4">
-            <div className="text-xs text-zinc-500">Source</div>
+          <div className="rounded-xl border border-white/5 bg-black/40 p-5 shadow-inner backdrop-blur-sm">
+            <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Source</div>
             <a
               href={proofRun.source}
               target="_blank"
               rel="noreferrer"
-              className="mt-1 block break-all text-cyan-200 transition hover:text-cyan-100"
+              className="mt-2 block break-all font-semibold text-cyan-300 transition hover:text-cyan-100"
             >
               {proofRun.source}
             </a>
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <ProofLink label="Proof Contract" href={addressExplorerUrl(proofRun.contractAddress)} value="v2 Shannon Explorer" />
           <ProofLink
             label="Parse Validator Receipt"
@@ -139,27 +146,27 @@ export default function ProofPage() {
         </div>
       </section>
 
-      <section className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 p-5 sm:p-6">
-        <h2 className="text-lg font-semibold text-cyan-100">Machine-Readable Agent Interface</h2>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-300">
+      <section className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 to-violet-500/5 p-6 backdrop-blur-md shadow-[0_0_30px_rgba(6,182,212,0.1)]">
+        <h2 className="text-2xl font-bold text-cyan-100">Machine-Readable Agent Interface</h2>
+        <p className="mt-3 max-w-3xl text-base leading-relaxed text-zinc-300">
           Autonomous callers do not need the UI. They can discover markets with{' '}
-          <code className="rounded bg-black/25 px-1.5 py-0.5">scanResolvableMarkets</code>,
+          <code className="rounded-md bg-black/40 px-2 py-1 text-sm font-mono text-cyan-200">scanResolvableMarkets</code>,
           inspect action context with{' '}
-          <code className="rounded bg-black/25 px-1.5 py-0.5">getAgentMarketContext</code>,
+          <code className="rounded-md bg-black/40 px-2 py-1 text-sm font-mono text-cyan-200">getAgentMarketContext</code>,
           and call{' '}
-          <code className="rounded bg-black/25 px-1.5 py-0.5">requestResolution</code>
+          <code className="rounded-md bg-black/40 px-2 py-1 text-sm font-mono text-cyan-200">requestResolution</code>
           {' '}with the reported top-up.
         </p>
-        <div className="mt-4 flex flex-wrap gap-3">
+        <div className="mt-6 flex flex-wrap gap-4">
           <Link
             href="/api/agent-manifest"
-            className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-cyan-100"
+            className="rounded-xl bg-gradient-to-r from-white to-cyan-100 px-5 py-2.5 font-bold text-zinc-950 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_15px_rgba(255,255,255,0.3)]"
           >
             Agent Manifest
           </Link>
           <Link
             href="/.well-known/autoresolve-agent.json"
-            className="rounded-lg border border-white/10 px-4 py-2 text-sm text-cyan-100 transition hover:bg-white/5"
+            className="rounded-xl border border-cyan-400/50 bg-black/20 px-5 py-2.5 text-cyan-100 backdrop-blur-md transition-all duration-300 hover:bg-white/10 hover:shadow-[0_0_15px_rgba(6,182,212,0.2)]"
           >
             Well-Known JSON
           </Link>
@@ -185,10 +192,10 @@ function ProofLink({
       href={href}
       target={external ? '_blank' : undefined}
       rel={external ? 'noreferrer' : undefined}
-      className="rounded-lg border border-white/10 bg-black/20 p-4 transition hover:border-cyan-400/30 hover:bg-black/30"
+      className="group rounded-xl border border-white/5 bg-black/40 p-5 shadow-inner backdrop-blur-sm transition-all duration-300 ease-out hover:-translate-y-1 hover:border-cyan-400/50 hover:bg-white/10 hover:shadow-[0_8px_30px_rgb(6,182,212,0.15)]"
     >
-      <div className="text-xs text-zinc-500">{label}</div>
-      <div className="mt-1 break-all text-sm font-medium text-cyan-200">{value}</div>
+      <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500 transition-colors group-hover:text-cyan-400/80">{label}</div>
+      <div className="mt-2 break-all text-sm font-bold text-cyan-300 drop-shadow-sm transition-colors group-hover:text-cyan-100">{value}</div>
     </a>
   );
 }

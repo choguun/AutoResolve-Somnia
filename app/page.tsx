@@ -41,33 +41,38 @@ export default function HomePage() {
 
   return (
     <div className="space-y-8">
-      <section className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.045] shadow-2xl shadow-black/20">
-        <div className="flex flex-col gap-8 p-5 sm:p-7 lg:flex-row lg:items-end lg:justify-between">
+      <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-2xl shadow-black/40">
+        <div className="absolute inset-0 bg-gradient-to-br from-violet-500/10 via-transparent to-cyan-500/10 pointer-events-none" />
+        <div className="relative flex flex-col gap-8 p-6 sm:p-10 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
-            <div className="mb-4 inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold tracking-wide text-cyan-300 shadow-[0_0_15px_rgba(6,182,212,0.2)]">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+              </span>
               Somnia agent-resolved markets
             </div>
-            <h1 className="text-3xl font-bold tracking-tight text-white sm:text-5xl">
+            <h1 className="text-4xl font-extrabold tracking-tight sm:text-6xl text-transparent bg-clip-text bg-gradient-to-r from-white via-cyan-100 to-violet-200 drop-shadow-sm">
               Prediction Markets
             </h1>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-zinc-400 sm:text-base">
+            <p className="mt-4 max-w-xl text-base leading-relaxed text-zinc-300 sm:text-lg">
               Create markets, trade outcomes, and let Somnia&apos;s native LLM agents resolve
               results with verifiable on-chain receipts.
             </p>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 sm:min-w-80">
-            <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-              <div className="text-2xl font-semibold text-white">{markets?.length ?? '—'}</div>
-              <div className="mt-1 text-xs text-zinc-500">Total</div>
+          <div className="grid grid-cols-3 gap-3 sm:min-w-80">
+            <div className="flex flex-col items-center justify-center rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur-md shadow-inner transition-transform hover:scale-105">
+              <div className="text-3xl font-bold text-white drop-shadow-md">{markets?.length ?? '—'}</div>
+              <div className="mt-1 text-xs font-medium uppercase tracking-wider text-zinc-400">Total</div>
             </div>
-            <div className="rounded-lg border border-emerald-400/15 bg-emerald-400/10 p-3">
-              <div className="text-2xl font-semibold text-emerald-200">{activeCount}</div>
-              <div className="mt-1 text-xs text-emerald-200/70">Active</div>
+            <div className="flex flex-col items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 backdrop-blur-md shadow-[0_0_20px_rgba(16,185,129,0.1)] shadow-inner transition-transform hover:scale-105">
+              <div className="text-3xl font-bold text-emerald-300 drop-shadow-md">{activeCount}</div>
+              <div className="mt-1 text-xs font-medium uppercase tracking-wider text-emerald-400/80">Active</div>
             </div>
-            <div className="rounded-lg border border-violet-400/15 bg-violet-400/10 p-3">
-              <div className="text-2xl font-semibold text-violet-200">{resolvedCount}</div>
-              <div className="mt-1 text-xs text-violet-200/70">Resolved</div>
+            <div className="flex flex-col items-center justify-center rounded-xl border border-violet-500/20 bg-violet-500/10 p-4 backdrop-blur-md shadow-[0_0_20px_rgba(139,92,246,0.1)] shadow-inner transition-transform hover:scale-105">
+              <div className="text-3xl font-bold text-violet-300 drop-shadow-md">{resolvedCount}</div>
+              <div className="mt-1 text-xs font-medium uppercase tracking-wider text-violet-400/80">Resolved</div>
             </div>
           </div>
         </div>
@@ -86,20 +91,22 @@ export default function HomePage() {
         </Link>
       </div>
 
-      <div className="flex w-full gap-1 overflow-x-auto rounded-lg border border-white/10 bg-white/[0.035] p-1 sm:w-fit">
+      <div className="flex w-full gap-2 overflow-x-auto rounded-xl border border-white/10 bg-white/5 p-1.5 backdrop-blur-md sm:w-fit">
         {TABS.map(({ id, label }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`shrink-0 rounded-md px-4 py-2 text-sm font-medium transition ${
+            className={`shrink-0 rounded-lg px-5 py-2.5 text-sm font-semibold transition-all duration-300 ease-out ${
               tab === id
-                ? 'bg-white text-zinc-950 shadow-sm'
-                : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-300'
+                ? 'bg-gradient-to-r from-violet-600 to-cyan-600 text-white shadow-lg shadow-cyan-900/30 scale-[1.02]'
+                : 'text-zinc-400 hover:bg-white/10 hover:text-white'
             }`}
           >
             {label}
             {id === 'my-bets' && myBets && myBets.length > 0 && (
-              <span className="ml-2 rounded-full bg-violet-500/30 px-2 py-0.5 text-xs text-violet-200">
+              <span className={`ml-2 rounded-full px-2 py-0.5 text-xs ${
+                tab === id ? 'bg-white/20 text-white' : 'bg-violet-500/20 text-violet-300'
+              }`}>
                 {myBets.length}
               </span>
             )}

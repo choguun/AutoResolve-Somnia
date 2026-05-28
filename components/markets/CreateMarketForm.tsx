@@ -58,7 +58,7 @@ export function CreateMarketForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-2xl shadow-black/15 sm:p-7">
+    <form onSubmit={handleSubmit} className="space-y-6 rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl shadow-2xl shadow-black/40 sm:p-8">
       <div>
         <label className="mb-2 block text-sm font-medium text-zinc-200">Question</label>
         <textarea
@@ -67,7 +67,7 @@ export function CreateMarketForm() {
           placeholder="Will Team A win the championship?"
           rows={3}
           maxLength={500}
-          className="w-full resize-none rounded-lg border border-white/10 bg-black/30 px-4 py-3 text-white placeholder:text-zinc-600 outline-none transition focus:border-cyan-400/60 focus:ring-4 focus:ring-cyan-400/10"
+          className="w-full resize-none rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white placeholder:text-zinc-600 outline-none transition-all duration-300 focus:border-cyan-400/50 focus:bg-black/60 focus:ring-4 focus:ring-cyan-400/20 shadow-inner"
         />
         <p className="mt-2 text-xs text-zinc-500">{question.length}/500 characters</p>
       </div>
@@ -78,7 +78,7 @@ export function CreateMarketForm() {
           value={source}
           onChange={(e) => setSource(e.target.value)}
           placeholder="https://en.wikipedia.org/wiki/Paris"
-          className="w-full rounded-lg border border-white/10 bg-black/30 px-4 py-3 text-white placeholder:text-zinc-600 outline-none transition focus:border-cyan-400/60 focus:ring-4 focus:ring-cyan-400/10"
+          className="w-full rounded-xl border border-white/10 bg-black/40 px-4 py-3 text-white placeholder:text-zinc-600 outline-none transition-all duration-300 focus:border-cyan-400/50 focus:bg-black/60 focus:ring-4 focus:ring-cyan-400/20 shadow-inner"
         />
         <p className="mt-2 text-xs text-zinc-500">
           URL or domain the Somnia agent will scrape at resolution time
@@ -93,10 +93,10 @@ export function CreateMarketForm() {
               key={d.seconds}
               type="button"
               onClick={() => setDuration(d.seconds)}
-              className={`rounded-lg border px-3 py-3 text-sm font-medium transition ${
+              className={`rounded-xl border px-3 py-3 text-sm font-medium transition-all duration-300 ${
                 duration === d.seconds
-                  ? 'border-cyan-400/40 bg-cyan-400/15 text-cyan-100'
-                  : 'border-white/10 bg-black/20 text-zinc-400 hover:border-white/20 hover:text-white'
+                  ? 'border-cyan-400/50 bg-gradient-to-r from-cyan-500/20 to-violet-500/20 text-cyan-100 shadow-[0_0_15px_rgba(6,182,212,0.15)] scale-[1.02]'
+                  : 'border-white/10 bg-black/40 text-zinc-400 hover:bg-white/5 hover:text-white shadow-inner hover:-translate-y-0.5'
               }`}
             >
               {d.label}
@@ -105,7 +105,7 @@ export function CreateMarketForm() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-4 text-sm leading-6 text-zinc-300">
+      <div className="rounded-xl border border-cyan-500/20 bg-gradient-to-r from-cyan-500/10 to-transparent p-4 text-sm leading-6 text-zinc-300 shadow-inner">
         At end time, an AI agent will scrape{' '}
         <strong className="break-all text-white">{source || '[source]'}</strong> to determine:{' '}
         <strong className="text-white">{question || '[question]'}</strong>
@@ -114,7 +114,7 @@ export function CreateMarketForm() {
       <button
         type="submit"
         disabled={isPending || isConfirming}
-        className="w-full rounded-lg bg-white px-6 py-3 font-semibold text-zinc-950 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+        className="w-full rounded-xl bg-gradient-to-r from-white to-cyan-100 px-6 py-3.5 font-bold text-zinc-950 transition-all duration-300 hover:scale-[1.01] hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
       >
         {isPending || isConfirming ? 'Creating...' : 'Create Market'}
       </button>

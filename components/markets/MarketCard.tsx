@@ -10,13 +10,25 @@ import {
 
 function StatusBadge({ status }: { status: MarketStatus }) {
   const styles = {
-    [MarketStatus.Open]: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-    [MarketStatus.Resolving]: 'bg-amber-500/20 text-amber-300 border-amber-500/30 animate-pulse',
-    [MarketStatus.Resolved]: 'bg-violet-500/20 text-violet-300 border-violet-500/30',
+    [MarketStatus.Open]: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
+    [MarketStatus.Resolving]: 'bg-amber-500/10 text-amber-300 border-amber-500/30',
+    [MarketStatus.Resolved]: 'bg-violet-500/10 text-violet-300 border-violet-500/30',
+  };
+
+  const dots = {
+    [MarketStatus.Open]: 'bg-emerald-400',
+    [MarketStatus.Resolving]: 'bg-amber-400',
+    [MarketStatus.Resolved]: 'bg-violet-400',
   };
 
   return (
-    <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${styles[status]}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium shadow-sm backdrop-blur-md ${styles[status]}`}>
+      <span className="relative flex h-1.5 w-1.5">
+        {status !== MarketStatus.Resolved && (
+          <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${dots[status]}`}></span>
+        )}
+        <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${dots[status]}`}></span>
+      </span>
       {statusLabel(status)}
     </span>
   );
@@ -43,36 +55,49 @@ export function MarketCard({
   return (
     <Link
       href={`/market/${id.toString()}`}
-      className="group flex min-h-52 flex-col rounded-lg border border-white/10 bg-white/[0.045] p-5 shadow-xl shadow-black/10 transition hover:-translate-y-0.5 hover:border-cyan-400/30 hover:bg-white/[0.07]"
+      className="group flex min-h-52 flex-col rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl shadow-xl shadow-black/20 transition-all duration-300 ease-out hover:-translate-y-1 hover:border-cyan-400/40 hover:shadow-[0_8px_30px_rgb(6,182,212,0.15)] hover:bg-white/10"
     >
       <div className="mb-4 flex items-start justify-between gap-3">
-        <h3 className="line-clamp-3 font-semibold leading-snug text-white transition-colors group-hover:text-cyan-100">
+        <h3 className="line-clamp-3 text-lg font-bold leading-snug text-white transition-colors group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-cyan-200">
           {market.question}
         </h3>
         <StatusBadge status={market.status} />
       </div>
 
-      <p className="mb-5 truncate rounded-md border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-400">
+      <p className="mb-5 truncate rounded-lg border border-white/5 bg-black/40 px-3 py-2 text-xs text-zinc-400 shadow-inner">
         {market.resolutionSource}
       </p>
 
+      <div className="mb-5">
+        <div className="mb-1.5 flex justify-between text-xs font-semibold tracking-wide">
+          <span className="text-emerald-400 drop-shadow-sm">Yes {yesOdds.toFixed(0)}%</span>
+          <span className="text-rose-400 drop-shadow-sm">No {(100 - yesOdds).toFixed(0)}%</span>
+        </div>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-rose-500/20 shadow-inner">
+          <div 
+            className="h-full rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] transition-all duration-500 ease-out" 
+            style={{ width: `${yesOdds}%` }} 
+          />
+        </div>
+      </div>
+
       <div className="mt-auto space-y-4 text-sm">
-        <div className="grid grid-cols-2 gap-2">
-          <div className="rounded-md bg-black/20 p-3">
-            <div className="text-xs text-zinc-500">Pool</div>
-            <div className="mt-1 font-semibold text-white">{formatStt(totalPool)}</div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-xl bg-black/30 p-3 shadow-inner">
+            <div className="text-xs font-medium uppercase tracking-wider text-zinc-500">Pool</div>
+            <div className="mt-1 text-lg font-bold text-white drop-shadow-sm">{formatStt(totalPool)}</div>
           </div>
-          <div className="rounded-md bg-emerald-400/10 p-3">
-            <div className="text-xs text-emerald-200/70">YES odds</div>
-            <div className="mt-1 font-semibold text-emerald-200">{yesOdds.toFixed(0)}%</div>
+          <div className="rounded-xl bg-emerald-500/10 p-3 shadow-inner border border-emerald-500/10">
+            <div className="text-xs font-medium uppercase tracking-wider text-emerald-400/80">YES odds</div>
+            <div className="mt-1 text-lg font-bold text-emerald-300 drop-shadow-sm">{yesOdds.toFixed(0)}%</div>
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-white/10 pt-4">
-          <span className="truncate text-xs text-violet-200">
+        <div className="flex items-center justify-between gap-3 border-t border-white/10 pt-4 mt-2">
+          <span className="truncate text-xs font-semibold text-violet-300">
             {yourSide ? `Your bet: ${yourSide}` : 'No position yet'}
           </span>
-          <span className="shrink-0 text-right text-xs font-medium text-cyan-200">
+          <span className="shrink-0 text-right text-xs font-bold text-cyan-300 uppercase tracking-wide">
           {market.status === MarketStatus.Resolved
             ? market.outcome
               ? 'Resolved YES'

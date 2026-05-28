@@ -42,11 +42,31 @@ type AgentState = {
   contractBalance: bigint;
   topUpNeeded: bigint;
   resolvableIds: bigint[];
+  inspectedIds: bigint[];
   nextCursor: bigint;
   contexts: AgentMarketContext[];
 };
 
-const INSPECT_FALLBACK_IDS = [1n, 2n];
+const INSPECT_FALLBACK_IDS = [6n, 5n, 4n, 3n, 2n, 1n];
+const MAX_CONTEXTS = 6;
+
+function uniqueMarketIds(ids: bigint[]): bigint[] {
+  const seen = new Set<string>();
+  return ids.filter((id) => {
+    const key = id.toString();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function latestMarketIds(nextMarketId: bigint): bigint[] {
+  const ids: bigint[] = [];
+  for (let id = nextMarketId - 1n; id > 0n && ids.length < MAX_CONTEXTS; id -= 1n) {
+    ids.push(id);
+  }
+  return ids;
+}
 
 export function AgentCommandCenter() {
   const { isConnected } = useAccount();
@@ -63,7 +83,7 @@ export function AgentCommandCenter() {
     queryKey: ['agent-command-center'],
     refetchInterval: 10_000,
     queryFn: async (): Promise<AgentState> => {
-      const [funding, scan] = await Promise.all([
+      const [funding, scan, nextMarketId] = await Promise.all([
         proofPublicClient.readContract({
           address: CONTRACT_ADDRESS,
           abi: CONTRACT_ABI,
@@ -75,11 +95,20 @@ export function AgentCommandCenter() {
           functionName: 'scanResolvableMarkets',
           args: [1n, 10n],
         }) as Promise<readonly [readonly bigint[], bigint]>,
+        proofPublicClient.readContract({
+          address: CONTRACT_ADDRESS,
+          abi: CONTRACT_ABI,
+          functionName: 'nextMarketId',
+        }) as Promise<bigint>,
       ]);
 
       const resolvableIds = [...scan[0]];
-      const idsToInspect = resolvableIds.length > 0 ? resolvableIds.slice(0, 4) : INSPECT_FALLBACK_IDS;
-      const contexts = await Promise.all(
+      const idsToInspect = uniqueMarketIds([
+        ...resolvableIds,
+        ...latestMarketIds(nextMarketId),
+        ...INSPECT_FALLBACK_IDS,
+      ]).slice(0, MAX_CONTEXTS);
+      const contexts = (await Promise.all(
         idsToInspect.map((marketId) =>
           proofPublicClient.readContract({
             address: CONTRACT_ADDRESS,
@@ -88,13 +117,14 @@ export function AgentCommandCenter() {
             args: [marketId],
           }) as Promise<AgentMarketContext>
         )
-      );
+      )).filter((context) => context.exists);
 
       return {
         requiredDeposit: funding[0],
         contractBalance: funding[1],
         topUpNeeded: funding[2],
         resolvableIds,
+        inspectedIds: idsToInspect,
         nextCursor: scan[1],
         contexts,
       };
@@ -136,7 +166,9 @@ export function AgentCommandCenter() {
     },
     {
       label: 'Inspect',
-      detail: data ? `${data.contexts.length} context${data.contexts.length === 1 ? '' : 's'} loaded` : 'Awaiting RPC',
+      detail: data
+        ? `${data.contexts.length}/${data.inspectedIds.length} context${data.contexts.length === 1 ? '' : 's'} loaded`
+        : 'Awaiting RPC',
       active: !!data?.contexts.length,
     },
     {
@@ -152,7 +184,7 @@ export function AgentCommandCenter() {
   ];
 
   return (
-    <section className="overflow-hidden rounded-lg border border-cyan-400/20 bg-cyan-400/[0.07] shadow-2xl shadow-black/15">
+    <section className="overflow-hidden rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 to-violet-500/5 backdrop-blur-xl shadow-[0_0_40px_rgba(6,182,212,0.15)]">
       <div className="border-b border-white/10 p-5 sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -169,7 +201,7 @@ export function AgentCommandCenter() {
             type="button"
             onClick={() => refetch()}
             disabled={isFetching}
-            className="w-full rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-fit"
+            className="w-full rounded-xl bg-gradient-to-r from-white to-cyan-100 px-5 py-2.5 text-sm font-bold text-zinc-950 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_15px_rgba(255,255,255,0.3)] disabled:cursor-not-allowed disabled:opacity-60 sm:w-fit"
           >
             {isFetching ? 'Scanning...' : 'Run Agent Scan'}
           </button>
@@ -180,10 +212,10 @@ export function AgentCommandCenter() {
         {steps.map((step) => (
           <div
             key={step.label}
-            className={`rounded-lg border p-4 ${
+            className={`rounded-xl border p-4 backdrop-blur-sm shadow-inner transition-colors duration-300 ${
               step.active
-                ? 'border-cyan-400/25 bg-cyan-400/10'
-                : 'border-white/10 bg-black/20'
+                ? 'border-cyan-400/40 bg-cyan-400/10 shadow-[0_0_15px_rgba(6,182,212,0.1)]'
+                : 'border-white/5 bg-black/40'
             }`}
           >
             <div className="flex items-center gap-2">
@@ -208,7 +240,7 @@ export function AgentCommandCenter() {
             <Metric label="Top-Up Needed" value={data ? formatStt(data.topUpNeeded) : '...'} tone={data?.topUpNeeded === 0n ? 'good' : 'warn'} />
           </div>
 
-          <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+          <div className="rounded-xl border border-white/5 bg-black/40 p-5 shadow-inner backdrop-blur-sm">
             <h3 className="text-sm font-semibold text-white">Autonomous Call Path</h3>
             <div className="mt-3 space-y-2 font-mono text-xs text-zinc-400">
               <p>1. scanResolvableMarkets(1, 10)</p>
@@ -220,7 +252,7 @@ export function AgentCommandCenter() {
 
           <Link
             href="/api/agent-manifest"
-            className="block rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-cyan-200 transition hover:border-cyan-400/30 hover:bg-black/30"
+            className="block rounded-xl border border-white/5 bg-black/40 p-4 text-sm font-semibold text-cyan-300 shadow-inner backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-cyan-400/40 hover:bg-white/5"
           >
             Open machine-readable manifest
           </Link>
@@ -260,8 +292,8 @@ export function AgentCommandCenter() {
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: 'good' | 'warn' }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-black/20 p-4">
-      <div className="text-xs text-zinc-500">{label}</div>
+    <div className="rounded-xl border border-white/5 bg-black/40 p-4 shadow-inner backdrop-blur-sm">
+      <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">{label}</div>
       <div
         className={`mt-1 font-semibold ${
           tone === 'good' ? 'text-emerald-200' : tone === 'warn' ? 'text-amber-200' : 'text-white'
@@ -288,7 +320,7 @@ function MarketContextCard({
   const hasRequests = context.parseRequestId > 0n || context.inferenceRequestId > 0n;
 
   return (
-    <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+    <div className="rounded-xl border border-white/5 bg-black/40 p-5 shadow-inner backdrop-blur-md transition-all duration-300 hover:bg-white/5 hover:border-cyan-400/30">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -313,7 +345,7 @@ function MarketContextCard({
           type="button"
           onClick={onResolve}
           disabled={!isResolvable || isBusy || !isConnected}
-          className="shrink-0 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-45"
+          className="shrink-0 rounded-xl bg-gradient-to-r from-white to-cyan-100 px-5 py-2.5 text-sm font-bold text-zinc-950 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_15px_rgba(255,255,255,0.3)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100 disabled:hover:shadow-none"
         >
           {isBusy ? 'Invoking...' : isConnected ? 'Invoke Resolver' : 'Connect Wallet'}
         </button>
@@ -331,9 +363,9 @@ function MarketContextCard({
 
 function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-white/10 bg-white/[0.035] p-3">
-      <div className="text-zinc-500">{label}</div>
-      <div className="mt-1 truncate font-medium text-zinc-200">{value}</div>
+    <div className="rounded-xl border border-white/5 bg-black/40 p-3 shadow-inner">
+      <div className="text-xs font-medium text-zinc-500 uppercase tracking-wider">{label}</div>
+      <div className="mt-1.5 truncate font-bold text-zinc-200">{value}</div>
     </div>
   );
 }

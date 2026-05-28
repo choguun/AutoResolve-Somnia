@@ -3,12 +3,12 @@
 @import "tailwindcss/utilities";
 
 :root {
-  --background: #090b10;
+  --background: #050508;
   --foreground: #f8fafc;
   --muted: #a1a1aa;
-  --panel: rgba(255, 255, 255, 0.055);
-  --panel-strong: rgba(255, 255, 255, 0.085);
-  --line: rgba(255, 255, 255, 0.1);
+  --panel: rgba(255, 255, 255, 0.035);
+  --panel-strong: rgba(255, 255, 255, 0.065);
+  --line: rgba(255, 255, 255, 0.08);
   --accent: #8b5cf6;
   --accent-secondary: #06b6d4;
 }
@@ -19,14 +19,18 @@
 
 html {
   background: var(--background);
+  scroll-behavior: smooth;
 }
 
 body {
   color: var(--foreground);
-  background:
-    radial-gradient(circle at 18% 0%, rgba(139, 92, 246, 0.18), transparent 34rem),
-    radial-gradient(circle at 82% 10%, rgba(6, 182, 212, 0.12), transparent 30rem),
-    linear-gradient(180deg, #0d1017 0%, var(--background) 42rem);
+  background-color: var(--background);
+  background-image: 
+    radial-gradient(circle at 15% 50%, rgba(139, 92, 246, 0.15), transparent 25vw),
+    radial-gradient(circle at 85% 30%, rgba(6, 182, 212, 0.15), transparent 25vw),
+    radial-gradient(circle at 50% 100%, rgba(139, 92, 246, 0.08), transparent 50vw),
+    radial-gradient(circle at 50% 0%, rgba(6, 182, 212, 0.08), transparent 30vw);
+  background-attachment: fixed;
   min-height: 100vh;
 }
 
@@ -45,4 +49,24 @@ textarea {
 
 ::selection {
   background: rgba(6, 182, 212, 0.35);
+  color: white;
+}
+
+/* Custom Scrollbar for a premium feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
