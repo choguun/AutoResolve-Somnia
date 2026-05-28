@@ -1,9 +1,12 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt, useBalance } from 'wagmi';
 import { toast } from 'sonner';
 import { CONTRACT_ABI, CONTRACT_ADDRESS, formatStt } from '@/lib-web/contract';
 import { useResolutionDeposit } from '@/hooks/useMarkets';
+import { showConfirmedTransactionToast, showSubmittedTransactionToast } from '@/lib-web/transactionToast';
+import { TransactionStatus } from '@/components/shared/TransactionStatus';
 
 export function ResolutionPanel({
   marketId,
@@ -17,7 +20,7 @@ export function ResolutionPanel({
   const { data: deposit } = useResolutionDeposit();
   const { data: contractBalance } = useBalance({ address: CONTRACT_ADDRESS });
   const { writeContract, data: hash, isPending } = useWriteContract();
-  const { isLoading: isConfirming } = useWaitForTransactionReceipt({ hash });
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
   const poolBalance = contractBalance?.value ?? 0n;
   const topUp =
@@ -35,11 +38,18 @@ export function ResolutionPanel({
         value: topUp,
       },
       {
-        onSuccess: () => toast.success('Resolution requested — agents are working'),
+        onSuccess: (txHash) =>
+          showSubmittedTransactionToast(txHash, 'Requesting autonomous resolution...', 'request-resolution'),
         onError: (err) => toast.error(err.message.slice(0, 120)),
       }
     );
   };
+
+  useEffect(() => {
+    if (isSuccess) {
+      showConfirmedTransactionToast(hash, 'Resolution requested - agents are working', 'request-resolution');
+    }
+  }, [hash, isSuccess]);
 
   if (isResolving) {
     return (
@@ -82,6 +92,7 @@ export function ResolutionPanel({
       >
         {isPending || isConfirming ? 'Submitting...' : 'Request Resolution'}
       </button>
+      <TransactionStatus hash={hash} isConfirming={isConfirming} />
     </div>
   );
 }

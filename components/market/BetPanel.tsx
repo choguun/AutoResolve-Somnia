@@ -1,9 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { parseEther } from 'viem';
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
+import { showConfirmedTransactionToast, showSubmittedTransactionToast } from '@/lib-web/transactionToast';
+import { TransactionStatus } from '@/components/shared/TransactionStatus';
 import {
   BetOption,
   CONTRACT_ABI,
@@ -19,7 +21,7 @@ export function BetPanel({ marketId, market }: { marketId: bigint; market: Marke
   const disabled = market.status !== MarketStatus.Open || Date.now() >= Number(market.endTime) * 1000;
 
   const { writeContract, data: hash, isPending } = useWriteContract();
-  const { isLoading: isConfirming } = useWaitForTransactionReceipt({ hash });
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
   const placeBet = (option: BetOption) => {
     writeContract(
@@ -31,11 +33,22 @@ export function BetPanel({ marketId, market }: { marketId: bigint; market: Marke
         value: parseEther(amount),
       },
       {
-        onSuccess: () => toast.success(`Bet placed on ${option === BetOption.Yes ? 'YES' : 'NO'}`),
+        onSuccess: (txHash) =>
+          showSubmittedTransactionToast(
+            txHash,
+            `Placing ${option === BetOption.Yes ? 'YES' : 'NO'} bet...`,
+            'place-bet'
+          ),
         onError: (err) => toast.error(err.message.slice(0, 120)),
       }
     );
   };
+
+  useEffect(() => {
+    if (isSuccess) {
+      showConfirmedTransactionToast(hash, 'Bet placed', 'place-bet');
+    }
+  }, [hash, isSuccess]);
 
   const yesOdds = oddsPercent(market.yesTotal, market.noTotal, 'yes');
   const noOdds = oddsPercent(market.yesTotal, market.noTotal, 'no');
@@ -89,6 +102,7 @@ export function BetPanel({ marketId, market }: { marketId: bigint; market: Marke
           Bet NO
         </button>
       </div>
+      <TransactionStatus hash={hash} isConfirming={isConfirming} />
     </div>
   );
 }

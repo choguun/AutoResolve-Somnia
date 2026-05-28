@@ -1,10 +1,13 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { createPublicClient, http } from 'viem';
 import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
 import { toast } from 'sonner';
+import { showConfirmedTransactionToast, showSubmittedTransactionToast } from '@/lib-web/transactionToast';
+import { TransactionStatus } from '@/components/shared/TransactionStatus';
 import {
   CONTRACT_ABI,
   CONTRACT_ADDRESS,
@@ -48,7 +51,7 @@ const INSPECT_FALLBACK_IDS = [1n, 2n];
 export function AgentCommandCenter() {
   const { isConnected } = useAccount();
   const { writeContract, data: hash, isPending } = useWriteContract();
-  const { isLoading: isConfirming } = useWaitForTransactionReceipt({ hash });
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
   const {
     data,
@@ -108,11 +111,22 @@ export function AgentCommandCenter() {
         value: context.topUpNeeded,
       },
       {
-        onSuccess: () => toast.success(`Resolver invoked for market #${context.marketId.toString()}`),
+        onSuccess: (txHash) =>
+          showSubmittedTransactionToast(
+            txHash,
+            `Invoking resolver for market #${context.marketId.toString()}...`,
+            'agent-resolver'
+          ),
         onError: (err) => toast.error(err.message.slice(0, 140)),
       }
     );
   };
+
+  useEffect(() => {
+    if (isSuccess) {
+      showConfirmedTransactionToast(hash, 'Resolver invoked - agents are working', 'agent-resolver');
+    }
+  }, [hash, isSuccess]);
 
   const steps = [
     {
@@ -236,6 +250,7 @@ export function AgentCommandCenter() {
                 No markets returned by the resolver scan.
               </div>
             )}
+            <TransactionStatus hash={hash} isConfirming={isConfirming} />
           </div>
         </div>
       </div>

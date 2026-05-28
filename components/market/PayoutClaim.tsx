@@ -1,9 +1,12 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
 import { CONTRACT_ABI, CONTRACT_ADDRESS, type Market } from '@/lib-web/contract';
 import { useUserBets } from '@/hooks/useMarkets';
+import { showConfirmedTransactionToast, showSubmittedTransactionToast } from '@/lib-web/transactionToast';
+import { TransactionStatus } from '@/components/shared/TransactionStatus';
 
 export function OutcomeDisplay({ market }: { market: Market }) {
   return (
@@ -30,12 +33,16 @@ export function PayoutClaim({ marketId, market }: { marketId: bigint; market: Ma
   const { address } = useAccount();
   const { data: userBets } = useUserBets(marketId, address);
   const { writeContract, data: hash, isPending } = useWriteContract();
-  const { isLoading: isConfirming } = useWaitForTransactionReceipt({ hash });
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
   const winningBets = market.outcome ? userBets?.yes : userBets?.no;
   const hasWinningBets = winningBets !== undefined && winningBets > 0n;
 
-  if (!hasWinningBets) return null;
+  useEffect(() => {
+    if (isSuccess) {
+      showConfirmedTransactionToast(hash, 'Winnings claimed!', 'claim-winnings');
+    }
+  }, [hash, isSuccess]);
 
   const claim = () => {
     writeContract(
@@ -46,19 +53,24 @@ export function PayoutClaim({ marketId, market }: { marketId: bigint; market: Ma
         args: [marketId],
       },
       {
-        onSuccess: () => toast.success('Winnings claimed!'),
+        onSuccess: (txHash) => showSubmittedTransactionToast(txHash, 'Claiming winnings...', 'claim-winnings'),
         onError: (err) => toast.error(err.message.slice(0, 120)),
       }
     );
   };
 
+  if (!hasWinningBets) return null;
+
   return (
-    <button
-      onClick={claim}
-      disabled={isPending || isConfirming}
-      className="w-full rounded-lg bg-white px-6 py-3 font-semibold text-zinc-950 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      {isPending || isConfirming ? 'Claiming...' : 'Claim Winnings'}
-    </button>
+    <div>
+      <button
+        onClick={claim}
+        disabled={isPending || isConfirming}
+        className="w-full rounded-lg bg-white px-6 py-3 font-semibold text-zinc-950 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {isPending || isConfirming ? 'Claiming...' : 'Claim Winnings'}
+      </button>
+      <TransactionStatus hash={hash} isConfirming={isConfirming} />
+    </div>
   );
 }

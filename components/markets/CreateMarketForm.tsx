@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
 import { CONTRACT_ABI, CONTRACT_ADDRESS } from '@/lib-web/contract';
+import { showConfirmedTransactionToast, showSubmittedTransactionToast } from '@/lib-web/transactionToast';
+import { TransactionStatus } from '@/components/shared/TransactionStatus';
 
 const DURATIONS = [
   { label: '5 min (demo)', seconds: 300 },
@@ -25,10 +27,10 @@ export function CreateMarketForm() {
 
   useEffect(() => {
     if (isSuccess) {
-      toast.success('Market created!', { id: 'create-market' });
+      showConfirmedTransactionToast(hash, 'Market created!', 'create-market');
       router.push('/');
     }
-  }, [isSuccess, router]);
+  }, [hash, isSuccess, router]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,7 +51,7 @@ export function CreateMarketForm() {
         args: [question.trim(), source.trim(), BigInt(duration)],
       },
       {
-        onSuccess: () => toast.loading('Creating market...', { id: 'create-market' }),
+        onSuccess: (txHash) => showSubmittedTransactionToast(txHash, 'Creating market...', 'create-market'),
         onError: (err) => toast.error(err.message.slice(0, 120)),
       }
     );
@@ -116,6 +118,7 @@ export function CreateMarketForm() {
       >
         {isPending || isConfirming ? 'Creating...' : 'Create Market'}
       </button>
+      <TransactionStatus hash={hash} isConfirming={isConfirming} />
     </form>
   );
 }
