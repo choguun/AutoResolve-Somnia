@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useAccount, usePublicClient } from 'wagmi';
 import { createPublicClient, http, type PublicClient } from 'viem';
 import {
@@ -65,15 +65,22 @@ export function useMarket(marketId: bigint | undefined) {
 export function useMarkets() {
   const { data: nextMarketId } = useNextMarketId();
   const publicClient = useSomniaPublicClient();
+  const PAGE_SIZE = 9; // Grid is 3 columns, so 9 is a perfect multiple
 
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: ['markets', nextMarketId?.toString()],
     enabled: !!nextMarketId && nextMarketId > 1n,
-    queryFn: async () => {
+    initialPageParam: 0,
+    queryFn: async ({ pageParam = 0 }) => {
       const markets: Array<{ id: bigint; market: Market }> = [];
       const total = Number(nextMarketId!);
+      
+      const startId = total - 1 - pageParam * PAGE_SIZE;
+      const endId = Math.max(1, startId - PAGE_SIZE + 1);
 
-      for (let id = 1; id < total; id++) {
+      if (startId < 1) return [];
+
+      for (let id = startId; id >= endId; id--) {
         const market = (await publicClient!.readContract({
           address: CONTRACT_ADDRESS,
           abi: CONTRACT_ABI,
@@ -86,7 +93,13 @@ export function useMarkets() {
         }
       }
 
-      return markets.reverse();
+      return markets;
+    },
+    getNextPageParam: (lastPage, allPages) => {
+      const fetchedCount = allPages.reduce((sum, page) => sum + page.length, 0);
+      const total = Number(nextMarketId!) - 1;
+      if (fetchedCount >= total) return undefined;
+      return allPages.length;
     },
     refetchInterval: 10_000,
   });
@@ -166,8 +179,10 @@ export function useMyBetsMarkets(
 
 export function useMyBets() {
   const { address } = useAccount();
-  const { data: markets, isLoading: marketsLoading, error: marketsError } = useMarkets();
-  const query = useMyBetsMarkets(markets, address);
+  const { data: marketsData, isLoading: marketsLoading, error: marketsError } = useMarkets();
+  
+  const allMarkets = marketsData?.pages.flat();
+  const query = useMyBetsMarkets(allMarkets, address);
 
   return {
     ...query,

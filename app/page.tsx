@@ -4,6 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useAccount } from 'wagmi';
 import { MarketCard } from '@/components/markets/MarketCard';
+import { MarketCardSkeleton } from '@/components/shared/Skeleton';
+import { EmptyState } from '@/components/shared/EmptyState';
 import { useMarkets, useMyBetsMarkets } from '@/hooks/useMarkets';
 import { MarketStatus } from '@/lib-web/contract';
 
@@ -18,8 +20,9 @@ const TABS: { id: Tab; label: string }[] = [
 export default function HomePage() {
   const [tab, setTab] = useState<Tab>('active');
   const { address, isConnected } = useAccount();
-  const { data: markets, isLoading, error } = useMarkets();
-  const { data: myBets, isLoading: myBetsLoading } = useMyBetsMarkets(markets, address);
+  const { data: marketsData, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } = useMarkets();
+  const allMarkets = marketsData?.pages.flat();
+  const { data: myBets, isLoading: myBetsLoading } = useMyBetsMarkets(allMarkets, address);
 
   const myBetsById = new Map(
     myBets?.map(({ id, yes, no }) => [id.toString(), { yes, no }]) ?? []
@@ -28,16 +31,16 @@ export default function HomePage() {
   const filtered =
     tab === 'my-bets'
       ? myBets?.map(({ id, market }) => ({ id, market }))
-      : markets?.filter(({ market }) => {
+      : allMarkets?.filter(({ market }) => {
           if (tab === 'active') return market.status !== MarketStatus.Resolved;
           return market.status === MarketStatus.Resolved;
         });
 
   const showLoading = isLoading || (tab === 'my-bets' && myBetsLoading);
   const activeCount =
-    markets?.filter(({ market }) => market.status !== MarketStatus.Resolved).length ?? 0;
+    allMarkets?.filter(({ market }) => market.status !== MarketStatus.Resolved).length ?? 0;
   const resolvedCount =
-    markets?.filter(({ market }) => market.status === MarketStatus.Resolved).length ?? 0;
+    allMarkets?.filter(({ market }) => market.status === MarketStatus.Resolved).length ?? 0;
 
   return (
     <div className="space-y-8">
@@ -63,8 +66,8 @@ export default function HomePage() {
 
           <div className="grid grid-cols-3 gap-3 sm:min-w-80">
             <div className="flex flex-col items-center justify-center rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur-md shadow-inner transition-transform hover:scale-105">
-              <div className="text-3xl font-bold text-white drop-shadow-md">{markets?.length ?? '—'}</div>
-              <div className="mt-1 text-xs font-medium uppercase tracking-wider text-zinc-400">Total</div>
+              <div className="text-3xl font-bold text-white drop-shadow-md">{allMarkets?.length ?? '—'}</div>
+              <div className="mt-1 text-xs font-medium uppercase tracking-wider text-zinc-400">Total Loaded</div>
             </div>
             <div className="flex flex-col items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 backdrop-blur-md shadow-[0_0_20px_rgba(16,185,129,0.1)] shadow-inner transition-transform hover:scale-105">
               <div className="text-3xl font-bold text-emerald-300 drop-shadow-md">{activeCount}</div>
@@ -117,7 +120,7 @@ export default function HomePage() {
       {showLoading && (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="h-52 animate-pulse rounded-lg border border-white/10 bg-white/5" />
+            <MarketCardSkeleton key={i} />
           ))}
         </div>
       )}
@@ -130,23 +133,19 @@ export default function HomePage() {
       )}
 
       {!showLoading && tab === 'my-bets' && !isConnected && (
-        <div className="rounded-lg border border-white/10 bg-white/[0.04] p-10 text-center">
-          <p className="text-white">Connect your wallet</p>
-          <p className="mt-2 text-sm text-zinc-500">Your active and resolved positions will appear here.</p>
-        </div>
+        <EmptyState
+          title="Connect your wallet"
+          description="Your active and resolved positions will appear here once you connect."
+        />
       )}
 
       {!showLoading && filtered?.length === 0 && (tab !== 'my-bets' || isConnected) && (
-        <div className="rounded-lg border border-dashed border-white/15 bg-white/[0.035] p-10 text-center">
-          <p className="font-medium text-white">
-            {tab === 'my-bets'
-              ? 'No bets placed yet.'
-              : `No ${tab} markets yet.`}
-          </p>
-          <Link href={tab === 'my-bets' ? '/' : '/create'} className="mt-4 inline-flex rounded-lg border border-white/10 px-4 py-2 text-sm text-cyan-200 transition hover:bg-white/5">
-            {tab === 'my-bets' ? 'Browse markets' : 'Create the first market'}
-          </Link>
-        </div>
+        <EmptyState
+          title={tab === 'my-bets' ? 'No bets placed yet' : `No ${tab} markets yet`}
+          description={tab === 'my-bets' ? 'Explore active markets and place your first bet.' : 'Be the first to create a new market for others to trade on.'}
+          actionLabel={tab === 'my-bets' ? 'Browse markets' : 'Create Market'}
+          actionHref={tab === 'my-bets' ? '/' : '/create'}
+        />
       )}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -159,6 +158,18 @@ export default function HomePage() {
           />
         ))}
       </div>
+
+      {hasNextPage && tab !== 'my-bets' && (
+        <div className="mt-8 flex justify-center">
+          <button
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            className="rounded-xl border border-white/10 bg-white/5 px-8 py-3 font-semibold text-white backdrop-blur-md transition-all duration-300 hover:bg-white/10 hover:shadow-[0_0_15px_rgba(255,255,255,0.1)] disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isFetchingNextPage ? 'Loading more...' : 'Load More Markets'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

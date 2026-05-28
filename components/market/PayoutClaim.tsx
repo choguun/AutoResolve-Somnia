@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
+import { CheckCircle2, XCircle, Wallet } from 'lucide-react';
 import { CONTRACT_ABI, CONTRACT_ADDRESS, type Market } from '@/lib-web/contract';
 import { useUserBets } from '@/hooks/useMarkets';
 import { showConfirmedTransactionToast, showSubmittedTransactionToast } from '@/lib-web/transactionToast';
@@ -17,7 +18,8 @@ export function OutcomeDisplay({ market }: { market: Market }) {
           : 'border-rose-500/40 bg-rose-500/10 text-rose-50 shadow-[0_0_30px_rgba(244,63,94,0.15)]'
       }`}
     >
-      <h2 className="mb-2 text-lg font-semibold">
+      <h2 className="mb-3 flex items-center gap-2 text-xl font-bold drop-shadow-sm">
+        {market.outcome ? <CheckCircle2 className="h-6 w-6" /> : <XCircle className="h-6 w-6" />}
         Resolved: {market.outcome ? 'YES' : 'NO'}
       </h2>
       {market.resolutionReason && (
@@ -66,8 +68,9 @@ export function PayoutClaim({ marketId, market }: { marketId: bigint; market: Ma
       <button
         onClick={claim}
         disabled={isPending || isConfirming}
-        className="w-full rounded-xl bg-gradient-to-r from-white to-violet-100 px-6 py-3.5 font-bold text-zinc-950 shadow-[0_0_15px_rgba(255,255,255,0.3)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_20px_rgba(255,255,255,0.4)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-white to-violet-100 px-6 py-3.5 font-bold text-zinc-950 shadow-[0_0_15px_rgba(255,255,255,0.3)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_20px_rgba(255,255,255,0.4)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 disabled:hover:shadow-none"
       >
+        <Wallet className="h-5 w-5 opacity-80" />
         {isPending || isConfirming ? 'Claiming...' : 'Claim Winnings'}
       </button>
       <TransactionStatus hash={hash} isConfirming={isConfirming} />

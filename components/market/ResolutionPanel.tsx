@@ -3,6 +3,8 @@
 import { useEffect } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt, useBalance } from 'wagmi';
 import { toast } from 'sonner';
+import { Bot, Info, Activity } from 'lucide-react';
+import { Tooltip } from '@/components/shared/Tooltip';
 import { CONTRACT_ABI, CONTRACT_ADDRESS, formatStt } from '@/lib-web/contract';
 import { useResolutionDeposit } from '@/hooks/useMarkets';
 import { showConfirmedTransactionToast, showSubmittedTransactionToast } from '@/lib-web/transactionToast';
@@ -54,10 +56,12 @@ export function ResolutionPanel({
   if (isResolving) {
     return (
       <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 backdrop-blur-md shadow-[0_0_20px_rgba(245,158,11,0.15)] sm:p-8">
-        <div className="flex items-center gap-3">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-amber-400 border-t-transparent" />
+        <div className="flex items-start gap-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-amber-500/20 bg-amber-500/20">
+            <Activity className="h-5 w-5 animate-pulse text-amber-400" />
+          </div>
           <div>
-            <h2 className="font-semibold text-amber-200">Autonomous Resolution In Progress</h2>
+            <h2 className="font-semibold text-amber-200 text-lg">Autonomous Resolution In Progress</h2>
             <p className="text-sm text-zinc-400">
               Somnia agents are scraping the web and classifying the outcome...
             </p>
@@ -71,19 +75,30 @@ export function ResolutionPanel({
 
   return (
     <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/10 p-6 backdrop-blur-md shadow-xl shadow-black/20 sm:p-8">
-      <h2 className="mb-2 text-lg font-semibold text-cyan-100">Request Autonomous Resolution</h2>
+      <div className="mb-2 flex items-center gap-2">
+        <Bot className="h-5 w-5 text-cyan-300" />
+        <h2 className="text-lg font-semibold text-cyan-100">Request Autonomous Resolution</h2>
+      </div>
       <p className="mb-4 max-w-3xl text-sm leading-6 text-zinc-400">
         Trigger the two-stage Somnia agent pipeline: web scrape → YES/NO classification.
         Validators reach byte-identical consensus on the result.
       </p>
       {deposit && (
-        <p className="mb-6 rounded-xl border border-white/5 bg-black/40 px-5 py-4 text-sm text-zinc-300 shadow-inner backdrop-blur-sm">
-          Agent cost: <span className="font-mono text-white">{formatStt(deposit)}</span>
-          <span className="text-zinc-500"> · Pool: {formatStt(poolBalance)}</span>
-          {topUp > 0n && (
-            <span className="text-zinc-500"> · Top-up from wallet: {formatStt(topUp)}</span>
-          )}
-        </p>
+        <div className="mb-6 rounded-xl border border-white/5 bg-black/40 px-5 py-4 text-sm text-zinc-300 shadow-inner backdrop-blur-sm">
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-400">Agent cost:</span>
+            <span className="font-mono font-semibold text-white">{formatStt(deposit)}</span>
+            <Tooltip content="Agents require a deposit to process the resolution. This goes to the validators executing the request.">
+              <Info className="h-3.5 w-3.5 cursor-help text-zinc-500 hover:text-zinc-300 transition-colors" />
+            </Tooltip>
+          </div>
+          <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+            <span>Pool: {formatStt(poolBalance)}</span>
+            {topUp > 0n && (
+              <span className="text-amber-200/80">Top-up from wallet: {formatStt(topUp)}</span>
+            )}
+          </div>
+        </div>
       )}
       <button
         onClick={requestResolution}

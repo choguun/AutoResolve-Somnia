@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { parseEther } from 'viem';
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { toast } from 'sonner';
+import { TrendingUp, TrendingDown } from 'lucide-react';
 import { showConfirmedTransactionToast, showSubmittedTransactionToast } from '@/lib-web/transactionToast';
 import { TransactionStatus } from '@/components/shared/TransactionStatus';
 import {
@@ -64,11 +65,17 @@ export function BetPanel({ marketId, market }: { marketId: bigint; market: Marke
 
       <div className="mb-6 grid grid-cols-2 gap-4">
         <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-5 text-center shadow-inner backdrop-blur-sm">
-          <div className="text-3xl font-extrabold text-emerald-300 drop-shadow-sm">{yesOdds.toFixed(1)}%</div>
+          <div className="flex items-center justify-center gap-2 text-3xl font-extrabold text-emerald-300 drop-shadow-sm">
+            {yesOdds.toFixed(1)}%
+            <TrendingUp className="h-6 w-6 opacity-80" />
+          </div>
           <div className="mt-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">YES · {formatStt(market.yesTotal)}</div>
         </div>
         <div className="rounded-xl border border-rose-400/20 bg-rose-400/10 p-5 text-center shadow-inner backdrop-blur-sm">
-          <div className="text-3xl font-extrabold text-rose-300 drop-shadow-sm">{noOdds.toFixed(1)}%</div>
+          <div className="flex items-center justify-center gap-2 text-3xl font-extrabold text-rose-300 drop-shadow-sm">
+            {noOdds.toFixed(1)}%
+            <TrendingDown className="h-6 w-6 opacity-80" />
+          </div>
           <div className="mt-2 text-xs font-semibold uppercase tracking-wider text-zinc-400">NO · {formatStt(market.noTotal)}</div>
         </div>
       </div>

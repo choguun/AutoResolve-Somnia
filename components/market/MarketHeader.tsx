@@ -1,5 +1,7 @@
 'use client';
 
+import { Info, Link as LinkIcon, Database } from 'lucide-react';
+import { Tooltip } from '@/components/shared/Tooltip';
 import { MarketStatus, formatCountdown, formatStt, statusLabel, type Market } from '@/lib-web/contract';
 
 export function MarketHeader({ market }: { market: Market }) {
@@ -29,13 +31,26 @@ export function MarketHeader({ market }: { market: Market }) {
       <h1 className="max-w-4xl text-3xl font-extrabold leading-tight tracking-tight text-white drop-shadow-sm sm:text-5xl">
         {market.question}
       </h1>
-      <p className="mt-5 break-all rounded-xl border border-white/5 bg-black/40 px-5 py-3 text-sm text-zinc-400 shadow-inner backdrop-blur-sm">
-        Source: <span className="font-semibold text-zinc-200">{market.resolutionSource}</span>
-      </p>
+      <div className="mt-5 flex items-center gap-2 rounded-xl border border-white/5 bg-black/40 px-5 py-3 text-sm shadow-inner backdrop-blur-sm">
+        <LinkIcon className="h-4 w-4 text-cyan-400" />
+        <span className="text-zinc-400">Source:</span>
+        <Tooltip content="Agents will scrape this URL to determine the outcome.">
+          <span className="flex items-center gap-1.5 font-semibold text-zinc-200 decoration-white/30 decoration-dashed underline-offset-4 hover:underline cursor-help transition-all">
+            <span className="truncate max-w-[200px] sm:max-w-md">{market.resolutionSource}</span>
+            <Info className="h-3.5 w-3.5 text-zinc-500" />
+          </span>
+        </Tooltip>
+      </div>
 
       <div className="mt-6 grid gap-4 text-sm sm:grid-cols-3">
         <div className="rounded-xl border border-white/5 bg-black/40 p-5 shadow-inner backdrop-blur-sm">
-          <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Total Pool</div>
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+            <Database className="h-3.5 w-3.5" />
+            Total Pool
+            <Tooltip content="The combined amount of STT staked by all participants.">
+              <Info className="h-3.5 w-3.5 cursor-help text-zinc-600 hover:text-zinc-400" />
+            </Tooltip>
+          </div>
           <div className="mt-2 text-xl font-bold text-white drop-shadow-sm">{formatStt(totalPool)}</div>
         </div>
         <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-5 shadow-[0_0_15px_rgba(16,185,129,0.1)] shadow-inner backdrop-blur-sm">
