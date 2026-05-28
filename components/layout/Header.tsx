@@ -12,10 +12,39 @@ export function Header() {
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
         <div className="flex min-w-0 items-center gap-6">
           <Link href="/" className="group flex min-w-0 items-center gap-3">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-cyan-400/30 bg-gradient-to-br from-cyan-400/10 to-violet-500/10 text-sm font-black text-cyan-200 shadow-[0_0_15px_rgba(6,182,212,0.15)] transition-all duration-300 group-hover:shadow-[0_0_20px_rgba(6,182,212,0.3)] group-hover:border-cyan-400/50">
-              AR
-            </span>
-            <span className="truncate text-lg font-bold tracking-tight text-white transition-colors duration-300 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-cyan-200 sm:text-xl">
+            <div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-black/40 shadow-[0_0_15px_rgba(6,182,212,0.15)] transition-all duration-300 group-hover:border-white/20 group-hover:shadow-[0_0_25px_rgba(139,92,246,0.3)]">
+              <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/20 to-violet-600/20 opacity-50 transition-opacity duration-300 group-hover:opacity-100" />
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="relative z-10 h-6 w-6 transition-transform duration-500 group-hover:scale-110"
+              >
+                <path
+                  d="M12 3L3 8V16L12 21L21 16V8L12 3Z"
+                  stroke="url(#logo-gradient)"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M12 3V21M3 8L21 16M3 16L21 8"
+                  stroke="url(#logo-gradient)"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="opacity-40"
+                />
+                <circle cx="12" cy="12" r="3" fill="currentColor" className="text-cyan-300 drop-shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
+                <defs>
+                  <linearGradient id="logo-gradient" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#22d3ee" />
+                    <stop offset="1" stopColor="#a78bfa" />
+                  </linearGradient>
+                </defs>
+              </svg>
+            </div>
+            <span className="truncate text-xl font-extrabold tracking-tight text-white transition-colors duration-300 group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-cyan-200">
               AutoResolve
             </span>
           </Link>
