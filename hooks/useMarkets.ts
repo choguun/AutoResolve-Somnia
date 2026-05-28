@@ -2,12 +2,23 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useAccount, usePublicClient } from 'wagmi';
+import { createPublicClient, http, type PublicClient } from 'viem';
 import {
   CONTRACT_ABI,
   CONTRACT_ADDRESS,
   type Market,
   type Bet,
 } from '@/lib-web/contract';
+import { somniaTestnet } from '@/lib-web/somnia';
+
+const fallbackPublicClient = createPublicClient({
+  chain: somniaTestnet,
+  transport: http('https://dream-rpc.somnia.network'),
+});
+
+function useSomniaPublicClient(): PublicClient {
+  return (usePublicClient() ?? fallbackPublicClient) as PublicClient;
+}
 
 export type UserMarketPosition = {
   id: bigint;
@@ -17,12 +28,11 @@ export type UserMarketPosition = {
 };
 
 export function useNextMarketId() {
-  const publicClient = usePublicClient();
+  const publicClient = useSomniaPublicClient();
 
   return useQuery({
     queryKey: ['nextMarketId'],
     queryFn: async () => {
-      if (!publicClient) return 1n;
       return publicClient.readContract({
         address: CONTRACT_ADDRESS,
         abi: CONTRACT_ABI,
@@ -34,11 +44,11 @@ export function useNextMarketId() {
 }
 
 export function useMarket(marketId: bigint | undefined) {
-  const publicClient = usePublicClient();
+  const publicClient = useSomniaPublicClient();
 
   return useQuery({
     queryKey: ['market', marketId?.toString()],
-    enabled: !!publicClient && marketId !== undefined && marketId > 0n,
+    enabled: marketId !== undefined && marketId > 0n,
     queryFn: async () => {
       const market = (await publicClient!.readContract({
         address: CONTRACT_ADDRESS,
@@ -54,11 +64,11 @@ export function useMarket(marketId: bigint | undefined) {
 
 export function useMarkets() {
   const { data: nextMarketId } = useNextMarketId();
-  const publicClient = usePublicClient();
+  const publicClient = useSomniaPublicClient();
 
   return useQuery({
     queryKey: ['markets', nextMarketId?.toString()],
-    enabled: !!publicClient && !!nextMarketId && nextMarketId > 1n,
+    enabled: !!nextMarketId && nextMarketId > 1n,
     queryFn: async () => {
       const markets: Array<{ id: bigint; market: Market }> = [];
       const total = Number(nextMarketId!);
@@ -83,11 +93,11 @@ export function useMarkets() {
 }
 
 export function useMarketBets(marketId: bigint | undefined) {
-  const publicClient = usePublicClient();
+  const publicClient = useSomniaPublicClient();
 
   return useQuery({
     queryKey: ['marketBets', marketId?.toString()],
-    enabled: !!publicClient && marketId !== undefined && marketId > 0n,
+    enabled: marketId !== undefined && marketId > 0n,
     queryFn: async () => {
       return publicClient!.readContract({
         address: CONTRACT_ADDRESS,
@@ -101,12 +111,11 @@ export function useMarketBets(marketId: bigint | undefined) {
 }
 
 export function useResolutionDeposit() {
-  const publicClient = usePublicClient();
+  const publicClient = useSomniaPublicClient();
 
   return useQuery({
     queryKey: ['resolutionDeposit'],
     queryFn: async () => {
-      if (!publicClient) return 0n;
       return publicClient.readContract({
         address: CONTRACT_ADDRESS,
         abi: CONTRACT_ABI,
@@ -121,11 +130,11 @@ export function useMyBetsMarkets(
   markets: Array<{ id: bigint; market: Market }> | undefined,
   address?: `0x${string}`
 ) {
-  const publicClient = usePublicClient();
+  const publicClient = useSomniaPublicClient();
 
   return useQuery({
     queryKey: ['myBetsMarkets', address, markets?.map(({ id }) => id.toString()).join(',')],
-    enabled: !!publicClient && !!address && !!markets?.length,
+    enabled: !!address && !!markets?.length,
     queryFn: async () => {
       const positions = await Promise.all(
         markets!.map(async ({ id, market }) => {
@@ -169,11 +178,11 @@ export function useMyBets() {
 }
 
 export function useUserBets(marketId: bigint | undefined, address?: `0x${string}`) {
-  const publicClient = usePublicClient();
+  const publicClient = useSomniaPublicClient();
 
   return useQuery({
     queryKey: ['userBets', marketId?.toString(), address],
-    enabled: !!publicClient && !!address && marketId !== undefined && marketId > 0n,
+    enabled: !!address && marketId !== undefined && marketId > 0n,
     queryFn: async () => {
       const [yes, no] = await Promise.all([
         publicClient!.readContract({
