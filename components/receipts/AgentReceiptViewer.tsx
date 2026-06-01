@@ -1,8 +1,15 @@
 'use client';
 
 import Link from 'next/link';
+import { useState, useMemo } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import { useAgentReceipt } from '@/hooks/useAgentReceipt';
-import { receiptExplorerUrl, txExplorerUrl } from '@/lib-web/agents';
+import {
+  receiptExplorerUrl,
+  txExplorerUrl,
+} from '@/lib-web/agents';
+import { Tooltip } from '@/components/shared/Tooltip';
+import { CopyButton } from '@/components/shared/CopyButton';
 
 function StatusBadge({ status }: { status?: string }) {
   const styles: Record<string, string> = {
@@ -29,8 +36,107 @@ function ReceiptSkeleton() {
   );
 }
 
+function ConsensusRing({
+  value,
+  total,
+  size = 56,
+}: {
+  value: number;
+  total: number;
+  size?: number;
+}) {
+  const safeTotal = Math.max(total, 1);
+  const ratio = Math.max(0, Math.min(1, value / safeTotal));
+  const stroke = 5;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const dash = circumference * ratio;
+  const unanimous = value === total && total > 0;
+
+  return (
+    <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke="rgba(255,255,255,0.08)"
+          strokeWidth={stroke}
+          fill="none"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={unanimous ? 'rgb(52 211 153)' : 'rgb(251 191 36)'}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={`${dash} ${circumference - dash}`}
+          fill="none"
+          style={{ transition: 'stroke-dasharray 600ms ease' }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className={`text-sm font-bold ${unanimous ? 'text-emerald-300' : 'text-amber-300'}`}>
+          {value}/{total}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function formatElapsed(ms?: number): string | null {
+  if (ms === undefined || ms === null) return null;
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
+function tokenize(s: string): string[] {
+  return s
+    .split(/(\s+|[,.;:()\[\]{}"`])/g)
+    .filter((t) => t.length > 0);
+}
+
+function diffTokens(a: string, b: string) {
+  const aTokens = tokenize(a);
+  const bTokens = tokenize(b);
+  const aSet = new Set(aTokens);
+  const bSet = new Set(bTokens);
+  const aHtml = aTokens
+    .map((t) =>
+      bSet.has(t)
+        ? `<span>${escapeHtml(t)}</span>`
+        : `<span class="bg-rose-500/20 text-rose-200 rounded px-0.5">${escapeHtml(t)}</span>`
+    )
+    .join('');
+  const bHtml = bTokens
+    .map((t) =>
+      aSet.has(t)
+        ? `<span>${escapeHtml(t)}</span>`
+        : `<span class="bg-emerald-500/20 text-emerald-200 rounded px-0.5">${escapeHtml(t)}</span>`
+    )
+    .join('');
+  return { aHtml, bHtml };
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 export function AgentReceiptViewer({ requestId }: { requestId: string }) {
   const { data: receipt, isLoading, error } = useAgentReceipt(requestId);
+  const [compareOpen, setCompareOpen] = useState(false);
+
+  const nodes = useMemo(() => receipt?.subcommittee?.nodes || [], [receipt]);
+  const allOutputsIdentical = useMemo(() => {
+    if (nodes.length < 2) return true;
+    const first = nodes[0]?.output;
+    return nodes.every((n) => n.output === first);
+  }, [nodes]);
 
   if (isLoading) return <ReceiptSkeleton />;
   if (error || !receipt) {
@@ -49,27 +155,70 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
     );
   }
 
-  const nodes = receipt.subcommittee?.nodes || [];
   const steps = receipt.steps || [];
+  const totalNodes = receipt.subcommittee?.size ?? nodes.length;
+  const respondingNodes = nodes.filter((n) => n.output !== undefined && n.output !== '').length;
   const hasError = steps.some((step) => step.name === 'error');
   const status = receipt.status || (hasError ? 'failure' : receipt.result ? 'success' : 'pending');
+  const elapsed = formatElapsed(receipt.elapsedMs);
+  const explorerUrl = receiptExplorerUrl(receipt.requestId || requestId);
 
   return (
     <div className="space-y-6 rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl shadow-2xl shadow-black/40 sm:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-2xl font-bold text-white drop-shadow-sm">Execution Receipt</h3>
-        <StatusBadge status={status} />
+        <div className="flex items-center gap-3">
+          <Tooltip content="Open Agent Explorer in a new tab">
+            <Link
+              href={explorerUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="hidden sm:inline-flex h-12 w-12 items-center justify-center rounded-lg border border-white/10 bg-white/5 transition hover:border-cyan-400/30 hover:bg-white/10"
+              aria-label="Open in Agent Explorer"
+            >
+              <QRCodeSVG
+                value={explorerUrl}
+                size={36}
+                bgColor="transparent"
+                fgColor="#a5f3fc"
+                level="M"
+              />
+            </Link>
+          </Tooltip>
+          <StatusBadge status={status} />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
-        <div>
-          <span className="text-zinc-500">Agent:</span>{' '}
+        <div className="flex items-center gap-2">
+          <span className="text-zinc-500">Agent:</span>
           <span className="text-white">{receipt.agentName || receipt.agentId || 'Unknown'}</span>
         </div>
-        <div>
-          <span className="text-zinc-500">Request ID:</span>{' '}
+        <div className="flex items-center gap-2">
+          <span className="text-zinc-500">Request ID:</span>
           <span className="font-mono text-white">{receipt.requestId || requestId}</span>
+          <CopyButton value={receipt.requestId || requestId} label="Copy request ID" />
         </div>
+        {receipt.blockNumber !== undefined && (
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-500">Block:</span>
+            <span className="font-mono text-white">{receipt.blockNumber.toString()}</span>
+          </div>
+        )}
+        {receipt.txHash && (
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-500">Tx:</span>
+            <a
+              href={txExplorerUrl(receipt.txHash)}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-cyan-300 transition hover:text-cyan-200"
+            >
+              {receipt.txHash.slice(0, 10)}...{receipt.txHash.slice(-8)}
+            </a>
+            <CopyButton value={receipt.txHash} label="Copy tx hash" />
+          </div>
+        )}
       </div>
 
       {steps.length > 0 && (
@@ -77,7 +226,13 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
           <h4 className="mb-2 text-lg font-semibold text-white">Execution Steps</h4>
           <div className="space-y-2">
             {steps.map((step, i) => (
-              <div key={i} className="rounded-xl border border-white/5 bg-black/40 p-4 text-sm shadow-inner backdrop-blur-sm transition-all hover:bg-black/60">
+              <div
+                key={i}
+                className="rounded-xl border border-white/5 bg-black/40 p-4 text-sm shadow-inner backdrop-blur-sm transition-all hover:bg-black/60"
+                style={{
+                  animation: `slideIn 400ms ease-out ${i * 80}ms backwards`,
+                }}
+              >
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium text-violet-300">{step.name || 'step'}</span>
                   {step.duration_ms !== undefined && (
@@ -105,18 +260,50 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
 
       {nodes.length > 0 && (
         <div>
-          <h4 className="mb-2 text-lg font-semibold text-white">
-            Validator Consensus ({receipt.subcommittee?.size ?? nodes.length} nodes)
-          </h4>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <h4 className="text-lg font-semibold text-white">Validator Consensus</h4>
+              <ConsensusRing value={respondingNodes} total={totalNodes} />
+              {elapsed && (
+                <span
+                  className={`rounded-md px-2 py-0.5 font-mono text-xs ${
+                    allOutputsIdentical
+                      ? 'bg-emerald-500/15 text-emerald-300'
+                      : 'bg-amber-500/15 text-amber-300'
+                  }`}
+                >
+                  consensus in {elapsed}
+                </span>
+              )}
+            </div>
+            {nodes.length >= 2 && (
+              <button
+                type="button"
+                onClick={() => setCompareOpen((v) => !v)}
+                aria-expanded={compareOpen}
+                className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-zinc-300 transition hover:border-cyan-400/30 hover:text-cyan-200"
+              >
+                {compareOpen ? 'Hide' : 'Compare'} validators
+              </button>
+            )}
+          </div>
           <div className="space-y-2">
             {nodes.map((node, i) => (
               <div
                 key={i}
                 className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/5 bg-black/40 p-4 text-sm shadow-inner backdrop-blur-sm transition-all hover:bg-black/60"
+                style={{
+                  animation: `slideIn 400ms ease-out ${i * 60}ms backwards`,
+                }}
               >
-                <span className="font-mono text-xs text-zinc-400">
-                  {node.address?.slice(0, 10)}...
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs text-zinc-400">
+                    {node.address
+                      ? `${node.address.slice(0, 10)}...${node.address.slice(-6)}`
+                      : `node-${i + 1}`}
+                  </span>
+                  {node.address && <CopyButton value={node.address} label="Copy validator address" />}
+                </div>
                 {node.executionTimeMs !== undefined && (
                   <span className="text-emerald-400">{node.executionTimeMs}ms</span>
                 )}
@@ -131,6 +318,66 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
         </div>
       )}
 
+      {compareOpen && nodes.length >= 2 && (
+        <div>
+          <h4 className="mb-2 text-lg font-semibold text-white">Compare Validator Outputs</h4>
+          {allOutputsIdentical ? (
+            <p className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-200">
+              All {nodes.length} validators returned the same output. Unanimous consensus.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <div
+                className="grid gap-2 text-xs"
+                style={{ gridTemplateColumns: `repeat(${nodes.length}, minmax(0, 1fr))` }}
+              >
+                {nodes.map((node, i) => {
+                  const others = nodes
+                    .filter((_, j) => j !== i)
+                    .map((n) => n.output ?? '')
+                    .join('\n');
+                  const { aHtml, bHtml } = diffTokens(node.output ?? '', others);
+                  return (
+                    <div
+                      key={i}
+                      className="rounded-xl border border-white/5 bg-black/40 p-3 font-mono"
+                    >
+                      <div className="mb-2 flex items-center justify-between text-zinc-400">
+                        <span>Node {i + 1}</span>
+                        {node.executionTimeMs !== undefined && (
+                          <span className="text-emerald-400">{node.executionTimeMs}ms</span>
+                        )}
+                      </div>
+                      <div
+                        className="whitespace-pre-wrap break-words text-cyan-200"
+                        dangerouslySetInnerHTML={{ __html: aHtml }}
+                      />
+                      {aHtml !== bHtml && (
+                        <details className="mt-3 border-t border-white/5 pt-2 text-zinc-500">
+                          <summary className="cursor-pointer text-[10px] uppercase tracking-wide">
+                            vs others
+                          </summary>
+                          <div
+                            className="mt-1 whitespace-pre-wrap break-words text-emerald-200/80"
+                            dangerouslySetInnerHTML={{ __html: bHtml }}
+                          />
+                        </details>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-[10px] uppercase tracking-wide text-zinc-500">
+                <span className="rounded bg-rose-500/20 px-1 text-rose-200">rose</span> tokens only in this
+                node,{' '}
+                <span className="rounded bg-emerald-500/20 px-1 text-emerald-200">green</span> tokens only in
+                others.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
       {receipt.payload && (
         <div>
           <h4 className="mb-2 text-lg font-semibold text-white">Agent Payload</h4>
@@ -142,8 +389,11 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
 
       {receipt.result && (
         <div>
-          <h4 className="mb-2 text-lg font-semibold text-white">Result</h4>
-          <div className="rounded-xl border border-white/5 bg-black/40 p-4 font-mono text-emerald-300 break-all shadow-inner backdrop-blur-sm">
+          <div className="mb-2 flex items-center justify-between">
+            <h4 className="text-lg font-semibold text-white">Result</h4>
+            <CopyButton value={receipt.result} label="Copy result" />
+          </div>
+          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 font-mono text-lg text-emerald-300 break-all shadow-inner backdrop-blur-sm">
             {receipt.result}
           </div>
         </div>
@@ -159,8 +409,7 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
       )}
 
       <div className="flex flex-wrap gap-4 text-xs text-zinc-500">
-        {receipt.blockNumber && <span>Block: {receipt.blockNumber}</span>}
-        <Link href={receiptExplorerUrl(requestId)} target="_blank" className="text-cyan-300 transition hover:text-cyan-200">
+        <Link href={explorerUrl} target="_blank" rel="noreferrer" className="text-cyan-300 transition hover:text-cyan-200">
           Open in Agent Explorer
         </Link>
         {receipt.txHash && (
@@ -174,6 +423,19 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
           </a>
         )}
       </div>
+
+      <style jsx>{`
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateX(-12px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+      `}</style>
     </div>
   );
 }

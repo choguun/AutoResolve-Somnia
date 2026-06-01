@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Bot, ExternalLink, Sparkles } from 'lucide-react';
 import {
   formatCountdown,
   formatStt,
@@ -7,6 +8,7 @@ import {
   statusLabel,
   type Market,
 } from '@/lib-web/contract';
+import { Tooltip } from '@/components/shared/Tooltip';
 
 function StatusBadge({ status }: { status: MarketStatus }) {
   const styles = {
@@ -34,6 +36,17 @@ function StatusBadge({ status }: { status: MarketStatus }) {
   );
 }
 
+function AgentResolvedStamp() {
+  return (
+    <Tooltip content="Outcome was decided by Somnia LLM agent validator consensus. Click the card to inspect the public receipt.">
+      <div className="pointer-events-auto inline-flex items-center gap-1.5 rounded-md border border-emerald-400/30 bg-emerald-500/15 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-200 shadow-[0_0_15px_rgba(16,185,129,0.25)]">
+        <Sparkles className="h-3 w-3" />
+        Agent Resolved
+      </div>
+    </Tooltip>
+  );
+}
+
 export function MarketCard({
   id,
   market,
@@ -52,12 +65,25 @@ export function MarketCard({
         ? `NO · ${formatStt(userBet.no)}`
         : null;
 
+  const isResolved = market.status === MarketStatus.Resolved;
+  const receiptId = isResolved && market.inferenceRequestId > 0n
+    ? market.inferenceRequestId
+    : !isResolved && market.status === MarketStatus.Resolving && market.parseRequestId > 0n
+      ? market.parseRequestId
+      : 0n;
+
   return (
     <Link
       href={`/market/${id.toString()}`}
-      className="group flex min-h-52 flex-col rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl shadow-xl shadow-black/20 transition-all duration-300 ease-out hover:-translate-y-1 hover:border-cyan-400/40 hover:shadow-[0_8px_30px_rgb(6,182,212,0.15)] hover:bg-white/10"
+      className="group relative flex min-h-52 flex-col rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-xl shadow-xl shadow-black/20 transition-all duration-300 ease-out hover:-translate-y-1 hover:border-cyan-400/40 hover:shadow-[0_8px_30px_rgb(6,182,212,0.15)] hover:bg-white/10"
     >
-      <div className="mb-4 flex items-start justify-between gap-3">
+      {isResolved && (
+        <div className="pointer-events-none absolute right-5 top-5 z-10 flex flex-col items-end gap-1.5">
+          <AgentResolvedStamp />
+        </div>
+      )}
+
+      <div className={`mb-4 flex items-start justify-between gap-3 ${isResolved ? 'pr-32' : ''}`}>
         <h3 className="line-clamp-3 text-lg font-bold leading-snug text-white transition-colors group-hover:text-transparent group-hover:bg-clip-text group-hover:bg-gradient-to-r group-hover:from-white group-hover:to-cyan-200">
           {market.question}
         </h3>
@@ -74,9 +100,9 @@ export function MarketCard({
           <span className="text-rose-400 drop-shadow-sm">No {(100 - yesOdds).toFixed(0)}%</span>
         </div>
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-rose-500/20 shadow-inner">
-          <div 
-            className="h-full rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] transition-all duration-500 ease-out" 
-            style={{ width: `${yesOdds}%` }} 
+          <div
+            className="h-full rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] transition-all duration-500 ease-out"
+            style={{ width: `${yesOdds}%` }}
           />
         </div>
       </div>
@@ -93,16 +119,30 @@ export function MarketCard({
           </div>
         </div>
 
+        {receiptId > 0n && (
+          <Link
+            href={`/receipt/${receiptId.toString()}`}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="pointer-events-auto inline-flex items-center gap-1.5 rounded-md border border-cyan-400/20 bg-cyan-400/5 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-200 transition hover:border-cyan-400/40 hover:bg-cyan-400/15"
+          >
+            <Bot className="h-3 w-3" />
+            {isResolved ? 'View on Agent Explorer' : 'View live receipt'}
+            <ExternalLink className="h-3 w-3 opacity-70" />
+          </Link>
+        )}
+
         <div className="flex items-center justify-between gap-3 border-t border-white/10 pt-4 mt-2">
           <span className="truncate text-xs font-semibold text-violet-300">
             {yourSide ? `Your bet: ${yourSide}` : 'No position yet'}
           </span>
           <span className="shrink-0 text-right text-xs font-bold text-cyan-300 uppercase tracking-wide">
-          {market.status === MarketStatus.Resolved
-            ? market.outcome
-              ? 'Resolved YES'
-              : 'Resolved NO'
-            : formatCountdown(market.endTime)}
+            {isResolved
+              ? market.outcome
+                ? 'Resolved YES'
+                : 'Resolved NO'
+              : formatCountdown(market.endTime)}
           </span>
         </div>
       </div>

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { MarketStatus } from '@/lib-web/contract';
+import { CopyButton } from '@/components/shared/CopyButton';
 
 export function ResolutionTimeline({
   status,
@@ -63,12 +64,17 @@ export function ResolutionTimeline({
               <div className="font-medium text-white">{stage.label}</div>
               <div className="text-sm text-zinc-500">{stage.description}</div>
               {stage.requestId !== undefined && stage.requestId > 0n && (
-                <Link
-                  href={`/receipt/${stage.requestId.toString()}`}
-                  className="mt-2 inline-flex rounded-md border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-cyan-200 transition hover:bg-cyan-400/15"
-                >
-                  {stage.receiptLabel} #{stage.requestId.toString()}
-                </Link>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Link
+                    href={`/receipt/${stage.requestId.toString()}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex rounded-md border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs text-cyan-200 transition hover:bg-cyan-400/15"
+                  >
+                    {stage.receiptLabel} #{stage.requestId.toString()}
+                  </Link>
+                  <CopyButton value={stage.requestId.toString()} label="Copy request ID" />
+                </div>
               )}
             </div>
           </div>

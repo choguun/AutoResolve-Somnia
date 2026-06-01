@@ -4,7 +4,49 @@ pragma solidity ^0.8.24;
 import {IAgentRequester, Response, ResponseStatus, Request} from "./interfaces/IAgentRequester.sol";
 import {ILLMInferenceAgent, IParseWebsiteAgent} from "./interfaces/ILLMAgents.sol";
 
-contract AutonomousPredictionMarket {
+/// @dev Minimal nonReentrant guard matching the OpenZeppelin pattern.
+abstract contract ReentrancyGuard {
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+    uint256 private _status;
+
+    constructor() {
+        _status = _NOT_ENTERED;
+    }
+
+    modifier nonReentrant() {
+        require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
+        _status = _ENTERED;
+        _;
+        _status = _NOT_ENTERED;
+    }
+}
+
+contract AutonomousPredictionMarket is ReentrancyGuard {
+    error MarketNotFound();
+    error QuestionEmpty();
+    error SourceEmpty();
+    error QuestionTooLong();
+    error SourceTooLong();
+    error DurationTooShort();
+    error MarketNotOpen();
+    error MarketStillActive();
+    error MarketEnded();
+    error MarketNotResolved();
+    error AlreadyRequested();
+    error InsufficientContractBalance();
+    error BetAmountRequired();
+    error NoWinningBets();
+    error NoWinningPool();
+    error OnlyPlatform();
+    error StillPending();
+    error UnknownRequest();
+    error InvalidStage();
+    error InvalidLimit();
+    error InvalidInferenceOutput();
+    error NoResolverRefund();
+    error TransferFailed();
+
     IAgentRequester public constant PLATFORM = IAgentRequester(0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776);
 
     uint256 public constant LLM_PARSE_WEBSITE_AGENT_ID = 12875401142070969085;
@@ -100,11 +142,11 @@ contract AutonomousPredictionMarket {
         external
         returns (uint256 marketId)
     {
-        require(bytes(question).length > 0, "Question required");
-        require(bytes(resolutionSource).length > 0, "Source required");
-        require(bytes(question).length <= MAX_QUESTION_LENGTH, "Question too long");
-        require(bytes(resolutionSource).length <= MAX_SOURCE_LENGTH, "Source too long");
-        require(durationSeconds >= MIN_DURATION, "Min 5 min duration");
+        if (bytes(question).length == 0) revert QuestionEmpty();
+        if (bytes(resolutionSource).length == 0) revert SourceEmpty();
+        if (bytes(question).length > MAX_QUESTION_LENGTH) revert QuestionTooLong();
+        if (bytes(resolutionSource).length > MAX_SOURCE_LENGTH) revert SourceTooLong();
+        if (durationSeconds < MIN_DURATION) revert DurationTooShort();
 
         marketId = nextMarketId++;
         uint256 endTime = block.timestamp + durationSeconds;
@@ -127,12 +169,12 @@ contract AutonomousPredictionMarket {
         emit MarketCreated(marketId, msg.sender, question, resolutionSource, endTime);
     }
 
-    function bet(uint256 marketId, BetOption option) external payable {
-        require(marketExists(marketId), "Market not found");
+    function bet(uint256 marketId, BetOption option) external payable nonReentrant {
+        if (!marketExists(marketId)) revert MarketNotFound();
         Market storage market = markets[marketId];
-        require(market.status == MarketStatus.Open, "Market not open");
-        require(block.timestamp < market.endTime, "Market ended");
-        require(msg.value > 0, "Bet amount required");
+        if (market.status != MarketStatus.Open) revert MarketNotOpen();
+        if (block.timestamp >= market.endTime) revert MarketEnded();
+        if (msg.value == 0) revert BetAmountRequired();
 
         if (option == BetOption.Yes) {
             market.yesTotal += msg.value;
@@ -160,17 +202,17 @@ contract AutonomousPredictionMarket {
     }
 
     function requestResolution(uint256 marketId) external payable {
-        require(marketExists(marketId), "Market not found");
+        if (!marketExists(marketId)) revert MarketNotFound();
         Market storage market = markets[marketId];
-        require(market.status == MarketStatus.Open, "Market not open");
-        require(block.timestamp >= market.endTime, "Market still active");
-        require(market.parseRequestId == 0, "Already requested");
+        if (market.status != MarketStatus.Open) revert MarketNotOpen();
+        if (block.timestamp < market.endTime) revert MarketStillActive();
+        if (market.parseRequestId != 0) revert AlreadyRequested();
 
         (uint256 totalDeposit,,) = getResolutionFundingStatus();
         uint256 balanceBeforeTopUp = address(this).balance - msg.value;
         uint256 topUpNeeded = balanceBeforeTopUp >= totalDeposit ? 0 : totalDeposit - balanceBeforeTopUp;
         uint256 parseDeposit = getParseDeposit();
-        require(address(this).balance >= totalDeposit, "Insufficient contract balance");
+        if (address(this).balance < totalDeposit) revert InsufficientContractBalance();
 
         market.status = MarketStatus.Resolving;
 
@@ -198,7 +240,9 @@ contract AutonomousPredictionMarket {
         emit ResolutionRequested(marketId, requestId, RequestStage.ParseWebsite);
 
         if (msg.value > topUpNeeded) {
-            payable(msg.sender).transfer(msg.value - topUpNeeded);
+            uint256 refund = msg.value - topUpNeeded;
+            (bool ok,) = payable(msg.sender).call{value: refund}("");
+            if (!ok) revert TransferFailed();
         }
     }
 
@@ -207,13 +251,13 @@ contract AutonomousPredictionMarket {
         Response[] calldata responses,
         ResponseStatus status,
         Request calldata
-    ) external {
-        require(msg.sender == address(PLATFORM), "Only platform");
-        require(status != ResponseStatus.Pending && status != ResponseStatus.None, "Still pending");
+    ) external nonReentrant {
+        if (msg.sender != address(PLATFORM)) revert OnlyPlatform();
+        if (status == ResponseStatus.Pending || status == ResponseStatus.None) revert StillPending();
 
         uint256 marketId = requestToMarket[requestId];
-        require(marketId > 0, "Unknown request");
-        require(requestStage[requestId] == RequestStage.ParseWebsite, "Invalid stage");
+        if (marketId == 0) revert UnknownRequest();
+        if (requestStage[requestId] != RequestStage.ParseWebsite) revert InvalidStage();
 
         Market storage market = markets[marketId];
 
@@ -272,12 +316,12 @@ contract AutonomousPredictionMarket {
         Response[] calldata responses,
         ResponseStatus status,
         Request calldata
-    ) external {
-        require(msg.sender == address(PLATFORM), "Only platform");
+    ) external nonReentrant {
+        if (msg.sender != address(PLATFORM)) revert OnlyPlatform();
 
         uint256 marketId = requestToMarket[requestId];
-        require(marketId > 0, "Unknown request");
-        require(requestStage[requestId] == RequestStage.Inference, "Invalid stage");
+        if (marketId == 0) revert UnknownRequest();
+        if (requestStage[requestId] != RequestStage.Inference) revert InvalidStage();
 
         Market storage market = markets[marketId];
 
@@ -321,17 +365,17 @@ contract AutonomousPredictionMarket {
         return (false, false);
     }
 
-    function claimWinnings(uint256 marketId) external {
-        require(marketExists(marketId), "Market not found");
+    function claimWinnings(uint256 marketId) external nonReentrant {
+        if (!marketExists(marketId)) revert MarketNotFound();
         Market storage market = markets[marketId];
-        require(market.status == MarketStatus.Resolved, "Not resolved");
+        if (market.status != MarketStatus.Resolved) revert MarketNotResolved();
 
         uint256 userWinningBets = market.outcome ? userYesBets[msg.sender][marketId] : userNoBets[msg.sender][marketId];
-        require(userWinningBets > 0, "No winning bets");
+        if (userWinningBets == 0) revert NoWinningBets();
 
         uint256 totalPool = market.yesTotal + market.noTotal;
         uint256 winningPool = market.outcome ? market.yesTotal : market.noTotal;
-        require(winningPool > 0, "No winning pool");
+        if (winningPool == 0) revert NoWinningPool();
 
         uint256 winnings = (userWinningBets * totalPool) / winningPool;
 
@@ -341,7 +385,8 @@ contract AutonomousPredictionMarket {
             userNoBets[msg.sender][marketId] = 0;
         }
 
-        payable(msg.sender).transfer(winnings);
+        (bool ok,) = payable(msg.sender).call{value: winnings}("");
+        if (!ok) revert TransferFailed();
         emit WinningsClaimed(marketId, msg.sender, winnings);
     }
 
@@ -412,7 +457,7 @@ contract AutonomousPredictionMarket {
         view
         returns (uint256[] memory marketIds, uint256 nextCursor)
     {
-        require(limit > 0 && limit <= MAX_AGENT_SCAN_LIMIT, "Invalid limit");
+        if (limit == 0 || limit > MAX_AGENT_SCAN_LIMIT) revert InvalidLimit();
 
         uint256 start = cursor < 1 ? 1 : cursor;
         uint256 end = start + limit;

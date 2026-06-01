@@ -1325,5 +1325,120 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AlreadyRequested",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BetAmountRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DurationTooShort",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientContractBalance",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidInferenceOutput",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidLimit",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidStage",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarketEnded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarketNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarketNotOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarketNotResolved",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MarketStillActive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoResolverRefund",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoWinningBets",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoWinningPool",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OnlyPlatform",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "QuestionEmpty",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "QuestionTooLong",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SourceEmpty",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SourceTooLong",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StillPending",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "TransferFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownRequest",
+    "inputs": []
   }
 ]

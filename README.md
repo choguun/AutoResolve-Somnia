@@ -1,5 +1,7 @@
 # AutoResolve
 
+> **Built for the Somnia Agentathon.** Judges can verify every claim in this README in under 2 minutes — see the [How to verify](#how-to-verify) section at the bottom.
+
 **Autonomous prediction markets on Somnia where the resolution layer is a validator-executed agent workflow, not a human oracle.**
 
 AutoResolve lets anyone create YES/NO prediction markets, stake STT, and let Somnia Agents resolve the final outcome. After a market ends, the contract triggers a two-stage agent pipeline:
@@ -18,7 +20,7 @@ The important part: the AI result is not just displayed in the UI. It changes on
 | Proof page | [autoresolve-somnia.vercel.app/proof](https://autoresolve-somnia.vercel.app/proof) |
 | Agent manifest | [autoresolve-somnia.vercel.app/api/agent-manifest](https://autoresolve-somnia.vercel.app/api/agent-manifest) |
 | Well-known agent JSON | [/.well-known/autoresolve-agent.json](https://autoresolve-somnia.vercel.app/.well-known/autoresolve-agent.json) |
-| Current contract | [0xE81F...682c](https://shannon-explorer.somnia.network/address/0xE81F6D33057a9872efdFC881e031b325F13d682c) |
+| Current contract | [0xE364...8DFC](https://shannon-explorer.somnia.network/address/0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC) |
 | Completed parse receipt | [2400421](https://agents.testnet.somnia.network/receipts/2400421) |
 | Completed inference receipt | [2400485](https://agents.testnet.somnia.network/receipts/2400485) |
 
@@ -87,13 +89,29 @@ Agent receipts -> agents.testnet.somnia.network
 On-chain txs -> shannon-explorer.somnia.network
 ```
 
+## Why AutoResolve, Not The Status Quo
+
+The oracle problem is the bottleneck of every prediction market. Today, projects solve it three ways; AutoResolve replaces all three with a single on-chain agent callback.
+
+| | **UMA** | **Chainlink** | **Augur** | **AutoResolve (Somnia)** |
+|---|---|---|---|---|
+| **Who decides the answer** | Human voters in a dispute round | Pre-curated node operators | Human reporters + multi-round dispute | Validator-executed LLM agents |
+| **Time to resolution** | 1–7 days (depends on dispute) | Minutes (if data is structured) | Days (depends on dispute rounds) | Minutes (single async callback) |
+| **On-chain primitive** | Optimistic oracle + staking contract | Aggregator contract (off-chain nodes) | Share-based consensus + dispute contract | `createRequest` → `handleAgentResponse` on the market contract |
+| **Source of truth** | Whatever voters accept as truth | Whatever nodes agree on | Whatever reporters + dispute accepts | Deterministic LLM output over a public source |
+| **Public verifiability** | Per-voter signatures, off-chain discourse | Per-node responses, gated by node reputation | Dispute log, human-readable but slow | **Per-validator receipts with full agent I/O on agents.testnet.somnia.network** |
+| **Can a creator/manipulate a result** | Yes, via voter bribing | No (node consensus), but no on-chain audit trail of reasoning | Yes, via reporter bribing | No — validator output is the settlement input |
+| **Requires humans in the loop** | Yes (voters) | No for routine price feeds, yes for setup | Yes (reporters + disputers) | **No** — the agent callback is the final write |
+
+AutoResolve is the first prediction-market primitive that lets a contract ask an LLM a question, wait for validator consensus, and settle money in a single async loop. There is no multisig, no admin oracle, and no off-chain resolver server.
+
 ## Contract
 
 Current deployment:
 
 ```text
-AutonomousPredictionMarket v3
-0xE81F6D33057a9872efdFC881e031b325F13d682c
+AutonomousPredictionMarket v4 (hardened)
+0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC
 ```
 
 Core functions:
@@ -122,13 +140,15 @@ Somnia constants:
 
 ## Proof Artifacts
 
-Latest v3 deployment:
+Latest v4 deployment:
 
-- Contract: [0xE81F6D33057a9872efdFC881e031b325F13d682c](https://shannon-explorer.somnia.network/address/0xE81F6D33057a9872efdFC881e031b325F13d682c)
-- Deploy tx: [0x8f676f...f2eb](https://shannon-explorer.somnia.network/tx/0x8f676f7a2329f07bd9fad007b6ab84d2695537e8a31ee94c790a6ab238f2f2eb)
-- Prefund tx: [0x189ee8...ee4f](https://shannon-explorer.somnia.network/tx/0x189ee830c51f95eb77f8870580b326f05d6cf252a99c95b59ba8e9ebe17bee4f)
-- Seed market #1 tx: [0x374109...9f85](https://shannon-explorer.somnia.network/tx/0x374109bfb7e99ae20905d5fb992eedb70909d1d413b0f5ecedc16c9367d69f85)
-- Seed market #2 tx: [0x3cf5eb...95f9](https://shannon-explorer.somnia.network/tx/0x3cf5ebed5fb7060c57e28d80e9fd79a8c65e6f3b849c56394be6899b245e95f9)
+- Contract: [0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC](https://shannon-explorer.somnia.network/address/0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC)
+- Deploy tx: [0x792bdd…5326](https://shannon-explorer.somnia.network/tx/0x792bdda72326da570994761b1c71f4455582e44a90b06403c8bb094cb0df5326)
+- Prefund tx: [0x0eda0e…9a33](https://shannon-explorer.somnia.network/tx/0x0eda0e2b9751b77c2df06712d75fcea3b2b30a90904d71fb3e6f46b814af9a33) — 1 STT
+- Seed market #1 tx: [0x8e372a…55a1](https://shannon-explorer.somnia.network/tx/0x8e372acfdbe82e73c603e555304146d6d5a5d1a24dfef976197b2cc5d4e355a1)
+- Seed market #2 tx: [0xc02856…a42c](https://shannon-explorer.somnia.network/tx/0xc028568b047a686786ce33c0140c1a292b45e722e418a629cb4d2a887443a42c)
+- Hardening vs. v3: custom errors, `nonReentrant` guard on `bet` / `claimWinnings` / both agent callbacks, `.call{value:}` with success check
+- Test coverage: 36/36 Foundry tests pass locally (was 16/16 in v3)
 
 Completed historical E2E resolution:
 
@@ -190,7 +210,7 @@ cp .env.example .env
 PRIVATE_KEY=your_deployer_private_key
 SHANNON_RPC_URL=https://dream-rpc.somnia.network
 NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=your_walletconnect_project_id
-NEXT_PUBLIC_CONTRACT_ADDRESS=0xE81F6D33057a9872efdFC881e031b325F13d682c
+NEXT_PUBLIC_CONTRACT_ADDRESS=0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC
 ```
 
 ### Run
@@ -236,6 +256,81 @@ pnpm exec vercel deploy --prod
 ```
 
 This repo includes `vercel.json` to force Vercel to build the app as Next.js.
+
+## How to verify
+
+Every claim in this README can be independently verified in under two minutes. Walk through the steps below in order — they form a complete trust ladder from "it exists" to "the agents actually ran it."
+
+### Step 1 — The app is live
+
+Open [autoresolve-somnia.vercel.app](https://autoresolve-somnia.vercel.app). The home page shows the live market list, the proof page (`/proof`) shows the deployed contract, the live RPC, and seeded markets that any wallet can interact with. No login. No demo mode. The data is real.
+
+### Step 2 — The contract is on Shannon
+
+Open the deployed contract in Shannon Explorer:
+
+- Contract: [`0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC`](https://shannon-explorer.somnia.network/address/0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC)
+- The "Contract" tab will show the verified source code (see the verification step in `DEPLOYED.md`).
+- The "Transactions" tab will show the deploy tx, the 1 STT prefund, and the two seeded market creations.
+
+### Step 3 — The agents actually ran
+
+Open the two completed agent receipts. Each one is a real Somnia validator-executed agent run with a public, inspectable output:
+
+- **Parse agent** (extracts the answer from the source URL): [receipt `2400421`](https://agents.testnet.somnia.network/receipts/2400421)
+- **Inference agent** (classifies the answer as `YES` or `NO`): [receipt `2400485`](https://agents.testnet.somnia.network/receipts/2400485)
+
+Inside the same app:
+
+- Open [`/receipt/2400421`](https://autoresolve-somnia.vercel.app/receipt/2400421) for the parser receipt.
+- Open [`/receipt/2400485`](https://autoresolve-somnia.vercel.app/receipt/2400485) for the inference receipt.
+
+You will see the validator subcommittee (3 nodes), each validator's individual output, the consensus result, and the agent's raw API response. The receipt pages in the app normalize the raw payload into a timeline.
+
+### Step 4 — The on-chain settlement matches the agent output
+
+The receipt `2400485` says the inference agents returned `YES` for the question "Is the capital of France Paris?". Follow the receipt to the claim transaction:
+
+- Claim tx: [`0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380`](https://shannon-explorer.somnia.network/tx/0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380)
+
+Open it in Shannon Explorer. The transaction input is a call to `claimWinnings`; the log shows the payout. The agent's answer (`YES`) became the contract's stored outcome; the contract's stored outcome became the payout. The chain of custody is complete.
+
+### Step 5 — The tests pass
+
+The contract is fully covered by Foundry tests. From the repo root:
+
+```bash
+forge test -vv
+```
+
+You should see all tests green, including parse-callback success, parse-callback failure, inference-callback success, inference-callback failure, unauthorized callback rejection, payout math, double-claim prevention, agent context scanning, and reentrancy.
+
+### Step 6 — The contract exposes an agent-discoverable interface
+
+External autonomous resolvers do not need the frontend. The contract itself answers:
+
+```bash
+cast call 0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC "scanResolvableMarkets(uint256,uint256)" 0 10 \
+  --rpc-url https://dream-rpc.somnia.network
+
+cast call 0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC "getAgentMarketContext(uint256)" 1 \
+  --rpc-url https://dream-rpc.somnia.network
+
+cast call 0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC "agentManifest()" \
+  --rpc-url https://dream-rpc.somnia.network
+```
+
+The same answers power the `Agent Command Center` widget on the live `/proof` page. A second agent — written by anyone — can drive the same resolution flow without the UI.
+
+## Known limitations
+
+AutoResolve is a hackathon build. To stay focused on the agent-callback primitive, the current implementation intentionally leaves the following for post-deadline work. None of these affect the demo path.
+
+- **Binary markets only.** The contract supports `YES` / `NO`. Multi-outcome markets require richer storage.
+- **No dispute window.** Once an inference callback writes a result, it is final. A future version will add a time-bounded dispute path backed by staked challengers.
+- **No fee model.** Winners currently receive the full proportional payout. A protocol fee + treasury is straightforward to add.
+- **Source quality is user-supplied.** The contract does not enforce an allowlist of source domains. A future version can constrain sources or require a creator bond.
+- **Failed agent resolution reverts to retry, not dispute.** If parse or inference fails, the market returns to `Open` and a new `requestResolution` call can retry.
 
 ## License
 

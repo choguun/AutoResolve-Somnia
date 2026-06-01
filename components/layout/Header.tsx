@@ -3,6 +3,53 @@
 import Link from 'next/link';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { usePathname } from 'next/navigation';
+import { useRpcHealth, type RpcHealth } from '@/hooks/useRpcHealth';
+import { Tooltip } from '@/components/shared/Tooltip';
+
+function healthColor(health: RpcHealth): string {
+  switch (health) {
+    case 'ok':
+      return 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]';
+    case 'slow':
+      return 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.7)]';
+    case 'down':
+      return 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.7)]';
+    default:
+      return 'bg-zinc-500';
+  }
+}
+
+function healthLabel(health: RpcHealth, latencyMs: number | null, block: bigint | null): string {
+  if (health === 'pending') return 'Checking Somnia RPC...';
+  if (health === 'down') return 'Somnia RPC unreachable';
+  const parts: string[] = [];
+  parts.push(health === 'ok' ? 'Somnia RPC live' : 'Somnia RPC slow');
+  if (latencyMs !== null) parts.push(`${Math.round(latencyMs)}ms`);
+  if (block !== null) parts.push(`block #${block.toString()}`);
+  return parts.join(' · ');
+}
+
+function RpcStatusIndicator() {
+  const { health, blockNumber, latencyMs } = useRpcHealth();
+
+  return (
+    <Tooltip content={healthLabel(health, latencyMs, blockNumber)}>
+      <span className="inline-flex items-center gap-2 rounded-md border border-white/5 bg-black/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+        <span className="relative inline-flex h-2 w-2">
+          {health !== 'down' && (
+            <span
+              className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${
+                health === 'ok' ? 'bg-emerald-400' : health === 'slow' ? 'bg-amber-400' : 'bg-zinc-400'
+              }`}
+            />
+          )}
+          <span className={`relative inline-flex h-2 w-2 rounded-full ${healthColor(health)}`} />
+        </span>
+        <span className="hidden sm:inline">Shannon</span>
+      </span>
+    </Tooltip>
+  );
+}
 
 export function Header() {
   const pathname = usePathname();
@@ -49,28 +96,31 @@ export function Header() {
             </span>
           </Link>
           <nav className="hidden gap-2 rounded-xl border border-white/5 bg-white/5 p-1.5 backdrop-blur-md shadow-inner md:flex">
-            <Link 
-              href="/" 
+            <Link
+              href="/"
               className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition-all duration-300 ${pathname === '/' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-400 hover:bg-white/5 hover:text-white'}`}
             >
               Markets
             </Link>
-            <Link 
-              href="/create" 
+            <Link
+              href="/create"
               className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition-all duration-300 ${pathname === '/create' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-400 hover:bg-white/5 hover:text-white'}`}
             >
               Create
             </Link>
-            <Link 
-              href="/proof" 
+            <Link
+              href="/proof"
               className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition-all duration-300 ${pathname === '/proof' ? 'bg-white/10 text-white shadow-sm' : 'text-zinc-400 hover:bg-white/5 hover:text-white'}`}
             >
               Proof
             </Link>
           </nav>
         </div>
-        <div className="shrink-0 transition-transform duration-300 hover:scale-[1.02]">
-          <ConnectButton showBalance={false} chainStatus="icon" accountStatus="address" />
+        <div className="flex shrink-0 items-center gap-3">
+          <RpcStatusIndicator />
+          <div className="transition-transform duration-300 hover:scale-[1.02]">
+            <ConnectButton showBalance={false} chainStatus="icon" accountStatus="address" />
+          </div>
         </div>
       </div>
     </header>

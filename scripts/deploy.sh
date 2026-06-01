@@ -56,6 +56,22 @@ fi
 
 pnpm export-abi
 
+if [ -n "${ETHERSCAN_API_KEY:-}" ]; then
+  echo ""
+  echo "Verifying source on Shannon Explorer..."
+  forge verify-contract \
+    --chain-id 50312 \
+    --etherscan-api-key "$ETHERSCAN_API_KEY" \
+    "$CONTRACT" \
+    src/AutonomousPredictionMarket.sol:AutonomousPredictionMarket || echo "  (verification attempt failed; you can retry manually)"
+else
+  echo ""
+  echo "Skipping source verification: ETHERSCAN_API_KEY not set."
+  echo "Get a Shannon Explorer API key and run:"
+  echo "  forge verify-contract --chain-id 50312 --etherscan-api-key <KEY> \\"
+  echo "    $CONTRACT src/AutonomousPredictionMarket.sol:AutonomousPredictionMarket"
+fi
+
 echo ""
 echo "Deployed: $CONTRACT"
 echo "Updated .env NEXT_PUBLIC_CONTRACT_ADDRESS"
