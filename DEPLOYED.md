@@ -293,4 +293,5 @@ PRIVATE_KEY=0x... \
 Optional env:
 - `SHANNON_RPC_URL` (default `https://dream-rpc.somnia.network`)
 - `RELAYER_POLL_MS` (default 30 seconds)
-- `RELAYER_MAX_BET_GAS` (default 1 STT — refuses to top up markets needing more)
+- `RELAYER_MAX_TOPUP_STT` (default 1 STT — refuses to top up markets needing more; `RELAYER_MAX_BET_GAS` is honored as a deprecated alias)
+- `RELAYER_MAX_ATTEMPTS` (default 5 — per-market resubmit cap before the relayer stops trying; reset by restarting after refilling the contract)

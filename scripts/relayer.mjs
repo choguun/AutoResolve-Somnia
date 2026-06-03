@@ -12,10 +12,13 @@
 //     node scripts/relayer.mjs
 //
 // Env (all optional except PRIVATE_KEY + NEXT_PUBLIC_CONTRACT_ADDRESS):
-//   SHANNON_RPC_URL     defaults to https://dream-rpc.somnia.network
-//   RELAYER_POLL_MS     seconds between scans (default 30)
-//   RELAYER_MAX_BET_GAS max STT willing to spend on a single top-up (default 1)
-//   RELAYER_VERBOSE     1 to log every market scanned, 0 to log only retries (default 1)
+//   SHANNON_RPC_URL         defaults to https://dream-rpc.somnia.network
+//   RELAYER_POLL_MS         seconds between scans (default 30)
+//   RELAYER_MAX_TOPUP_STT   max STT willing to spend on a single top-up (default 1).
+//                           RELAYER_MAX_BET_GAS is honored as a deprecated alias.
+//   RELAYER_MAX_ATTEMPTS    per-market resubmit cap before giving up (default 5).
+//                           Reset by restarting the relayer after refilling the contract.
+//   RELAYER_VERBOSE         1 to log every market scanned, 0 to log only retries (default 1)
 //
 // Requires `pnpm install` to have produced lib-web/abi.json (via `pnpm export-abi`).
 
@@ -38,8 +41,9 @@ const ROOT = join(__dirname, '..');
 
 const SHANNON_RPC_URL = process.env.SHANNON_RPC_URL ?? 'https://dream-rpc.somnia.network';
 const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
-const MAX_BET_GAS_STT = process.env.RELAYER_MAX_BET_GAS ?? '1';
+const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';
 const VERBOSE = process.env.RELAYER_VERBOSE !== '0';
+const MAX_ATTEMPTS_PER_MARKET = Number(process.env.RELAYER_MAX_ATTEMPTS ?? 5);
 
 if (!process.env.PRIVATE_KEY) {
   console.error('Error: PRIVATE_KEY is not set. Copy .env.example to .env and add your key.');
@@ -89,21 +93,63 @@ console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
 console.log(`  poll:        ${POLL_MS / 1000}s`);
-console.log(`  max top-up:  ${MAX_BET_GAS_STT} STT per market`);
+console.log(`  max top-up:  ${MAX_TOPUP_STT} STT per market`);
+console.log(`  max attempts: ${MAX_ATTEMPTS_PER_MARKET} per market before giving up`);
 
 let lastScannedBlock = await publicClient.getBlockNumber();
 console.log(`  resume from block: ${lastScannedBlock}\n`);
 
-async function tryResolveMarket(marketId, topUp, alreadySubmitted) {
-  if (alreadySubmitted.has(marketId.toString())) {
+// Per-market attempt counter. Lives in memory for the relayer's lifetime; on
+// restart, all markets get a fresh budget. This stops a permanently underfunded
+// contract from draining the relayer EOA via infinite resubmits — the operator
+// can see the "needs refill" log and either refill the contract or restart the
+// relayer after doing so.
+const attemptCount = new Map();
+const maxWei = parseEther(MAX_TOPUP_STT);
+
+function marketKey(marketId) {
+  // Normalize so a market that appears in both the event stream (hex) and the
+  // scan (bigint) hits the same Set entry. Topics are 32-byte ABI-encoded
+  // uint256, so BigInt() decodes both shapes the same way.
+  return BigInt(marketId).toString();
+}
+
+async function readTopUp() {
+  const status = await publicClient.readContract({
+    address: CONTRACT,
+    abi: ABI,
+    functionName: 'getResolutionFundingStatus',
+  });
+  return status[2]; // topUpNeeded
+}
+
+async function tryResolveMarket(marketId, alreadySubmitted) {
+  const key = marketKey(marketId);
+  if (alreadySubmitted.has(key)) {
     if (VERBOSE) console.log(`[relayer]   skipping market ${marketId} (already queued this tick)`);
     return false;
   }
-  alreadySubmitted.add(marketId.toString());
+  const attempts = attemptCount.get(key) ?? 0;
+  if (attempts >= MAX_ATTEMPTS_PER_MARKET) {
+    if (VERBOSE) {
+      console.warn(
+        `[relayer] market ${marketId} reached max attempts (${MAX_ATTEMPTS_PER_MARKET}); ` +
+          `giving up until relayer restart. Contract may be underfunded — refill or restart.`,
+      );
+    }
+    return false;
+  }
+  alreadySubmitted.add(key);
   try {
-    const maxWei = parseEther(MAX_BET_GAS_STT);
+    // Re-read on every submission so a freshly-drained contract (e.g. by a
+    // successful resolution earlier in the same tick) doesn't get an inflated
+    // topUp from a stale read. The contract auto-refunds any over-send, so
+    // this is just for accuracy.
+    const topUp = await readTopUp();
     if (topUp > maxWei) {
-      console.warn(`[relayer] market ${marketId} needs ${formatEther(topUp)} STT top-up, exceeds cap`);
+      console.warn(
+        `[relayer] market ${marketId} needs ${formatEther(topUp)} STT top-up, exceeds cap`,
+      );
       return false;
     }
 
@@ -114,17 +160,25 @@ async function tryResolveMarket(marketId, topUp, alreadySubmitted) {
       args: [marketId],
       value: topUp,
     });
-    console.log(`[relayer]   submitted requestResolution(${marketId}) → ${hash}`);
+    attemptCount.set(key, attempts + 1);
+    console.log(
+      `[relayer]   submitted requestResolution(${marketId}) → ${hash} ` +
+        `(attempt ${attempts + 1}/${MAX_ATTEMPTS_PER_MARKET})`,
+    );
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     console.log(`[relayer]   confirmed in block ${receipt.blockNumber} (status ${receipt.status})`);
     return receipt.status === 'success';
   } catch (err) {
-    console.error(`[relayer]   requestResolution(${marketId}) failed:`, err.shortMessage ?? err.message);
+    attemptCount.set(key, attempts + 1);
+    console.error(
+      `[relayer]   requestResolution(${marketId}) failed:`,
+      err.shortMessage ?? err.message,
+    );
     return false;
   }
 }
 
-async function scanForRetryableMarkets(topUp, alreadySubmitted) {
+async function scanForRetryableMarkets(alreadySubmitted) {
   const nextId = await publicClient.readContract({
     address: CONTRACT, abi: ABI, functionName: 'nextMarketId',
   });
@@ -147,19 +201,16 @@ async function scanForRetryableMarkets(topUp, alreadySubmitted) {
   }
 
   if (VERBOSE) {
-    console.log(
-      `[relayer] scanned ${nextId - 1n} markets via scanResolvableMarkets, ` +
-        `${allIds.length} resolvable, top-up needed ${formatEther(topUp)} STT`,
-    );
+    console.log(`[relayer] scanned ${nextId - 1n} markets via scanResolvableMarkets, ${allIds.length} resolvable`);
   }
   for (const id of allIds) {
-    if (alreadySubmitted.has(id.toString())) continue;
+    if (alreadySubmitted.has(marketKey(id))) continue;
     console.log(`[relayer] retrying market ${id}`);
-    await tryResolveMarket(id, topUp, alreadySubmitted);
+    await tryResolveMarket(id, alreadySubmitted);
   }
 }
 
-async function drainFailureEvents(topUp, alreadySubmitted) {
+async function drainFailureEvents(alreadySubmitted) {
   const head = await publicClient.getBlockNumber();
   if (head < lastScannedBlock) {
     // Chain reorg or RPC reset; resync to a safe margin.
@@ -193,11 +244,11 @@ async function drainFailureEvents(topUp, alreadySubmitted) {
   for (const log of failedLogs) {
     const marketId = log.topics[1];
     const requestId = log.topics[2];
-    if (alreadySubmitted.has(marketId)) continue;
+    if (alreadySubmitted.has(marketKey(marketId))) continue;
     console.log(
       `[relayer] re-resolving market ${marketId} after failure (requestId ${requestId})`,
     );
-    await tryResolveMarket(marketId, topUp, alreadySubmitted);
+    await tryResolveMarket(marketId, alreadySubmitted);
   }
   lastScannedBlock = toBlock;
 }
@@ -229,15 +280,8 @@ while (!stopping) {
   // the scan isn't re-submitted (the second call would revert with MarketNotOpen).
   const alreadySubmitted = new Set();
   try {
-    const status = await publicClient.readContract({
-      address: CONTRACT,
-      abi: ABI,
-      functionName: 'getResolutionFundingStatus',
-    });
-    const topUp = status[2]; // topUpNeeded
-
-    await drainFailureEvents(topUp, alreadySubmitted);
-    await scanForRetryableMarkets(topUp, alreadySubmitted);
+    await drainFailureEvents(alreadySubmitted);
+    await scanForRetryableMarkets(alreadySubmitted);
     await logResolvedMarkets();
   } catch (err) {
     console.error('[relayer] loop error:', err.shortMessage ?? err.message);

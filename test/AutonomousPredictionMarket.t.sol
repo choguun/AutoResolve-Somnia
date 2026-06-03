@@ -494,6 +494,50 @@ contract AutonomousPredictionMarketTest is Test {
         market.handleAgentResponse(1, _successfulResponse("X"), ResponseStatus.Pending, _emptyRequest());
     }
 
+    function testInferenceCallbackRevertsWhileStillPending() public {
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(
+            1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest()
+        );
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        uint256 inferenceId = m.inferenceRequestId;
+        assertGt(inferenceId, 0, "parse callback created inference request");
+
+        vm.prank(PLATFORM);
+        vm.expectRevert(AutonomousPredictionMarket.StillPending.selector);
+        market.handleInferenceCallback(inferenceId, _successfulResponse("YES"), ResponseStatus.Pending, _emptyRequest());
+    }
+
+    function testInferenceCallbackRevertsOnNoneStatus() public {
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(
+            1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest()
+        );
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        uint256 inferenceId = m.inferenceRequestId;
+        assertGt(inferenceId, 0, "parse callback created inference request");
+
+        vm.prank(PLATFORM);
+        vm.expectRevert(AutonomousPredictionMarket.StillPending.selector);
+        market.handleInferenceCallback(inferenceId, _successfulResponse("YES"), ResponseStatus.None, _emptyRequest());
+    }
+
     function testInferenceCallbackSuccessResolvesMarket() public {
         uint256 marketId = _createEndedMarket();
         uint256 totalDeposit = market.getRequiredDeposit();
@@ -668,11 +712,13 @@ contract AutonomousPredictionMarketTest is Test {
         assertTrue(_contains(manifest, "requestResolution"));
     }
 
-    function testAgentManifestAdvertisesV7() public {
+    function testAgentManifestAdvertisesV10() public {
         string memory manifest = market.agentManifest();
-        assertTrue(_contains(manifest, "v7"), "manifest should advertise v7");
+        assertTrue(_contains(manifest, "v10"), "manifest should advertise v10");
         assertTrue(_contains(manifest, "inferToolsChat"), "manifest should mention inferToolsChat");
         assertTrue(_contains(manifest, "SPECIFIC"), "manifest should mention SPECIFIC-URL requirement");
+        assertTrue(_contains(manifest, "MIN_BET"), "manifest should mention MIN_BET");
+        assertTrue(_contains(manifest, "YES"), "manifest should mention YES/NO output format");
     }
 
     function _contains(string memory haystack, string memory needle) internal pure returns (bool) {

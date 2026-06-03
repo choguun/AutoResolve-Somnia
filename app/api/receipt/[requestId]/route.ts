@@ -20,7 +20,10 @@ export async function GET(
   try {
     const upstream = await fetch(receiptServiceUrl(requestId, 'minimal'), {
       headers: { Accept: 'application/json' },
-      next: { revalidate: 0 },
+      // Cache for 5s on the server to absorb repeated views of the same receipt
+      // (judge deep-links, manual refresh, etc.). The client polls every 5s, so
+      // 5s revalidate keeps the UI feeling live while collapsing upstream calls.
+      next: { revalidate: 5 },
     });
 
     if (!upstream.ok) {

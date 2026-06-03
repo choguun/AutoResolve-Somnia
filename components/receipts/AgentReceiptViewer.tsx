@@ -128,7 +128,7 @@ function escapeHtml(s: string): string {
 }
 
 export function AgentReceiptViewer({ requestId }: { requestId: string }) {
-  const { data: receipt, isLoading, error } = useAgentReceipt(requestId);
+  const { data: receipt, isLoading, error, isLongRunning, refetch } = useAgentReceipt(requestId);
   const [compareOpen, setCompareOpen] = useState(false);
 
   const nodes = useMemo(() => receipt?.subcommittee?.nodes || [], [receipt]);
@@ -142,15 +142,28 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
   if (error || !receipt) {
     return (
       <div className="rounded-lg border border-white/10 bg-white/[0.045] p-6">
-        <p className="font-medium text-white">Receipt not available yet.</p>
+        <p className="font-medium text-white">
+          {isLongRunning
+            ? 'This receipt is taking longer than expected.'
+            : 'Receipt not available yet.'}
+        </p>
         <p className="mt-2 text-xs text-zinc-600">Request ID: {requestId}</p>
-        <Link
-          href={receiptExplorerUrl(requestId)}
-          target="_blank"
-          className="mt-4 inline-flex rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm text-cyan-200 transition hover:bg-cyan-400/15"
-        >
-          View in Agent Explorer
-        </Link>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="inline-flex rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm text-cyan-200 transition hover:bg-cyan-400/15"
+          >
+            Refresh
+          </button>
+          <Link
+            href={receiptExplorerUrl(requestId)}
+            target="_blank"
+            className="inline-flex rounded-lg border border-violet-400/20 bg-violet-400/10 px-4 py-2 text-sm text-violet-200 transition hover:bg-violet-400/15"
+          >
+            View in Agent Explorer
+          </Link>
+        </div>
       </div>
     );
   }

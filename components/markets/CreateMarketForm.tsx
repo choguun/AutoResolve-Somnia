@@ -15,6 +15,13 @@ const DURATIONS = [
   { label: '24 hours', seconds: 86400 },
 ];
 
+// Mirror the contract's _isHttpUrl: scheme is case-insensitive per RFC 3986 §3.1
+// and leading ASCII whitespace is trimmed. Saves the user a failed tx.
+function isValidSourceUrl(value: string): boolean {
+  const trimmed = value.replace(/^\s+/, '');
+  return /^https?:\/\//i.test(trimmed);
+}
+
 export function CreateMarketForm() {
   const router = useRouter();
   const { isConnected } = useAccount();
@@ -40,6 +47,10 @@ export function CreateMarketForm() {
     }
     if (!question.trim() || !source.trim()) {
       toast.error('Fill in all fields');
+      return;
+    }
+    if (!isValidSourceUrl(source.trim())) {
+      toast.error('Resolution source must be an http(s) URL (case-insensitive)');
       return;
     }
 

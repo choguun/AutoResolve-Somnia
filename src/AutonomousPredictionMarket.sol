@@ -316,7 +316,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             "Design a binary YES/NO prediction market on this topic. ",
             topic,
             " You MUST call createMarket(question, source, durationSeconds) exactly once. ",
-            "question <= 200 chars. The source URL MUST be a SPECIFIC article or page that directly states the answer to the YES/NO question (e.g. https://en.wikipedia.org/wiki/Paris NOT https://en.wikipedia.org/). ",
+            "question <= 500 chars. The source URL MUST be a SPECIFIC article or page that directly states the answer to the YES/NO question (e.g. https://en.wikipedia.org/wiki/Paris NOT https://en.wikipedia.org/). ",
             "Prefer a SHORT duration in [300, 600] seconds so the market can resolve quickly."
         );
         string[] memory mcpServerUrls = new string[](0);
@@ -393,12 +393,15 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             // back to Open and emit ResolutionFailed so the relayer can retry
             // once the contract is refilled. The parse result is discarded,
             // but a fresh parse on retry is cheap.
+            // The failure point is the inference call (parse already succeeded),
+            // so we emit stage=Inference to be honest. requestId is still the
+            // parse request id — no inference request was created.
             uint256 failedRequestId = market.parseRequestId;
             market.status = MarketStatus.Open;
             market.parseRequestId = 0;
             delete requestToMarket[failedRequestId];
             delete requestStage[failedRequestId];
-            emit ResolutionFailed(marketId, failedRequestId, RequestStage.ParseWebsite, ResponseStatus.Failed);
+            emit ResolutionFailed(marketId, failedRequestId, RequestStage.Inference, ResponseStatus.Failed);
             return;
         }
 
@@ -440,6 +443,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         Request calldata
     ) external nonReentrant {
         if (msg.sender != address(PLATFORM)) revert OnlyPlatform();
+        if (status == ResponseStatus.Pending || status == ResponseStatus.None) revert StillPending();
 
         uint256 marketId = requestToMarket[requestId];
         if (marketId == 0) revert UnknownRequest();
@@ -725,6 +729,19 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     }
 
     function agentManifest() external pure returns (string memory) {
-        return "AutoResolve agent interface v7. Resolution: scanResolvableMarkets(cursor,limit) to discover expired open markets; getAgentMarketContext(marketId) for question, source, funding, and request IDs; requestResolution(marketId) with topUpNeeded STT to trigger the Somnia Parse Website -> LLM Inference resolver pipeline. Creation: requestMarketGeneration(string topic) payable triggers an LLM Inference inferToolsChat call that yields createMarket(question, source, duration) calldata; the prompt requires a SPECIFIC article URL (not a site homepage) and a [300,600] second duration; getGenerationFundingStatus() returns the inference deposit and topUpNeeded; scanAgentCreatedMarkets(cursor,limit) lists markets created by the agent (creator == AGENT_CREATOR_SENTINEL 0xA1). Source URLs must be http(s) and bets must be >= MIN_BET (0.001 STT).";
+        return string.concat(
+            "AutoResolve agent interface v10. ",
+            "RESOLUTION PIPELINE: scanResolvableMarkets(cursor, limit) to discover expired open markets (returns (uint256[] ids, uint256 nextCursor), max limit 50). ",
+            "getAgentMarketContext(marketId) for question, source, funding, and request IDs. ",
+            "requestResolution(marketId) payable returns (uint256 requestId); the call is gated on market.status==Open, endTime passed, parseRequestId==0; requires topUpNeeded STT. ",
+            "On success the parse request is created; the platform calls back asynchronously. ",
+            "If parse succeeds but the contract is underfunded for the inference call, the market rolls back to Open and emits ResolutionFailed(stage=Inference) so the relayer retries once the contract is refilled. ",
+            "Inference output must be exactly 3-byte YES or NO (not YEAH, Yessir, etc). ",
+            "CREATION PIPELINE: requestMarketGeneration(string topic) payable returns (uint256 requestId); triggers LLM Inference inferToolsChat that yields createMarket(question, source, durationSeconds) calldata. ",
+            "getGenerationFundingStatus() returns the inference deposit and topUpNeeded. ",
+            "scanAgentCreatedMarkets(cursor, limit) lists markets whose creator == AGENT_CREATOR_SENTINEL (0xA1). ",
+            "CONSTRAINTS: question <= 500 chars, source is an http(s) URL (case-insensitive scheme, leading whitespace allowed) pointing at a SPECIFIC article or page (not a site homepage), duration in [300, 86400] seconds, bet >= MIN_BET (0.001 STT), topic <= 200 chars. ",
+            "Agent receipts: https://agents.testnet.somnia.network/receipts/<requestId>."
+        );
     }
 }
