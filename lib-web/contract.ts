@@ -5,6 +5,12 @@ export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ||
 
 export const CONTRACT_ABI = abi;
 
+export const AGENT_CREATOR_SENTINEL = '0x00000000000000000000000000000000000000A1' as `0x${string}`;
+
+export function isAgentCreated(creator: string): boolean {
+  return creator?.toLowerCase() === AGENT_CREATOR_SENTINEL;
+}
+
 export enum MarketStatus {
   Open = 0,
   Resolving = 1,

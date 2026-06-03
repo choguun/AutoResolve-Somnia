@@ -1,4 +1,4 @@
-import { CreateMarketForm } from '@/components/markets/CreateMarketForm';
+import { CreateMarketTabs } from '@/components/markets/CreateMarketTabs';
 
 export default function CreatePage() {
   return (
@@ -17,12 +17,12 @@ export default function CreatePage() {
             Create Market
           </h1>
           <p className="mt-4 max-w-2xl text-base leading-relaxed text-zinc-300 sm:text-lg">
-            Define a question, cite a source, and choose how long traders can place positions
-            before Somnia agents resolve the outcome.
+            Define a question manually, or let a Somnia AI agent design one for you from a topic.
+            Either way, resolution runs autonomously when the timer expires.
           </p>
         </div>
       </div>
-      <CreateMarketForm />
+      <CreateMarketTabs />
     </div>
   );
 }

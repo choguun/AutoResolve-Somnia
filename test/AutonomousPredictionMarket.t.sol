@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {AutonomousPredictionMarket} from "../src/AutonomousPredictionMarket.sol";
 import {Response, ResponseStatus, Request} from "../src/interfaces/IAgentRequester.sol";
 
@@ -686,6 +687,309 @@ contract AutonomousPredictionMarketTest is Test {
             b[i] = cb[0];
         }
         return string(b);
+    }
+
+    // -----------------------------------------------------------------------
+    // Autonomous market generation (inferToolsChat) tests
+    // -----------------------------------------------------------------------
+
+    function _inferToolsResponse(string memory finishReason, bytes[] memory toolCalls)
+        internal
+        view
+        returns (bytes memory)
+    {
+        string[] memory updatedRoles = new string[](0);
+        string[] memory updatedMessages = new string[](0);
+        string[] memory pendingToolCallIds = new string[](toolCalls.length);
+        for (uint256 i = 0; i < toolCalls.length; i++) {
+            pendingToolCallIds[i] = string.concat("call_", vm.toString(i));
+        }
+        return abi.encode(
+            finishReason, "", updatedRoles, updatedMessages, pendingToolCallIds, toolCalls
+        );
+    }
+
+    function _createMarketCall(string memory q, string memory src, uint256 dur)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return abi.encodeWithSignature("createMarket(string,string,uint256)", q, src, dur);
+    }
+
+    function _generationResponses(bytes memory inferToolsResult)
+        internal
+        view
+        returns (Response[] memory)
+    {
+        Response[] memory responses = new Response[](1);
+        responses[0] = Response({
+            validator: address(0xBEEF),
+            result: inferToolsResult,
+            status: ResponseStatus.Success,
+            receipt: 123,
+            timestamp: block.timestamp,
+            executionCost: 0
+        });
+        return responses;
+    }
+
+    function _fundContractForGeneration() internal {
+        (uint256 requiredDeposit,,) = market.getGenerationFundingStatus();
+        vm.deal(address(this), requiredDeposit);
+        (bool ok,) = address(market).call{value: requiredDeposit}("");
+        assertTrue(ok, "pre-fund");
+    }
+
+    function testRequestMarketGenerationRejectsEmptyTopic() public {
+        vm.expectRevert(AutonomousPredictionMarket.InvalidTopic.selector);
+        market.requestMarketGeneration("");
+    }
+
+    function testRequestMarketGenerationRejectsLongTopic() public {
+        string memory longTopic = _repeat("a", market.MAX_TOPIC_LENGTH() + 1);
+        vm.expectRevert(AutonomousPredictionMarket.TopicTooLong.selector);
+        market.requestMarketGeneration(longTopic);
+    }
+
+    function testRequestMarketGenerationRevertsWhenContractUnderfunded() public {
+        vm.expectRevert(AutonomousPredictionMarket.InsufficientContractBalance.selector);
+        market.requestMarketGeneration("Some topic");
+    }
+
+    function testRequestMarketGenerationHappyPath() public {
+        _fundContractForGeneration();
+
+        bytes[] memory tools = new bytes[](1);
+        tools[0] = _createMarketCall("Will ETH hit $5k in 2026?", "https://example.com/eth", 3600);
+        bytes memory inferResult = _inferToolsResponse("tool_calls", tools);
+
+        uint256 requestId = _primeInferToolsAndCall(inferResult, "Will ETH hit $5k in 2026?");
+
+        assertEq(market.nextMarketId(), 2, "nextMarketId");
+        AutonomousPredictionMarket.Market memory m = market.getMarket(1);
+        assertEq(m.question, "Will ETH hit $5k in 2026?", "question");
+        assertEq(m.resolutionSource, "https://example.com/eth", "source");
+        assertEq(m.endTime, block.timestamp + 3600, "endTime");
+        assertEq(m.creator, market.AGENT_CREATOR_SENTINEL(), "creator is sentinel");
+        assertEq(uint256(market.requestStage(requestId)), uint256(AutonomousPredictionMarket.RequestStage.None), "stage cleared");
+    }
+
+    function _primeInferToolsAndCall(bytes memory inferResult, string memory topic)
+        internal
+        returns (uint256 requestId)
+    {
+        // Re-fund the contract so each request has the inference deposit available
+        // (createRequest{value: requiredDeposit} forwards it to the platform).
+        (uint256 requiredDeposit,,) = market.getGenerationFundingStatus();
+        vm.deal(address(this), requiredDeposit);
+        (bool ok,) = address(market).call{value: requiredDeposit}("");
+        assertTrue(ok, "refund for next call");
+
+        // Step 1: caller requests generation. The mock returns requestId = 1 (first call).
+        requestId = market.requestMarketGeneration(topic);
+        // Step 2: simulate the platform calling back with the inferTools result.
+        vm.prank(PLATFORM);
+        market.handleGenerationCallback(
+            requestId, _generationResponses(inferResult), ResponseStatus.Success, _emptyRequest()
+        );
+    }
+
+    function testRequestMarketGenerationEmitsEvents() public {
+        _fundContractForGeneration();
+        bytes[] memory tools = new bytes[](1);
+        tools[0] = _createMarketCall("Question?", "https://s", 600);
+        bytes memory inferResult = _inferToolsResponse("tool_calls", tools);
+
+        // We expect two emits; vm.recordLogs captures them in order.
+        vm.recordLogs();
+        _primeInferToolsAndCall(inferResult, "Question?");
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        // Find the GenerationRequested and MarketCreatedByAgent events.
+        bytes32 genReqSig = keccak256("GenerationRequested(uint256,string)");
+        bytes32 marketByAgentSig = keccak256("MarketCreatedByAgent(uint256,uint256,address)");
+        bool sawGenReq;
+        bool sawMarketByAgent;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == genReqSig) sawGenReq = true;
+            if (logs[i].topics[0] == marketByAgentSig) sawMarketByAgent = true;
+        }
+        assertTrue(sawGenReq, "GenerationRequested emitted");
+        assertTrue(sawMarketByAgent, "MarketCreatedByAgent emitted");
+    }
+
+    function testRequestMarketGenerationFailsWhenNoToolCalls() public {
+        _fundContractForGeneration();
+        bytes[] memory tools = new bytes[](0);
+        bytes memory inferResult = _inferToolsResponse("tool_calls", tools);
+
+        vm.recordLogs();
+        uint256 requestId = market.requestMarketGeneration("Some topic");
+        vm.prank(PLATFORM);
+        market.handleGenerationCallback(
+            requestId, _generationResponses(inferResult), ResponseStatus.Success, _emptyRequest()
+        );
+
+        assertEq(market.nextMarketId(), 1, "no market created");
+        _assertGenerationFailed(requestId, "empty-tool-calls");
+    }
+
+    function testRequestMarketGenerationFailsWhenFinishReasonIsStop() public {
+        _fundContractForGeneration();
+        bytes[] memory tools = new bytes[](0);
+        bytes memory inferResult = _inferToolsResponse("stop", tools);
+
+        vm.recordLogs();
+        uint256 requestId = market.requestMarketGeneration("Some topic");
+        vm.prank(PLATFORM);
+        market.handleGenerationCallback(
+            requestId, _generationResponses(inferResult), ResponseStatus.Success, _emptyRequest()
+        );
+
+        assertEq(market.nextMarketId(), 1, "no market created");
+        _assertGenerationFailed(requestId, "no-tool-calls");
+    }
+
+    function testRequestMarketGenerationFailsWhenWrongSelector() public {
+        _fundContractForGeneration();
+        bytes[] memory tools = new bytes[](1);
+        // Random non-createMarket call: bet(uint256,uint8)
+        tools[0] = abi.encodeWithSignature("bet(uint256,uint8)", uint256(1), uint8(0));
+        bytes memory inferResult = _inferToolsResponse("tool_calls", tools);
+
+        vm.recordLogs();
+        uint256 requestId = market.requestMarketGeneration("Some topic");
+        vm.prank(PLATFORM);
+        market.handleGenerationCallback(
+            requestId, _generationResponses(inferResult), ResponseStatus.Success, _emptyRequest()
+        );
+
+        assertEq(market.nextMarketId(), 1, "no market created");
+        _assertGenerationFailed(requestId, "wrong-selector");
+    }
+
+    function testRequestMarketGenerationFailsWhenCreateMarketReverts() public {
+        _fundContractForGeneration();
+        bytes[] memory tools = new bytes[](1);
+        // Question is 501 chars -> QuestionTooLong -> inner createMarket reverts.
+        tools[0] = _createMarketCall(_repeat("q", 501), "https://s", 600);
+        bytes memory inferResult = _inferToolsResponse("tool_calls", tools);
+
+        vm.recordLogs();
+        uint256 requestId = market.requestMarketGeneration("Some topic");
+        vm.prank(PLATFORM);
+        market.handleGenerationCallback(
+            requestId, _generationResponses(inferResult), ResponseStatus.Success, _emptyRequest()
+        );
+
+        assertEq(market.nextMarketId(), 1, "no market created");
+        _assertGenerationFailed(requestId, "create-reverted");
+    }
+
+    function testRequestMarketGenerationRefundsOverfunding() public {
+        _fundContractForGeneration();
+        (uint256 requiredDeposit,,) = market.getGenerationFundingStatus();
+        uint256 overpay = requiredDeposit * 2;
+        vm.deal(address(this), overpay);
+
+        uint256 callerBefore = address(this).balance;
+        market.requestMarketGeneration{value: overpay}("Some topic");
+        uint256 callerAfter = address(this).balance;
+
+        // We sent `overpay`, no market was created, so we should be refunded the full overpay.
+        assertEq(callerBefore, callerAfter, "full refund when pre-funded");
+    }
+
+    function testRequestMarketGenerationPartialFunding() public {
+        (uint256 requiredDeposit,,) = market.getGenerationFundingStatus();
+        uint256 preFund = 0.1 ether;
+        vm.deal(address(market), preFund);
+
+        uint256 topUp = requiredDeposit - preFund;
+        vm.deal(address(this), topUp);
+        uint256 callerBefore = address(this).balance;
+
+        uint256 requestId = market.requestMarketGeneration{value: topUp}("Partial topic");
+
+        // Caller should not be refunded.
+        assertEq(address(this).balance, callerBefore - topUp, "no refund on partial");
+        // requestId is non-zero (mock incremented).
+        assertEq(requestId, 1, "first request id");
+    }
+
+    function testRequestMarketGenerationCallbackOnlyPlatform() public {
+        vm.prank(alice);
+        vm.expectRevert(AutonomousPredictionMarket.OnlyPlatform.selector);
+        market.handleGenerationCallback(
+            1, _generationResponses(_inferToolsResponse("tool_calls", new bytes[](0))), ResponseStatus.Success, _emptyRequest()
+        );
+    }
+
+    function testRequestMarketGenerationCallbackRevertsOnPending() public {
+        _fundContractForGeneration();
+        uint256 requestId = market.requestMarketGeneration("Some topic");
+
+        vm.prank(PLATFORM);
+        vm.expectRevert(AutonomousPredictionMarket.GenerationStillPending.selector);
+        market.handleGenerationCallback(
+            requestId, new Response[](0), ResponseStatus.Pending, _emptyRequest()
+        );
+    }
+
+    function testRequestMarketGenerationCallbackFailsForUnknownStage() public {
+        vm.prank(PLATFORM);
+        vm.expectRevert(AutonomousPredictionMarket.InvalidStage.selector);
+        market.handleGenerationCallback(
+            99, _generationResponses(_inferToolsResponse("tool_calls", new bytes[](0))), ResponseStatus.Success, _emptyRequest()
+        );
+    }
+
+    function testScanAgentCreatedMarketsFindsSentinelMarkets() public {
+        _fundContractForGeneration();
+        bytes[] memory tools = new bytes[](1);
+        tools[0] = _createMarketCall("AI market 1", "https://s", 600);
+        _primeInferToolsAndCall(_inferToolsResponse("tool_calls", tools), "AI market 1");
+
+        tools[0] = _createMarketCall("AI market 2", "https://s", 600);
+        _primeInferToolsAndCall(_inferToolsResponse("tool_calls", tools), "AI market 2");
+
+        (uint256[] memory ids,) = market.scanAgentCreatedMarkets(0, 10);
+        assertEq(ids.length, 2, "two agent-created markets");
+        assertEq(ids[0], 1);
+        assertEq(ids[1], 2);
+    }
+
+    function testScanAgentCreatedMarketsIgnoresManualMarkets() public {
+        _fundContractForGeneration();
+        // One manual market first.
+        market.createMarket("Manual", "https://s", 600);
+        // Then one agent-created market.
+        bytes[] memory tools = new bytes[](1);
+        tools[0] = _createMarketCall("AI market", "https://s", 600);
+        _primeInferToolsAndCall(_inferToolsResponse("tool_calls", tools), "AI market");
+
+        (uint256[] memory ids,) = market.scanAgentCreatedMarkets(0, 10);
+        assertEq(ids.length, 1, "only agent-created");
+        assertEq(ids[0], 2, "id 2 is the agent-created one");
+    }
+
+    function _assertGenerationFailed(uint256 requestId, string memory expectedReason) internal {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("GenerationFailed(uint256,uint8,string)");
+        bool found;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] != sig) continue;
+            uint256 loggedReqId = uint256(logs[i].topics[1]);
+            if (loggedReqId != requestId) continue;
+            (ResponseStatus status, string memory reason) =
+                abi.decode(logs[i].data, (ResponseStatus, string));
+            if (keccak256(bytes(reason)) == keccak256(bytes(expectedReason))) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found, "GenerationFailed with expected reason not emitted");
     }
 
     receive() external payable {}

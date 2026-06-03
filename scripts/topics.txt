@@ -1,0 +1,9 @@
+# Demo topics fed to the auto-generate script. Each line becomes a
+# `requestMarketGeneration(topic)` call. The Somnia LLM Inference agent
+# (inferToolsChat) decides the market question, source URL, and duration,
+# then yields ABI-encoded createMarket calldata back to the contract.
+Will Somnia mainnet launch before 2027?
+Did Bitcoin reach 100,000 USD on any exchange in 2024?
+Did the United States default on its debt in 2025?
+Will Ethereum trade above 5,000 USD on any major exchange in 2026?
+Is the capital of Australia Canberra?

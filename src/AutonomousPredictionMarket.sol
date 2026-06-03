@@ -2,7 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {IAgentRequester, Response, ResponseStatus, Request} from "./interfaces/IAgentRequester.sol";
-import {ILLMInferenceAgent, IParseWebsiteAgent} from "./interfaces/ILLMAgents.sol";
+import {ILLMInferenceAgent, IParseWebsiteAgent, OnchainTool} from "./interfaces/ILLMAgents.sol";
 
 /// @dev Minimal nonReentrant guard matching the OpenZeppelin pattern.
 abstract contract ReentrancyGuard {
@@ -44,6 +44,11 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     error InvalidStage();
     error InvalidLimit();
     error InvalidInferenceOutput();
+    error InvalidTopic();
+    error TopicTooLong();
+    error InvalidGenerationOutput();
+    error InvalidToolSelector();
+    error GenerationStillPending();
     error NoResolverRefund();
     error TransferFailed();
 
@@ -57,7 +62,9 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     uint256 public constant MIN_DURATION = 300;
     uint256 public constant MAX_QUESTION_LENGTH = 500;
     uint256 public constant MAX_SOURCE_LENGTH = 300;
+    uint256 public constant MAX_TOPIC_LENGTH = 200;
     uint256 public constant MAX_AGENT_SCAN_LIMIT = 50;
+    address public constant AGENT_CREATOR_SENTINEL = address(0xA1);
 
     uint256 public nextMarketId;
 
@@ -75,7 +82,8 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     enum RequestStage {
         None,
         ParseWebsite,
-        Inference
+        Inference,
+        GenerateMarket
     }
 
     struct Market {
@@ -121,6 +129,8 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     mapping(address => mapping(uint256 => uint256)) public userNoBets;
     mapping(uint256 => uint256) public requestToMarket;
     mapping(uint256 => RequestStage) public requestStage;
+    mapping(uint256 => address) public generationProposer;
+    mapping(uint256 => string) public requestToTopic;
 
     event MarketCreated(
         uint256 indexed marketId, address indexed creator, string question, string resolutionSource, uint256 endTime
@@ -133,6 +143,11 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     );
     event WinningsClaimed(uint256 indexed marketId, address indexed winner, uint256 amount);
     event RebateReceived(uint256 amount);
+    event GenerationRequested(uint256 indexed requestId, string topic);
+    event GenerationFailed(uint256 indexed requestId, ResponseStatus status, string reason);
+    event MarketCreatedByAgent(
+        uint256 indexed requestId, uint256 indexed marketId, address indexed proposer
+    );
 
     constructor() {
         nextMarketId = 1;
@@ -238,6 +253,70 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         requestStage[requestId] = RequestStage.ParseWebsite;
 
         emit ResolutionRequested(marketId, requestId, RequestStage.ParseWebsite);
+
+        if (msg.value > topUpNeeded) {
+            uint256 refund = msg.value - topUpNeeded;
+            (bool ok,) = payable(msg.sender).call{value: refund}("");
+            if (!ok) revert TransferFailed();
+        }
+    }
+
+    function getGenerationFundingStatus()
+        public
+        view
+        returns (uint256 requiredDeposit, uint256 contractBalance, uint256 topUpNeeded)
+    {
+        requiredDeposit = getInferenceDeposit();
+        contractBalance = address(this).balance;
+        topUpNeeded = contractBalance >= requiredDeposit ? 0 : requiredDeposit - contractBalance;
+    }
+
+    function requestMarketGeneration(string calldata topic) external payable returns (uint256 requestId) {
+        if (bytes(topic).length == 0) revert InvalidTopic();
+        if (bytes(topic).length > MAX_TOPIC_LENGTH) revert TopicTooLong();
+
+        (uint256 requiredDeposit,,) = getGenerationFundingStatus();
+        uint256 balanceBeforeTopUp = address(this).balance - msg.value;
+        uint256 topUpNeeded = balanceBeforeTopUp >= requiredDeposit ? 0 : requiredDeposit - balanceBeforeTopUp;
+        if (address(this).balance < requiredDeposit) revert InsufficientContractBalance();
+
+        string[] memory roles = new string[](1);
+        roles[0] = "user";
+        string[] memory messages = new string[](1);
+        messages[0] = string.concat(
+            "Design a binary YES/NO prediction market on this topic. ",
+            topic,
+            " You MUST call createMarket(question, source, durationSeconds) exactly once. ",
+            "question <= 200 chars, source is a public http(s) URL, durationSeconds in [300, 86400]."
+        );
+        string[] memory mcpServerUrls = new string[](0);
+
+        OnchainTool[] memory onchainTools = new OnchainTool[](1);
+        onchainTools[0] = OnchainTool({
+            signature: "createMarket(string,string,uint256)",
+            description: "Create a binary YES/NO prediction market. Returns the new marketId."
+        });
+
+        bytes memory payload = abi.encodeWithSelector(
+            ILLMInferenceAgent.inferToolsChat.selector,
+            roles,
+            messages,
+            mcpServerUrls,
+            onchainTools,
+            uint256(1),
+            true
+        );
+
+        requestId = PLATFORM.createRequest{value: requiredDeposit}(
+            LLM_INFERENCE_AGENT_ID, address(this), this.handleGenerationCallback.selector, payload
+        );
+
+        requestToMarket[requestId] = 0;
+        requestStage[requestId] = RequestStage.GenerateMarket;
+        requestToTopic[requestId] = topic;
+        generationProposer[requestId] = msg.sender;
+
+        emit GenerationRequested(requestId, topic);
 
         if (msg.value > topUpNeeded) {
             uint256 refund = msg.value - topUpNeeded;
@@ -354,6 +433,80 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
         delete requestToMarket[requestId];
         delete requestStage[requestId];
+    }
+
+    function handleGenerationCallback(
+        uint256 requestId,
+        Response[] calldata responses,
+        ResponseStatus status,
+        Request calldata
+    ) external nonReentrant {
+        if (msg.sender != address(PLATFORM)) revert OnlyPlatform();
+        if (status == ResponseStatus.Pending || status == ResponseStatus.None) revert GenerationStillPending();
+        if (requestStage[requestId] != RequestStage.GenerateMarket) revert InvalidStage();
+
+        address proposer = generationProposer[requestId];
+        delete generationProposer[requestId];
+        delete requestToTopic[requestId];
+        delete requestStage[requestId];
+        delete requestToMarket[requestId];
+
+        if (status != ResponseStatus.Success || responses.length == 0) {
+            emit GenerationFailed(requestId, status, "no-success");
+            return;
+        }
+
+        (
+            string memory finishReason,
+            ,
+            ,
+            ,
+            ,
+            bytes[] memory pendingToolCalls
+        ) = abi.decode(
+            responses[0].result, (string, string, string[], string[], string[], bytes[])
+        );
+
+        if (keccak256(bytes(finishReason)) != keccak256("tool_calls")) {
+            emit GenerationFailed(requestId, status, "no-tool-calls");
+            return;
+        }
+        if (pendingToolCalls.length == 0) {
+            emit GenerationFailed(requestId, status, "empty-tool-calls");
+            return;
+        }
+
+        bytes4 createSel = bytes4(keccak256("createMarket(string,string,uint256)"));
+        bytes memory callData;
+        for (uint256 i = 0; i < pendingToolCalls.length; i++) {
+            if (
+                pendingToolCalls[i].length >= 4 &&
+                bytes4(_slice4(pendingToolCalls[i], 0)) == createSel
+            ) {
+                callData = pendingToolCalls[i];
+                break;
+            }
+        }
+        if (callData.length == 0) {
+            emit GenerationFailed(requestId, status, "wrong-selector");
+            return;
+        }
+
+        (bool ok, bytes memory ret) = address(this).call(callData);
+        if (!ok) {
+            emit GenerationFailed(requestId, ResponseStatus.Failed, "create-reverted");
+            return;
+        }
+        uint256 marketId = abi.decode(ret, (uint256));
+        markets[marketId].creator = AGENT_CREATOR_SENTINEL;
+        emit MarketCreatedByAgent(requestId, marketId, proposer);
+    }
+
+    function _slice4(bytes memory data, uint256 start) private pure returns (bytes4 out) {
+        require(data.length >= start + 4, "slice-oob");
+        assembly {
+            out := mload(add(add(data, 32), start))
+        }
     }
 
     function _parseYesNo(string memory result) private pure returns (bool valid, bool outcome) {
@@ -479,7 +632,34 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         nextCursor = end;
     }
 
+    function scanAgentCreatedMarkets(uint256 cursor, uint256 limit)
+        external
+        view
+        returns (uint256[] memory marketIds, uint256 nextCursor)
+    {
+        if (limit == 0 || limit > MAX_AGENT_SCAN_LIMIT) revert InvalidLimit();
+
+        uint256 start = cursor < 1 ? 1 : cursor;
+        uint256 end = start + limit;
+        if (end > nextMarketId) end = nextMarketId;
+
+        uint256 count;
+        for (uint256 id = start; id < end; id++) {
+            if (marketExists(id) && markets[id].creator == AGENT_CREATOR_SENTINEL) count++;
+        }
+
+        marketIds = new uint256[](count);
+        uint256 index;
+        for (uint256 id = start; id < end; id++) {
+            if (marketExists(id) && markets[id].creator == AGENT_CREATOR_SENTINEL) {
+                marketIds[index++] = id;
+            }
+        }
+
+        nextCursor = end;
+    }
+
     function agentManifest() external pure returns (string memory) {
-        return "AutoResolve agent interface: call scanResolvableMarkets(cursor,limit) to discover expired open markets; call getAgentMarketContext(marketId) for question, source, funding, and request IDs; call requestResolution(marketId) with topUpNeeded STT to trigger the Somnia Parse Website -> LLM Inference resolver pipeline.";
+        return "AutoResolve agent interface v5. Resolution: scanResolvableMarkets(cursor,limit) to discover expired open markets; getAgentMarketContext(marketId) for question, source, funding, and request IDs; requestResolution(marketId) with topUpNeeded STT to trigger the Somnia Parse Website -> LLM Inference resolver pipeline. Creation: requestMarketGeneration(string topic) payable triggers an LLM Inference inferToolsChat call that yields createMarket(question, source, duration) calldata; getGenerationFundingStatus() returns the inference deposit and topUpNeeded; scanAgentCreatedMarkets(cursor,limit) lists markets created by the agent (creator == AGENT_CREATOR_SENTINEL 0xA1).";
     }
 }

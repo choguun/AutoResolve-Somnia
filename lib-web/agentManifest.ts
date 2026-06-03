@@ -15,7 +15,7 @@ export function getAutoResolveAgentManifest() {
   return {
     name: 'AutoResolve',
     description:
-      'Autonomous prediction market resolver using Somnia Parse Website and LLM Inference agents.',
+      'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
       id: SHANNON_CHAIN_ID,
       name: SHANNON_CHAIN_NAME,
@@ -34,25 +34,50 @@ export function getAutoResolveAgentManifest() {
       },
       inference: {
         id: LLM_INFERENCE_AGENT_ID,
-        purpose: 'Classify extracted evidence into the constrained YES/NO market outcome.',
+        purpose:
+          'Multi-function LLM: inferString for constrained YES/NO classification, inferToolsChat for on-chain tool calling (creates markets).',
       },
       explorer: AGENTS_EXPLORER,
     },
     autonomousInterface: {
       discover: 'scanResolvableMarkets(uint256 cursor,uint256 limit)',
+      discoverCreated: 'scanAgentCreatedMarkets(uint256 cursor,uint256 limit)',
       inspect: 'getAgentMarketContext(uint256 marketId)',
       invoke: 'requestResolution(uint256 marketId) payable',
+      invokeCreation: 'requestMarketGeneration(string topic) payable returns (uint256 requestId)',
       funding: 'getResolutionFundingStatus()',
+      fundingCreation: 'getGenerationFundingStatus()',
       manifest: 'agentManifest()',
     },
+    creation: {
+      agentId: LLM_INFERENCE_AGENT_ID,
+      function: 'inferToolsChat',
+      trigger: 'requestMarketGeneration(string topic) payable',
+      funding: 'getGenerationFundingStatus()',
+      discover: 'scanAgentCreatedMarkets(uint256 cursor,uint256 limit)',
+      onchainTools: [
+        {
+          signature: 'createMarket(string,string,uint256)',
+          description:
+            'Create a binary YES/NO market. question <= 200 chars, source is http(s) URL, durationSeconds in [300, 86400]. Returns the new marketId.',
+        },
+      ],
+      promptTemplate: {
+        system:
+          'You design binary YES/NO prediction markets. Call createMarket(question,source,durationSeconds) exactly once.',
+        userPrefix: 'Topic: ',
+      },
+      creatorSentinel: '0x00000000000000000000000000000000000000A1',
+    },
     judgingAlignment: {
-      functionality: 'Deployed contract supports create, bet, resolve, receipt review, and claim flows.',
+      functionality:
+        'Deployed contract supports create (manual + AI), bet, resolve, receipt review, and claim flows. End-to-end autonomous generation is wired through the live LLM Inference agent.',
       agentFirstDesign:
-        'Resolution requires validator-executed Somnia agents for web extraction and deterministic LLM classification.',
+        'Both market creation and resolution are driven by validator-executed Somnia agents. Creation uses LLM Inference inferToolsChat (on-chain tool calling) — the model returns ABI-encoded createMarket calldata that the contract validates and executes.',
       innovation:
-        'Turns prediction market settlement into a reusable autonomous resolver primitive.',
+        'A generalizable primitive: a permissionless contract whose end-to-end lifecycle (create -> bet -> resolve -> claim) is executable by an external agent without frontend or admin keys.',
       autonomousPerformance:
-        'Expired markets can be discovered and resolved by an autonomous caller without frontend state.',
+        'Both creation and resolution run without frontend state. Any external agent can call getGenerationFundingStatus, requestMarketGeneration, scanAgentCreatedMarkets, getResolutionFundingStatus, scanResolvableMarkets, and requestResolution in sequence.',
     },
     proofRun: {
       contractAddress: '0x1631303A748076648a0AbbE077a657Ad7812834F',
@@ -65,6 +90,7 @@ export function getAutoResolveAgentManifest() {
       contractAddress: CONTRACT_ADDRESS,
       seededMarkets: ['1', '2'],
       agentDiscoverable: true,
+      supportsAutonomousCreation: true,
     },
   };
 }
