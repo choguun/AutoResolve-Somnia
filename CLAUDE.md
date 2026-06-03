@@ -14,20 +14,22 @@ hard constraints that are easy to break.
 - **Hackathon**: Built for the Somnia Agentathon. The repo is a single demo product
   with a hardening pass (v4 contract). Future multi-outcome markets, dispute windows,
   and protocol fees are intentionally out of scope (see `README.md` → Known limitations).
-- **Current deployed contract (v8)**:
-  `0x53C5A4c83DC646e7c94168da04A08524C1D6249E` on Somnia Shannon Testnet
+- **Current deployed contract (v9)**:
+  `0x7D47a5eF4BE519D1B712C8609a100f27D6c4Eb7E` on Somnia Shannon Testnet
   (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
 - **Live app**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
   at `/api/agent-manifest` and `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof**: market #1 on the v2 contract resolved `YES` via parse
   receipt `2400421` and inference receipt `2400485`; winnings claimed on-chain
-  (`claimTx: 0x888327…2380`). The v8 deployment is the current live target.
+  (`claimTx: 0x888327…2380`). The v9 deployment is the current live target.
 - **v7 E2E AI-created→AI-resolved proof**: market #3 on v7
   (`0xd3E946aC…4B69`) was created by the inference agent and resolved YES via
   parse receipt `4254170` and inference receipt `4254291` (tx
-  `0x362daa6f…b5143`). v8 inherits the same prompt + pipeline; the address
-  changed because v8 added `MIN_BET` / URL validation / `nonReentrant` / return
-  `requestId` / inner-revert decoder.
+  `0x362daa6f…b5143`). v9 inherits the same prompt + pipeline; the address
+  changed because v9 added the stuck-market balance check / exact YES/NO
+  parsing / case-insensitive URL validation / paginated relayer on top of
+  the v8 hardening (MIN_BET / URL validation / nonReentrant / return
+  `requestId` / inner-revert decoder).
 
 ## Repo layout
 
@@ -40,7 +42,7 @@ src/                              Solidity sources (Foundry `src`)
     ILLMAgents.sol                LLM Parse Website + LLM Inference agent payload shapes
 
 test/                             Foundry tests (`forge test -vv`)
-  AutonomousPredictionMarket.t.sol 36 unit + fuzz + reentrancy tests with a mocked platform
+  AutonomousPredictionMarket.t.sol 61 unit + fuzz + reentrancy tests with a mocked platform
 
 script/                           Forge deploy scripts (`forge script …`)
   Deploy.s.sol                    Deploys market, prefunds 0.5 STT, seeds 2 demo markets
@@ -254,7 +256,7 @@ Notes:
 ```bash
 # Solidity (Foundry)
 forge build                       # compile
-forge test -vv                    # 36 tests in test/AutonomousPredictionMarket.t.sol
+forge test -vv                    # 61 tests in test/AutonomousPredictionMarket.t.sol
 
 # Frontend
 pnpm lint                         # eslint --max-warnings=0

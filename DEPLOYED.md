@@ -2,7 +2,8 @@
 
 | Contract | Address | Explorer |
 |---|---|---|
-| **AutonomousPredictionMarket (v8 — current, MIN_BET + URL validation + nonReentrant + relayer + return requestId)** | `0x53C5A4c83DC646e7c94168da04A08524C1D6249E` | [View](https://shannon-explorer.somnia.network/address/0x53C5A4c83DC646e7c94168da04A08524C1D6249E) |
+| **AutonomousPredictionMarket (v9 — current, last autonomy gaps closed: stuck-market balance check, exact YES/NO parse, original status on inner revert, case-insensitive URL scheme, paginated relayer)** | `0x7D47a5eF4BE519D1B712C8609a100f27D6c4Eb7E` | [View](https://shannon-explorer.somnia.network/address/0x7D47a5eF4BE519D1B712C8609a100f27D6c4Eb7E) |
+| AutonomousPredictionMarket (v8 — MIN_BET + URL validation + nonReentrant + relayer + return requestId) | `0x53C5A4c83DC646e7c94168da04A08524C1D6249E` | [View](https://shannon-explorer.somnia.network/address/0x53C5A4c83DC646e7c94168da04A08524C1D6249E) |
 | AutonomousPredictionMarket (v7 — SPECIFIC-URL prompt + end-to-end proof) | `0xd3E946aC5aDfCd7772778ce841886BF933b04B69` | [View](https://shannon-explorer.somnia.network/address/0xd3E946aC5aDfCd7772778ce841886BF933b04B69) |
 | AutonomousPredictionMarket (v6 — short-duration prompt, still picked homepages) | `0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1` *(reused; same v5 bytecode with v6 prompt)* | [View](https://shannon-explorer.somnia.network/address/0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1) |
 | AutonomousPredictionMarket (v5 — fully autonomous creation) | `0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1` | [View](https://shannon-explorer.somnia.network/address/0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1) |
@@ -11,7 +12,58 @@
 | AutonomousPredictionMarket (v2) | `0x1631303A748076648a0AbbE077a657Ad7812834F` | [View](https://shannon-explorer.somnia.network/address/0x1631303A748076648a0AbbE077a657Ad7812834F) |
 | AgentSmokeTest | `0x6e1dfB44AEc5c52dE3b12753726ea57207862F65` | [View](https://shannon-explorer.somnia.network/address/0x6e1dfB44AEc5c52dE3b12753726ea57207862F65) |
 
-## Latest deployment (v5 — fully autonomous) — completed
+## Latest deployment (v9 — last autonomy gaps closed) — completed
+
+v9 is the current live contract. It keeps every v8 guarantee and closes the remaining
+gaps surfaced by an in-depth audit of the v8 deployment:
+
+| Step | Detail |
+|---|---|
+| **Contract** | `0x7D47a5eF4BE519D1B712C8609a100f27D6c4Eb7E` |
+| **Deployer** | `0x119F9fd07C09B7AD45Ac45c6797e2c2FB97a5fD6` |
+| **Pre-fund** | 1.0 STT |
+| **Seed markets** | #1 (Paris, 5 min), #2 (Bitcoin, 5 min) |
+| **`AGENT_CREATOR_SENTINEL`** | `0x00000000000000000000000000000000000000A1` |
+| **Test coverage** | 61/61 Foundry tests (was 58/58 on v8) |
+
+### Why v9
+
+The v8 contract was functionally complete but had five correctness/efficiency issues
+and three code-hygiene ones:
+
+- **Stuck-market bug**: if the contract's balance fell below the inference deposit
+  at the moment `_resolveWithLLMInference` ran, the market would silently stay in
+  `Resolving` forever with no retry path. v9 rolls the market back to `Open`, clears
+  `parseRequestId`, and emits `ResolutionFailed` so the relayer can retry once the
+  contract is refilled.
+- **Loose `YES`/`NO` parsing**: `_parseYesNo` accepted any string starting with
+  `Y`/`y`/`N`/`n`, so `"YEAH"`, `"Yessir"`, and `"NOOOOOO"` would all resolve.
+  v9 requires an exact 3-byte `YES` / `NO` match.
+- **`GenerationFailed` semantic bug**: the inner-revert branch was hardcoding
+  `ResponseStatus.Failed` even when the platform response had succeeded. v9
+  passes the original `status` so agents monitoring the event stream see the
+  real outcome.
+- **Case-sensitive URL scheme**: `_isHttpUrl` rejected `HTTPS://…` and any
+  leading whitespace. v9 is case-insensitive (per RFC 3986 §3.1) and trims
+  leading ASCII whitespace.
+- **Dead error declarations**: `BetAmountRequired`, `InvalidInferenceOutput`,
+  `InvalidGenerationOutput`, `InvalidToolSelector`, `NoResolverRefund` — removed.
+
+### Relayer v9 changes
+
+`scripts/relayer.mjs` had three efficiency issues that compound on a long-running
+watchdog:
+
+- **O(N) market scan**: was calling `getAgentMarketContext` once per market id.
+  Now paginates via the contract's own `scanResolvableMarkets(cursor, 50)`.
+- **Duplicate submissions**: a market that appeared in both the failure-event
+  stream and the scan would be re-submitted (the second call would revert
+  with `MarketNotOpen`). Now a single `Set` per tick dedupes both paths.
+- **Per-market funding read**: was reading `getResolutionFundingStatus()` once
+  per `tryResolveMarket` call. Now reads it once per tick and passes the
+  `topUp` through.
+
+## Latest deployment (v5 — fully autonomous) — historical
 
 v5 adds an on-chain market-creation pipeline. Any address can call
 `requestMarketGeneration(topic)` with the inference deposit; the Somnia
@@ -45,9 +97,9 @@ Run with `./scripts/auto-generate.sh scripts/topics.txt` against the deployed co
 Validator subcommittee for these calls (3-node consensus via
 `receiptServiceUrl`): `0x05f1…3bDe`, `0x55Ac…2A33`, `0x1Cb3…4926`.
 
-## Latest deployment (v8 — full hardening + relayer) — completed
+## Latest deployment (v8 — full hardening + relayer) — historical
 
-v8 is the current live contract. Changes vs. v7 are all defense-in-depth and observability upgrades that keep the prompt/bytecode-shape the same:
+v8 was a defense-in-depth + observability pass that kept the prompt/bytecode-shape the same:
 
 | Step | Detail |
 |---|---|
@@ -152,7 +204,18 @@ This proof is from the v2 contract and remains valid as the canonical end-to-end
 | **Resolved tx** | [0x349fb0…4035](https://shannon-explorer.somnia.network/tx/0x349fb03fa6262befb581347a979fb5fa2706d48df5d818daec749f624fe54035) |
 | **Claim tx** | [0x888327…2380](https://shannon-explorer.somnia.network/tx/0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380) — 0.03 STT winnings to YES bettor |
 
-## On-chain state (current v8)
+## On-chain state (current v9)
+
+- v9 Market **#1**: "Is the capital of France Paris?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v9 Market **#2**: "Did Bitcoin exist before 2010?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v9 Contract balance: `1.0 STT` (covers 1.5× the parse+inference deposit; rest is for retry top-ups via the relayer)
+- v9 `nextMarketId`: `3`
+- v9 `AGENT_CREATOR_SENTINEL`: `0x00000000000000000000000000000000000000A1`
+- v9 `MIN_BET`: `0.001 ether` (reverts `BetBelowMinimum` for smaller bets)
+- v9 `createMarket` requires `http://` or `https://` source URLs, case-insensitive, leading whitespace allowed (reverts `InvalidSourceUrl` otherwise)
+- v9 `_parseYesNo`: exact 3-byte `YES`/`NO` match required — `"YEAH"` no longer resolves
+
+## On-chain state (v8 — historical)
 
 - v8 Market **#1**: "Is the capital of France Paris?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
 - v8 Market **#2**: "Did Bitcoin exist before 2010?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
@@ -212,7 +275,7 @@ pnpm dev   # http://localhost:3000
 ```
 
 Set in `.env`:
-- `NEXT_PUBLIC_CONTRACT_ADDRESS=0x53C5A4c83DC646e7c94168da04A08524C1D6249E`
+- `NEXT_PUBLIC_CONTRACT_ADDRESS=0x7D47a5eF4BE519D1B712C8609a100f27D6c4Eb7E`
 
 ## Auto-retry relayer
 
@@ -223,7 +286,7 @@ request, then re-submits `requestResolution` with the wallet's top-up.
 
 ```bash
 PRIVATE_KEY=0x... \
-  NEXT_PUBLIC_CONTRACT_ADDRESS=0x53C5A4c83DC646e7c94168da04A08524C1D6249E \
+  NEXT_PUBLIC_CONTRACT_ADDRESS=0x7D47a5eF4BE519D1B712C8609a100f27D6c4Eb7E \
   node scripts/relayer.mjs
 ```
 
