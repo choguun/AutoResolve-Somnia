@@ -2,7 +2,9 @@
 
 | Contract | Address | Explorer |
 |---|---|---|
-| **AutonomousPredictionMarket (v5 — current, fully autonomous creation)** | `0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1` | [View](https://shannon-explorer.somnia.network/address/0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1) |
+| **AutonomousPredictionMarket (v7 — current, fully autonomous creation + resolution, SPECIFIC-URL prompt)** | `0xd3E946aC5aDfCd7772778ce841886BF933b04B69` | [View](https://shannon-explorer.somnia.network/address/0xd3E946aC5aDfCd7772778ce841886BF933b04B69) |
+| AutonomousPredictionMarket (v6 — short-duration prompt, still picked homepages) | `0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1` *(reused; same v5 bytecode with v6 prompt)* | [View](https://shannon-explorer.somnia.network/address/0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1) |
+| AutonomousPredictionMarket (v5 — fully autonomous creation) | `0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1` | [View](https://shannon-explorer.somnia.network/address/0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1) |
 | AutonomousPredictionMarket (v4 — hardened, resolution only) | `0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC` | [View](https://shannon-explorer.somnia.network/address/0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC) |
 | AutonomousPredictionMarket (v3 — agent-discoverable) | `0xE81F6D33057a9872efdFC881e031b325F13d682c` | [View](https://shannon-explorer.somnia.network/address/0xE81F6D33057a9872efdFC881e031b325F13d682c) |
 | AutonomousPredictionMarket (v2) | `0x1631303A748076648a0AbbE077a657Ad7812834F` | [View](https://shannon-explorer.somnia.network/address/0x1631303A748076648a0AbbE077a657Ad7812834F) |
@@ -42,6 +44,55 @@ Run with `./scripts/auto-generate.sh scripts/topics.txt` against the deployed co
 Validator subcommittee for these calls (3-node consensus via
 `receiptServiceUrl`): `0x05f1…3bDe`, `0x55Ac…2A33`, `0x1Cb3…4926`.
 
+## Latest deployment (v7 — SPECIFIC-URL prompt + end-to-end proof) — completed
+
+v7 is the current live contract. The change vs. v5/v6 is **prompt-only** — same bytecode-shape contract, but the agent prompt now requires the source URL to be a SPECIFIC article/page (not a site homepage) so the parse agent can succeed.
+
+| Step | Detail |
+|---|---|
+| **Contract** | `0xd3E946aC5aDfCd7772778ce841886BF933b04B69` |
+| **Deployer** | `0x119F9fd07C09B7AD45Ac45c6797e2c2FB97a5fD6` |
+| **Contract balance** | `2.2 STT` |
+| **`nextMarketId`** | `4` (markets 1 & 2 seeded, market 3 AI-created) |
+| **`AGENT_CREATOR_SENTINEL`** | `0x00000000000000000000000000000000000000A1` |
+| **Prompt** | `Design a binary YES/NO prediction market on this topic. {topic} You MUST call createMarket(question, source, durationSeconds) exactly once. question <= 200 chars. The source URL MUST be a SPECIFIC article or page that directly states the answer to the YES/NO question (e.g. https://en.wikipedia.org/wiki/Paris NOT https://en.wikipedia.org/). Prefer a SHORT duration in [300, 600] seconds so the market can resolve quickly.` |
+| **Test coverage** | 52/52 Foundry tests pass locally (36 v4 baseline + 16 v5/v7 creation-pipeline tests) |
+
+### Why v6 → v7
+
+v5 and v6 both let the agent pick generic homepages (e.g. `https://en.wikipedia.org/`,
+`https://bitcoin.org/`) as the source. The parse agent then returns HTTP 422 because
+homepages don't have an extractable `outcome` JSON field. v7's prompt explicitly
+requires a SPECIFIC article (with a worked example) and narrows the duration range
+to `[300, 600]` so the demo loop stays under 10 minutes. This unblocks the full
+end-to-end AI-created → AI-resolved path.
+
+### End-to-end proof on v7 (market #3)
+
+The current v7 contract ran a complete AI-created → AI-resolved loop on a
+single market. The agent that created the market also provided the source URL,
+and the same two-stage resolver closed it.
+
+| Field | Value |
+|---|---|
+| **Market id** | 3 |
+| **Question** | `Is the capital of France Paris?` |
+| **Source** | `https://en.wikipedia.org/wiki/Paris` (chosen by the LLM agent) |
+| **`creator`** | `0x0000…A1` (the `AGENT_CREATOR_SENTINEL`) |
+| **Bets** | 0.01 STT YES + 0.005 STT NO (pool 0.015 STT) |
+| **Parse request id** | `4254170` — [receipt explorer](https://agents.testnet.somnia.network/receipts/4254170) |
+| **Parse agent output** | extracted `outcome = "Yes"` |
+| **Inference request id** | `4254291` — [receipt explorer](https://agents.testnet.somnia.network/receipts/4254291) |
+| **Inference agent output** | final classification `YES` |
+| **Resolution requested (parse) tx** | [`0xc8457e94…1c31c`](https://shannon-explorer.somnia.network/tx/0xc8457e941883f0bbc3108ac0206575e80c42bb0666515c24262517ff8ae1c31c) |
+| **Resolution requested (inference) tx** | [`0x0b30f326…392ce`](https://shannon-explorer.somnia.network/tx/0x0b30f326d06a85ac6422bab93a7cfe8616b47356987799768b3afb5a0cc392ce) |
+| **Market resolved tx** | [`0x362daa6f…b5143`](https://shannon-explorer.somnia.network/tx/0x362daa6f16fd4b84b1d832867dcb679225a0f1364d58dda2ccd36234000b5143) (block 399354730) |
+| **Outcome** | `YES` (resolved at ts 0x6a1febab) |
+| **Winnings claimable** | `claimWinnings(3)` for the 0.01 STT YES bettor — pays 0.015 STT (full pool, since YES won 100%) |
+
+Validator subcommittee for the v7 resolution calls (3-node consensus via
+`receiptServiceUrl`): `0x55Ac…2A33` and 2 others (per receipt `agentRunnerAddress`).
+
 ## Latest deployment (v4) — completed
 
 | Step | Detail |
@@ -74,11 +125,20 @@ This proof is from the v2 contract and remains valid as the canonical end-to-end
 | **Resolved tx** | [0x349fb0…4035](https://shannon-explorer.somnia.network/tx/0x349fb03fa6262befb581347a979fb5fa2706d48df5d818daec749f624fe54035) |
 | **Claim tx** | [0x888327…2380](https://shannon-explorer.somnia.network/tx/0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380) — 0.03 STT winnings to YES bettor |
 
-## On-chain state (current v5)
+## On-chain state (current v7)
+
+- v7 Market **#1**: "Is the capital of France Paris?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v7 Market **#2**: "Did Bitcoin exist before 2010?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v7 Market **#3**: "Is the capital of France Paris?" — **AI-created**, **resolved `YES`**, `creator = 0x0000…A1` (Wikipedia article URL chosen by the agent)
+- v7 Contract balance: `2.2 STT`
+- v7 `nextMarketId`: `4`
+- v7 `AGENT_CREATOR_SENTINEL`: `0x00000000000000000000000000000000000000A1`
+
+## On-chain state (v5 — historical AI-creation demo)
 
 - v5 Market **#1**: "Is the capital of France Paris?" — seeded (Wikipedia source)
 - v5 Market **#2**: "Did Bitcoin exist before 2010?" — seeded (Wikipedia source)
-- v5 Market **#3**: "Will Somnia mainnet launch before 2027?" — **AI-created** (somnia.io)
+- v5 Market **#3**: "Will Somnia mainnet launch before 2027?" — **AI-created** (somnia.io — homepage; would fail parse)
 - v5 Market **#4**: "Did Bitcoin reach 100,000 USD on any exchange in 2024?" — **AI-created** (coindesk.com)
 - v5 Market **#5**: "Did the United States default on its debt in 2025?" — **AI-created** (reuters.com)
 - v5 Market **#6**: "Is the capital of Australia Canberra?" — **AI-created** (australia.gov.au)
@@ -115,4 +175,4 @@ pnpm dev   # http://localhost:3000
 ```
 
 Set in `.env`:
-- `NEXT_PUBLIC_CONTRACT_ADDRESS=0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC`
+- `NEXT_PUBLIC_CONTRACT_ADDRESS=0xd3E946aC5aDfCd7772778ce841886BF933b04B69`

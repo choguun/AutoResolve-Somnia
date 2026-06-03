@@ -2,15 +2,14 @@
 
 > **Built for the Somnia Agentathon.** Judges can verify every claim in this README in under 2 minutes — see the [How to verify](#how-to-verify) section at the bottom.
 
-**Autonomous prediction markets on Somnia where the resolution layer is a validator-executed agent workflow, not a human oracle.**
+**Fully autonomous prediction markets on Somnia: a Somnia agent creates the market from a topic, validator-executed Somnia agents resolve it after it closes, and the on-chain settlement is the agent's output. No human oracle, no backend resolver, no multisig.**
 
-AutoResolve lets anyone create YES/NO prediction markets, stake STT, and let Somnia Agents resolve the final outcome. After a market ends, the contract triggers a two-stage agent pipeline:
+AutoResolve lets anyone trigger a YES/NO prediction market — manually or by handing a topic to a Somnia agent — stake STT, and let Somnia Agents close the loop. The contract exposes two autonomous pipelines that share the same agent platform:
 
-1. **LLM Parse Website** extracts factual evidence from the market's source URL.
-2. **LLM Inference** classifies the evidence into a constrained `YES` or `NO` result.
-3. The Somnia Agent Platform calls back into the contract, which records the outcome and unlocks payouts.
+1. **Creation** — `requestMarketGeneration(topic)` hands a topic to the LLM Inference agent's `inferToolsChat`; the agent returns a `createMarket(question, source, duration)` call. The contract executes it and mints a market with `creator = 0x0000…A1` (the `AGENT_CREATOR_SENTINEL`).
+2. **Resolution** — after the market's `endTime`, `requestResolution(marketId)` runs the two-stage agent pipeline. The LLM Parse Website agent extracts evidence from the market's source URL; the LLM Inference agent classifies that evidence as `YES` or `NO`. The final agent callback writes the outcome on-chain and unlocks payouts.
 
-The important part: the AI result is not just displayed in the UI. It changes on-chain contract state and controls settlement.
+The important part: the AI output is not just displayed in the UI. It changes on-chain contract state, mints new markets, and controls settlement. Two AI systems (creation, resolution) are chained end-to-end and the result is a fully self-driving prediction market.
 
 ## Live Submission
 
@@ -20,21 +19,23 @@ The important part: the AI result is not just displayed in the UI. It changes on
 | Proof page | [autoresolve-somnia.vercel.app/proof](https://autoresolve-somnia.vercel.app/proof) |
 | Agent manifest | [autoresolve-somnia.vercel.app/api/agent-manifest](https://autoresolve-somnia.vercel.app/api/agent-manifest) |
 | Well-known agent JSON | [/.well-known/autoresolve-agent.json](https://autoresolve-somnia.vercel.app/.well-known/autoresolve-agent.json) |
-| Current contract | [0xE364...8DFC](https://shannon-explorer.somnia.network/address/0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC) |
-| Completed parse receipt | [2400421](https://agents.testnet.somnia.network/receipts/2400421) |
-| Completed inference receipt | [2400485](https://agents.testnet.somnia.network/receipts/2400485) |
+| Current contract (v7 — fully autonomous) | [0xd3E9…4B69](https://shannon-explorer.somnia.network/address/0xd3E946aC5aDfCd7772778ce841886BF933b04B69) |
+| **v7** AI-created market → AI-resolved end-to-end (parse) | [4254170](https://agents.testnet.somnia.network/receipts/4254170) |
+| **v7** AI-created market → AI-resolved end-to-end (inference) | [4254291](https://agents.testnet.somnia.network/receipts/4254291) |
+| v2 historical proof (parse) | [2400421](https://agents.testnet.somnia.network/receipts/2400421) |
+| v2 historical proof (inference) | [2400485](https://agents.testnet.somnia.network/receipts/2400485) |
 
 ## Hackathon Submission Explanation
 
-AutoResolve is an autonomous settlement system for prediction markets built on Somnia Shannon Testnet. The project demonstrates how Somnia's Agentic L1 can replace a traditional human oracle or centralized backend resolver with validator-executed agents.
+AutoResolve is a fully autonomous settlement system for prediction markets built on Somnia Shannon Testnet. The project demonstrates how Somnia's Agentic L1 can replace a traditional human oracle, a centralized resolver, AND the market curator: validator-executed agents both **create** and **resolve** markets end-to-end, and the on-chain settlement is their output.
 
-The application has three main pieces. First, a Solidity contract stores markets, accepts YES/NO bets, escrows STT, and pays winners proportionally after resolution. Second, the contract integrates directly with Somnia's Agent Platform. When a market closes, anyone can call `requestResolution`; the contract asks the LLM Parse Website agent to extract evidence from the market source, then asks the LLM Inference agent to classify that evidence as `YES` or `NO`. The final agent callback writes the resolved outcome on-chain. Third, the Next.js frontend exposes the full user and judge experience: market creation, betting, resolution status, validator receipt viewing, and a proof page.
+The application has three pieces. First, a Solidity contract stores markets, accepts YES/NO bets, escrows STT, and pays winners proportionally after resolution. Second, the contract integrates directly with Somnia's Agent Platform for two pipelines: a creation pipeline that hands a topic to the LLM Inference agent's `inferToolsChat` and lets the agent call `createMarket(question, source, duration)` back into the contract; and a resolution pipeline that, after the market closes, asks the LLM Parse Website agent to extract evidence from the market source and then asks the LLM Inference agent to classify that evidence as `YES` or `NO`. Third, a Next.js frontend exposes the full user and judge experience: manual and AI-generated market creation, betting, resolution status, validator receipt viewing, and a proof page with a live "Agent Command Center".
 
-During development, we focused on making the project agent-native rather than simply adding AI to a normal dApp. The latest v3 contract exposes functions such as `scanResolvableMarkets`, `getAgentMarketContext`, `getResolutionFundingStatus`, and `agentManifest`, so an external autonomous resolver can discover expired markets, inspect source/funding context, and invoke resolution without relying on frontend state. The `/proof` page includes a live "Agent Command Center" that calls these functions against the deployed contract and shows the autonomous call path in real time.
+During development, we focused on making the project agent-native rather than simply adding AI to a normal dApp. The current v7 contract exposes functions for both pipelines — `requestMarketGeneration`, `scanAgentCreatedMarkets`, `getGenerationFundingStatus` for creation, and `scanResolvableMarkets`, `getAgentMarketContext`, `getResolutionFundingStatus`, `agentManifest` for resolution — so an external agent (or a human via `cast`) can drive the full lifecycle without ever touching the frontend. The `/proof` page includes a live "Agent Command Center" that calls these functions against the deployed contract and shows the autonomous call path in real time.
 
-The project is deployed and has a completed end-to-end proof run from an earlier deployment: market #1 asked whether Paris is the capital of France, the Parse Website agent produced receipt `2400421`, the Inference agent produced receipt `2400485`, the market resolved `YES`, and winnings were claimed on-chain. The current v3 deployment is prefunded with 1 STT and seeded with two demo markets for live testing.
+The project is deployed and has a completed end-to-end proof run on the current v7 contract: an AI agent created market #3 ("Is the capital of France Paris?" with `https://en.wikipedia.org/wiki/Paris` as the source), the same two-stage resolution pipeline ran and produced parse receipt `4254170` and inference receipt `4254291`, the market resolved `YES`, and the on-chain payout is claimable. The v2 contract holds a separate historical proof (parse `2400421`, inference `2400485`, claim tx `0x888327…2380`) that predates the creation feature.
 
-This submission is intended to show a reusable primitive, not only a prediction-market UI. The same pattern can be used for any contract that needs to settle based on real-world facts: insurance claims, sports markets, bounty milestones, DAO grants, and automated escrow releases.
+This submission is intended to show a reusable primitive, not only a prediction-market UI. The same agent-callback pattern can settle any contract that depends on real-world facts: insurance claims, sports markets, bounty milestones, DAO grants, and automated escrow releases.
 
 ## Why This Needs Somnia
 
@@ -52,41 +53,68 @@ AutoResolve uses Somnia for the critical path:
 
 | Criterion | What AutoResolve Shows |
 |---|---|
-| Functionality | Deployed app and contract support create, bet, resolve, receipt review, and claim flows. |
-| Agent-First Design | Resolution requires Somnia agents; the contract also exposes discovery/context functions for external resolver agents. |
-| Innovation & Technical Creativity | Turns the prediction-market oracle layer into an autonomous, reusable settlement primitive. |
-| Autonomous Performance | Expired markets can be discovered, inspected, funded, and resolved without frontend state. |
+| Functionality | Deployed app and contract support manual create, AI-generated create, bet, resolve, receipt review, and claim flows. |
+| Agent-First Design | Both creation and resolution are Somnia-agent driven. The contract also exposes discovery/context functions for both pipelines so an external agent can run the full lifecycle without the UI. |
+| Innovation & Technical Creativity | First prediction market where the same validator-executed agents that resolve a market can also create it. A single on-chain `createRequest` → `handleGenerationCallback` loop replaces both the oracle AND the curator. |
+| Autonomous Performance | Any external agent can discover a topic, generate a market, fund the inference deposit, and resolve the result. No human interaction is required at any point in the loop. |
 
 ## Architecture
 
 ```text
-User or autonomous resolver
+                  CREATION PIPELINE
+=====================================================
+   User (or any agent) — topic string
         |
         v
-Next.js UI or direct contract call
+   requestMarketGeneration(topic) payable
         |
         v
-AutonomousPredictionMarket.sol
+   AutonomousPredictionMarket.sol
         |
-        | createRequest(parse)
+        | createRequest(inferToolsChat,
+        |              tool = createMarket)
         v
-Somnia LLM Parse Website Agent
+   Somnia LLM Inference Agent (validator-run)
+        |
+        | callback with createMarket(question,
+        |                            source,
+        |                            duration)
+        v
+   AutonomousPredictionMarket.sol
+   -> marketId minted, creator = AGENT_CREATOR_SENTINEL
+
+
+                  RESOLUTION PIPELINE
+=====================================================
+   User (or any agent) — marketId
+        |
+        v
+   requestResolution(marketId) payable
+        |
+        v
+   AutonomousPredictionMarket.sol
+        |
+        | createRequest(parse: ExtractString)
+        v
+   Somnia LLM Parse Website Agent (validator-run)
         |
         | callback with extracted evidence
         v
-AutonomousPredictionMarket.sol
+   AutonomousPredictionMarket.sol
         |
-        | createRequest(inference)
+        | createRequest(inference: inferString)
         v
-Somnia LLM Inference Agent
+   Somnia LLM Inference Agent (validator-run)
         |
         | callback with YES/NO
         v
-Resolved market + claimable payouts
+   AutonomousPredictionMarket.sol
+   -> market.outcome written, status = Resolved,
+      payouts unlocked
 
 Verification:
-Agent receipts -> agents.testnet.somnia.network
-On-chain txs -> shannon-explorer.somnia.network
+  Agent receipts -> agents.testnet.somnia.network
+  On-chain txs  -> shannon-explorer.somnia.network
 ```
 
 ## Why AutoResolve, Not The Status Quo
@@ -110,64 +138,78 @@ AutoResolve is the first prediction-market primitive that lets a contract ask an
 Current deployment:
 
 ```text
-AutonomousPredictionMarket v4 (hardened)
-0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC
+AutonomousPredictionMarket v7 (fully autonomous — creation + resolution)
+0xd3E946aC5aDfCd7772778ce841886BF933b04B69
 ```
 
 Core functions:
 
 | Function | Description |
 |---|---|
-| `createMarket(question, source, duration)` | Create a YES/NO market. |
+| `createMarket(question, source, duration)` | Manually create a YES/NO market (creator = `msg.sender`). |
 | `bet(marketId, option)` | Stake STT on YES or NO. |
+| `requestMarketGeneration(string topic) payable` | Hand a topic to the LLM Inference agent's `inferToolsChat`; the agent calls `createMarket` back into the contract. New markets are minted with `creator = AGENT_CREATOR_SENTINEL` (`0x0000…A1`). |
 | `requestResolution(marketId)` | Trigger the two-stage Somnia agent resolver. |
-| `claimWinnings(marketId)` | Claim proportional payout for winning side. |
-| `scanResolvableMarkets(cursor, limit)` | Let agents discover expired markets ready for resolution. |
+| `claimWinnings(marketId)` | Claim proportional payout for the winning side. |
+| `scanResolvableMarkets(cursor, limit)` | Let external agents discover expired markets ready for resolution. |
+| `scanAgentCreatedMarkets(cursor, limit)` | Let external agents discover markets created by the inference agent. |
 | `getAgentMarketContext(marketId)` | Return question, source, funding, status, and request IDs for agents. |
-| `getResolutionFundingStatus()` | Return required deposit, contract balance, and top-up needed. |
-| `agentManifest()` | On-chain description of the autonomous resolver interface. |
+| `getResolutionFundingStatus()` | Return required deposit, contract balance, and top-up needed for resolution. |
+| `getGenerationFundingStatus()` | Return required deposit, contract balance, and top-up needed for creation. |
+| `agentManifest()` | On-chain description of the autonomous interface. |
 
-Somnia constants:
+Sentinel + constants:
 
-| Constant | Value |
+| Symbol | Value |
 |---|---|
+| `AGENT_CREATOR_SENTINEL` | `0x00000000000000000000000000000000000000A1` — `creator` value for AI-created markets; the UI shows a "Created by AI" badge for this address |
 | Agent Platform | `0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776` |
 | LLM Parse Website Agent | `12875401142070969085` |
-| LLM Inference Agent | `12847293847561029384` |
+| LLM Inference Agent | `12847293847561029384` (used for both `inferString` resolution and `inferToolsChat` creation) |
 | Chain | Somnia Shannon Testnet |
 | Chain ID | `50312` |
 | RPC | `https://dream-rpc.somnia.network` |
 
 ## Proof Artifacts
 
-Latest v4 deployment:
+Latest v7 deployment — fully autonomous creation + resolution:
 
-- Contract: [0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC](https://shannon-explorer.somnia.network/address/0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC)
-- Deploy tx: [0x792bdd…5326](https://shannon-explorer.somnia.network/tx/0x792bdda72326da570994761b1c71f4455582e44a90b06403c8bb094cb0df5326)
-- Prefund tx: [0x0eda0e…9a33](https://shannon-explorer.somnia.network/tx/0x0eda0e2b9751b77c2df06712d75fcea3b2b30a90904d71fb3e6f46b814af9a33) — 1 STT
-- Seed market #1 tx: [0x8e372a…55a1](https://shannon-explorer.somnia.network/tx/0x8e372acfdbe82e73c603e555304146d6d5a5d1a24dfef976197b2cc5d4e355a1)
-- Seed market #2 tx: [0xc02856…a42c](https://shannon-explorer.somnia.network/tx/0xc028568b047a686786ce33c0140c1a292b45e722e418a629cb4d2a887443a42c)
-- Hardening vs. v3: custom errors, `nonReentrant` guard on `bet` / `claimWinnings` / both agent callbacks, `.call{value:}` with success check
-- Test coverage: 36/36 Foundry tests pass locally (was 16/16 in v3)
+- Contract: [0xd3E946aC5aDfCd7772778ce841886BF933b04B69](https://shannon-explorer.somnia.network/address/0xd3E946aC5aDfCd7772778ce841886BF933b04B69)
+- Prefund: prefilled with enough STT to cover creation and resolution inference deposits.
+- Test coverage: 52/52 Foundry tests pass locally (36 v4 baseline + 16 v5/v7 creation-pipeline tests).
 
-Completed historical E2E resolution:
+Completed E2E run on the v7 contract — AI agent created the market, AI agents resolved it:
 
-- Market: `Is the capital of France Paris?`
+- Market #3 (AI-created): "Is the capital of France Paris?" — `creator = 0x0000…A1`
+- Source URL (chosen by the LLM agent): `https://en.wikipedia.org/wiki/Paris`
+- Yes pool: 0.01 STT, No pool: 0.005 STT
+- Parse agent receipt: [4254170](https://agents.testnet.somnia.network/receipts/4254170) — extracted `outcome = "Yes"`
+- Inference agent receipt: [4254291](https://agents.testnet.somnia.network/receipts/4254291) — final classification `YES`
+- Resolution requested (parse) tx: [`0xc8457e94…1c31c`](https://shannon-explorer.somnia.network/tx/0xc8457e941883f0bbc3108ac0206575e80c42bb0666515c24262517ff8ae1c31c)
+- Resolution requested (inference) tx: [`0x0b30f326…392ce`](https://shannon-explorer.somnia.network/tx/0x0b30f326d06a85ac6422bab93a7cfe8616b47356987799768b3afb5a0cc392ce)
+- Market resolved tx (YES): [`0x362daa6f…b5143`](https://shannon-explorer.somnia.network/tx/0x362daa6f16fd4b84b1d832867dcb679225a0f1364d58dda2ccd36234000b5143)
+- Outcome: `YES` — winnings claimable via `claimWinnings(3)`
+
+Historical E2E proof on the v2 contract (predates the creation feature):
+
+- Market #1: "Is the capital of France Paris?" — `creator = 0x119F…5fD6` (human-seeded)
+- Source: `https://en.wikipedia.org/wiki/Paris`
 - Parse agent receipt: [2400421](https://agents.testnet.somnia.network/receipts/2400421)
 - Inference agent receipt: [2400485](https://agents.testnet.somnia.network/receipts/2400485)
 - Outcome: `YES`
-- Claim tx: [0x888327...2380](https://shannon-explorer.somnia.network/tx/0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380)
+- Claim tx: [0x888327…2380](https://shannon-explorer.somnia.network/tx/0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380) — 0.03 STT winnings paid to the YES bettor
 
 ## Demo Flow
 
 1. Open [the proof page](https://autoresolve-somnia.vercel.app/proof).
-2. Show the **Live Autonomous Resolver Console**.
-3. Point out `scanResolvableMarkets`, `getAgentMarketContext`, funding status, and resolvable seeded markets.
-4. Open the completed parse and inference receipts.
-5. Open the main app, connect a wallet on Somnia Shannon, create or open a market, place a bet, and request resolution after the 5-minute market window ends.
-6. Show the resolution timeline and claim flow.
+2. Show the **Live Autonomous Resolver Console** (resolution side) and the **AI Generation Pipeline** card (creation side).
+3. Point out `scanResolvableMarkets`, `scanAgentCreatedMarkets`, `getAgentMarketContext`, both funding statuses, and the live market list with the "Created by AI" badge.
+4. Open the completed v7 parse and inference receipts ([`4254170`](https://agents.testnet.somnia.network/receipts/4254170), [`4254291`](https://agents.testnet.somnia.network/receipts/4254291)) and the v2 historical proof ([`2400421`](https://agents.testnet.somnia.network/receipts/2400421), [`2400485`](https://agents.testnet.somnia.network/receipts/2400485)).
+5. Open the main app, go to `/create`, and show the **Manual** and **AI-Generated** tabs. The AI-Generated tab triggers `requestMarketGeneration(topic)`; the resulting market appears on `/` with the "Created by AI" badge.
+6. Connect a wallet on Somnia Shannon, place a bet on any market, and request resolution after the market's `endTime`.
+7. Show the resolution timeline and claim flow.
 
-If live agent execution takes longer than the pitch slot, use the historical proof receipts `2400421` and `2400485`.
+If live agent execution takes longer than the pitch slot, use the v7 proof receipts `4254170` and `4254291`, or the v2 historical proof `2400421` and `2400485`.
 
 ## Tech Stack
 
@@ -210,7 +252,7 @@ cp .env.example .env
 PRIVATE_KEY=your_deployer_private_key
 SHANNON_RPC_URL=https://dream-rpc.somnia.network
 NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=your_walletconnect_project_id
-NEXT_PUBLIC_CONTRACT_ADDRESS=0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC
+NEXT_PUBLIC_CONTRACT_ADDRESS=0xd3E946aC5aDfCd7772778ce841886BF933b04B69
 ```
 
 ### Run
@@ -231,7 +273,7 @@ forge test -vv
 
 Current contract test coverage includes:
 
-- Market creation validation.
+- Market creation validation (manual and agent paths).
 - Betting and proportional payouts.
 - Winner cannot claim twice.
 - Missing market guards.
@@ -240,6 +282,8 @@ Current contract test coverage includes:
 - Unauthorized callback rejection.
 - Invalid LLM output reopening the market.
 - Agent discovery and context scanning.
+- `requestMarketGeneration` happy path, refund math, empty/long topic, callback-only-platform, `nonReentrant`.
+- `scanAgentCreatedMarkets` paginates markets whose `creator == AGENT_CREATOR_SENTINEL`.
 
 ## Deployment
 
@@ -267,33 +311,36 @@ Open [autoresolve-somnia.vercel.app](https://autoresolve-somnia.vercel.app). The
 
 ### Step 2 — The contract is on Shannon
 
-Open the deployed contract in Shannon Explorer:
+Open the deployed v7 contract in Shannon Explorer:
 
-- Contract: [`0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC`](https://shannon-explorer.somnia.network/address/0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC)
+- Contract: [`0xd3E946aC5aDfCd7772778ce841886BF933b04B69`](https://shannon-explorer.somnia.network/address/0xd3E946aC5aDfCd7772778ce841886BF933b04B69)
 - The "Contract" tab will show the verified source code (see the verification step in `DEPLOYED.md`).
-- The "Transactions" tab will show the deploy tx, the 1 STT prefund, and the two seeded market creations.
+- The "Transactions" tab will show the deploy tx, the prefund, the two seeded markets, market #3 (AI-created), the resolution pipeline txs, and the `MarketResolved` event.
 
-### Step 3 — The agents actually ran
+### Step 3 — The agents actually ran (current v7 proof)
 
-Open the two completed agent receipts. Each one is a real Somnia validator-executed agent run with a public, inspectable output:
+The v7 contract ran an end-to-end proof where the **AI agent created the market and the AI agents resolved it**. Market #3 is the artifact — `creator = 0x0000…A1` (the `AGENT_CREATOR_SENTINEL`):
 
-- **Parse agent** (extracts the answer from the source URL): [receipt `2400421`](https://agents.testnet.somnia.network/receipts/2400421)
-- **Inference agent** (classifies the answer as `YES` or `NO`): [receipt `2400485`](https://agents.testnet.somnia.network/receipts/2400485)
+- **Parse agent** (extracted `outcome = "Yes"` from the source URL the inference agent chose): [receipt `4254170`](https://agents.testnet.somnia.network/receipts/4254170)
+- **Inference agent** (final classification `YES`): [receipt `4254291`](https://agents.testnet.somnia.network/receipts/4254291)
+- **Market resolved** on-chain: tx [`0x362daa6f…b5143`](https://shannon-explorer.somnia.network/tx/0x362daa6f16fd4b84b1d832867dcb679225a0f1364d58dda2ccd36234000b5143) — `MarketResolved(marketId=3, outcome=YES, reason="YES")`
 
 Inside the same app:
 
-- Open [`/receipt/2400421`](https://autoresolve-somnia.vercel.app/receipt/2400421) for the parser receipt.
-- Open [`/receipt/2400485`](https://autoresolve-somnia.vercel.app/receipt/2400485) for the inference receipt.
+- Open [`/receipt/4254170`](https://autoresolve-somnia.vercel.app/receipt/4254170) for the parse receipt.
+- Open [`/receipt/4254291`](https://autoresolve-somnia.vercel.app/receipt/4254291) for the inference receipt.
 
 You will see the validator subcommittee (3 nodes), each validator's individual output, the consensus result, and the agent's raw API response. The receipt pages in the app normalize the raw payload into a timeline.
 
 ### Step 4 — The on-chain settlement matches the agent output
 
-The receipt `2400485` says the inference agents returned `YES` for the question "Is the capital of France Paris?". Follow the receipt to the claim transaction:
+Receipt `4254291` says the inference agents returned `YES` for the question "Is the capital of France Paris?" on a market the inference agent itself created. Follow the receipt to the on-chain resolution:
 
-- Claim tx: [`0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380`](https://shannon-explorer.somnia.network/tx/0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380)
+- Market resolved tx: [`0x362daa6f16fd4b84b1d832867dcb679225a0f1364d58dda2ccd36234000b5143`](https://shannon-explorer.somnia.network/tx/0x362daa6f16fd4b84b1d832867dcb679225a0f1364d58dda2ccd36234000b5143)
 
-Open it in Shannon Explorer. The transaction input is a call to `claimWinnings`; the log shows the payout. The agent's answer (`YES`) became the contract's stored outcome; the contract's stored outcome became the payout. The chain of custody is complete.
+Open it in Shannon Explorer. The transaction input is the inference callback from the Somnia platform; the log shows `MarketResolved(3, YES, "YES", …)`. The agent's answer (`YES`) became the contract's stored outcome; the contract's stored outcome unlocks `claimWinnings(3)` for the YES bettor. The chain of custody is complete.
+
+For the historical v2 E2E proof (with a recorded claim tx), receipts `2400421` + `2400485` + claim tx [`0x888327…2380`](https://shannon-explorer.somnia.network/tx/0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380) remain valid.
 
 ### Step 5 — The tests pass
 
@@ -305,22 +352,39 @@ forge test -vv
 
 You should see all tests green, including parse-callback success, parse-callback failure, inference-callback success, inference-callback failure, unauthorized callback rejection, payout math, double-claim prevention, agent context scanning, and reentrancy.
 
-### Step 6 — The contract exposes an agent-discoverable interface
+### Step 6 — The contract exposes an agent-discoverable interface (both pipelines)
 
-External autonomous resolvers do not need the frontend. The contract itself answers:
+External autonomous agents do not need the frontend. The contract itself answers:
 
 ```bash
-cast call 0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC "scanResolvableMarkets(uint256,uint256)" 0 10 \
+# Resolution side
+cast call 0xd3E946aC5aDfCd7772778ce841886BF933b04B69 \
+  "scanResolvableMarkets(uint256,uint256)" 0 10 \
   --rpc-url https://dream-rpc.somnia.network
 
-cast call 0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC "getAgentMarketContext(uint256)" 1 \
+cast call 0xd3E946aC5aDfCd7772778ce841886BF933b04B69 \
+  "getAgentMarketContext(uint256)" 3 \
   --rpc-url https://dream-rpc.somnia.network
 
-cast call 0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC "agentManifest()" \
+cast call 0xd3E946aC5aDfCd7772778ce841886BF933b04B69 \
+  "getResolutionFundingStatus()" \
+  --rpc-url https://dream-rpc.somnia.network
+
+# Creation side
+cast call 0xd3E946aC5aDfCd7772778ce841886BF933b04B69 \
+  "scanAgentCreatedMarkets(uint256,uint256)" 0 10 \
+  --rpc-url https://dream-rpc.somnia.network
+
+cast call 0xd3E946aC5aDfCd7772778ce841886BF933b04B69 \
+  "getGenerationFundingStatus()" \
+  --rpc-url https://dream-rpc.somnia.network
+
+cast call 0xd3E946aC5aDfCd7772778ce841886BF933b04B69 \
+  "agentManifest()" \
   --rpc-url https://dream-rpc.somnia.network
 ```
 
-The same answers power the `Agent Command Center` widget on the live `/proof` page. A second agent — written by anyone — can drive the same resolution flow without the UI.
+The same answers power the `Agent Command Center` widget on the live `/proof` page. A second agent — written by anyone — can drive both the creation and resolution flows without the UI: discover a topic, generate a market, fund the inference deposit, and resolve the result.
 
 ## Known limitations
 

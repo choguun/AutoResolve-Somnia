@@ -287,7 +287,8 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             "Design a binary YES/NO prediction market on this topic. ",
             topic,
             " You MUST call createMarket(question, source, durationSeconds) exactly once. ",
-            "question <= 200 chars, source is a public http(s) URL, durationSeconds in [300, 86400]."
+            "question <= 200 chars. The source URL MUST be a SPECIFIC article or page that directly states the answer to the YES/NO question (e.g. https://en.wikipedia.org/wiki/Paris NOT https://en.wikipedia.org/). ",
+            "Prefer a SHORT duration in [300, 600] seconds so the market can resolve quickly."
         );
         string[] memory mcpServerUrls = new string[](0);
 
