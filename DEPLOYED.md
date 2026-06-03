@@ -2,7 +2,8 @@
 
 | Contract | Address | Explorer |
 |---|---|---|
-| **AutonomousPredictionMarket (v7 — current, fully autonomous creation + resolution, SPECIFIC-URL prompt)** | `0xd3E946aC5aDfCd7772778ce841886BF933b04B69` | [View](https://shannon-explorer.somnia.network/address/0xd3E946aC5aDfCd7772778ce841886BF933b04B69) |
+| **AutonomousPredictionMarket (v8 — current, MIN_BET + URL validation + nonReentrant + relayer + return requestId)** | `0x53C5A4c83DC646e7c94168da04A08524C1D6249E` | [View](https://shannon-explorer.somnia.network/address/0x53C5A4c83DC646e7c94168da04A08524C1D6249E) |
+| AutonomousPredictionMarket (v7 — SPECIFIC-URL prompt + end-to-end proof) | `0xd3E946aC5aDfCd7772778ce841886BF933b04B69` | [View](https://shannon-explorer.somnia.network/address/0xd3E946aC5aDfCd7772778ce841886BF933b04B69) |
 | AutonomousPredictionMarket (v6 — short-duration prompt, still picked homepages) | `0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1` *(reused; same v5 bytecode with v6 prompt)* | [View](https://shannon-explorer.somnia.network/address/0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1) |
 | AutonomousPredictionMarket (v5 — fully autonomous creation) | `0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1` | [View](https://shannon-explorer.somnia.network/address/0xCEC6b358eA408fA29F0D29119cF91F800dc81Ab1) |
 | AutonomousPredictionMarket (v4 — hardened, resolution only) | `0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC` | [View](https://shannon-explorer.somnia.network/address/0xE364Ab693000E0384dD8f69Cf0F4Fbce54248DFC) |
@@ -44,9 +45,35 @@ Run with `./scripts/auto-generate.sh scripts/topics.txt` against the deployed co
 Validator subcommittee for these calls (3-node consensus via
 `receiptServiceUrl`): `0x05f1…3bDe`, `0x55Ac…2A33`, `0x1Cb3…4926`.
 
-## Latest deployment (v7 — SPECIFIC-URL prompt + end-to-end proof) — completed
+## Latest deployment (v8 — full hardening + relayer) — completed
 
-v7 is the current live contract. The change vs. v5/v6 is **prompt-only** — same bytecode-shape contract, but the agent prompt now requires the source URL to be a SPECIFIC article/page (not a site homepage) so the parse agent can succeed.
+v8 is the current live contract. Changes vs. v7 are all defense-in-depth and observability upgrades that keep the prompt/bytecode-shape the same:
+
+| Step | Detail |
+|---|---|
+| **Contract** | `0x53C5A4c83DC646e7c94168da04A08524C1D6249E` |
+| **Deployer** | `0x119F9fd07C09B7AD45Ac45c6797e2c2FB97a5fD6` |
+| **Contract balance** | `2.0 STT` |
+| **`nextMarketId`** | `3` (markets 1 & 2 seeded) |
+| **`AGENT_CREATOR_SENTINEL`** | `0x00000000000000000000000000000000000000A1` |
+| **Test coverage** | 58/58 Foundry tests (was 50/50 on v7) |
+| **New surface** | `MIN_BET = 0.001 ether`, `InvalidSourceUrl` / `BetBelowMinimum` reverts, `nonReentrant` on `requestResolution` and `requestMarketGeneration`, `requestResolution` returns the parse `requestId`, `handleGenerationCallback` decodes the inner createMarket revert selector and emits a descriptive name (`QuestionTooLong`, `SourceTooLong`, `InvalidSourceUrl`, `DurationTooShort`) instead of the opaque `create-reverted` |
+| **New infra** | `scripts/relayer.mjs` — off-chain auto-retry relayer that watches `ResolutionFailed` events + any open markets past `endTime` and re-calls `requestResolution` (closes the last "human in the loop" gap) |
+
+### Why v8
+
+The v7 contract closed the AI-created → AI-resolved loop with a SPECIFIC-URL prompt. v8 closes the remaining autonomous gaps:
+
+- **MIN_BET** prevents accidental zero-value bets that would inflate `userYesBets`/`userNoBets` counters without moving `yesTotal`/`noTotal`.
+- **`InvalidSourceUrl`** rejects `javascript:`, `ftp:`, and bare hostnames at the contract boundary so the parse agent never wastes a request on a URL it can't scrape.
+- **`nonReentrant`** on `requestResolution` and `requestMarketGeneration` matches the callback guards and prevents any future ETH-moving code path from being abused.
+- **Returning `requestId` from `requestResolution`** lets the UI deep-link the user to the live parse receipt immediately after the tx confirms.
+- **Inner-revert decoder** in `handleGenerationCallback` makes agent creation failures self-describing.
+- **`scripts/relayer.mjs`** is the always-on relayer that re-fires resolution whenever an agent callback fails — turns "fully autonomous" from a one-shot demo into a recoverable loop.
+
+## Latest deployment (v7 — SPECIFIC-URL prompt + end-to-end proof) — historical
+
+v7 was the first contract where the same agent that created a market also provided the source URL, and the same two-stage resolver closed it. The change vs. v5/v6 is **prompt-only** — same bytecode-shape contract, but the agent prompt now requires the source URL to be a SPECIFIC article/page (not a site homepage) so the parse agent can succeed.
 
 | Step | Detail |
 |---|---|
@@ -125,7 +152,17 @@ This proof is from the v2 contract and remains valid as the canonical end-to-end
 | **Resolved tx** | [0x349fb0…4035](https://shannon-explorer.somnia.network/tx/0x349fb03fa6262befb581347a979fb5fa2706d48df5d818daec749f624fe54035) |
 | **Claim tx** | [0x888327…2380](https://shannon-explorer.somnia.network/tx/0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380) — 0.03 STT winnings to YES bettor |
 
-## On-chain state (current v7)
+## On-chain state (current v8)
+
+- v8 Market **#1**: "Is the capital of France Paris?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v8 Market **#2**: "Did Bitcoin exist before 2010?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v8 Contract balance: `2.0 STT`
+- v8 `nextMarketId`: `3`
+- v8 `AGENT_CREATOR_SENTINEL`: `0x00000000000000000000000000000000000000A1`
+- v8 `MIN_BET`: `0.001 ether` (reverts `BetBelowMinimum` for smaller bets)
+- v8 `createMarket` requires `http://` or `https://` source URLs (reverts `InvalidSourceUrl` otherwise)
+
+## On-chain state (v7 — historical, fully autonomous proof)
 
 - v7 Market **#1**: "Is the capital of France Paris?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
 - v7 Market **#2**: "Did Bitcoin exist before 2010?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
@@ -175,4 +212,22 @@ pnpm dev   # http://localhost:3000
 ```
 
 Set in `.env`:
-- `NEXT_PUBLIC_CONTRACT_ADDRESS=0xd3E946aC5aDfCd7772778ce841886BF933b04B69`
+- `NEXT_PUBLIC_CONTRACT_ADDRESS=0x53C5A4c83DC646e7c94168da04A08524C1D6249E`
+
+## Auto-retry relayer
+
+`scripts/relayer.mjs` is an always-on watchdog that turns "fully autonomous" from a
+one-shot demo into a recoverable loop. It watches the contract for
+`ResolutionFailed` events and any open markets past `endTime` without a parse
+request, then re-submits `requestResolution` with the wallet's top-up.
+
+```bash
+PRIVATE_KEY=0x... \
+  NEXT_PUBLIC_CONTRACT_ADDRESS=0x53C5A4c83DC646e7c94168da04A08524C1D6249E \
+  node scripts/relayer.mjs
+```
+
+Optional env:
+- `SHANNON_RPC_URL` (default `https://dream-rpc.somnia.network`)
+- `RELAYER_POLL_MS` (default 30 seconds)
+- `RELAYER_MAX_BET_GAS` (default 1 STT — refuses to top up markets needing more)
