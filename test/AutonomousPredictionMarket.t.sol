@@ -143,6 +143,21 @@ contract AutonomousPredictionMarketTest is Test {
         market.createMarket(string(longQuestion), "https://example.com", 300);
     }
 
+    function testCreateMarketRejectsNonHttpUrl() public {
+        vm.expectRevert(AutonomousPredictionMarket.InvalidSourceUrl.selector);
+        market.createMarket("Will it rain?", "ftp://example.com/wiki/Paris", 300);
+        vm.expectRevert(AutonomousPredictionMarket.InvalidSourceUrl.selector);
+        market.createMarket("Will it rain?", "example.com/wiki/Paris", 300);
+        vm.expectRevert(AutonomousPredictionMarket.InvalidSourceUrl.selector);
+        market.createMarket("Will it rain?", "javascript:alert(1)", 300);
+    }
+
+    function testCreateMarketAcceptsHttpAndHttps() public {
+        market.createMarket("Will it rain?", "http://example.com/wiki/Paris", 300);
+        market.createMarket("Will it rain?", "https://example.com/wiki/Paris", 300);
+        assertEq(market.nextMarketId(), 3, "two markets created");
+    }
+
     function testBetUpdatesTotals() public {
         uint256 marketId = market.createMarket("Will it rain?", "https://example.com", 300);
 
@@ -161,10 +176,12 @@ contract AutonomousPredictionMarketTest is Test {
         assertEq(market.userNoBets(bob, marketId), 0.2 ether);
     }
 
-    function testBetRejectsZeroValue() public {
+    function testBetRejectsBelowMinimum() public {
         uint256 marketId = market.createMarket("Will it rain?", "https://example.com", 300);
-        vm.expectRevert(AutonomousPredictionMarket.BetAmountRequired.selector);
+        vm.expectRevert(AutonomousPredictionMarket.BetBelowMinimum.selector);
         market.bet{value: 0}(marketId, AutonomousPredictionMarket.BetOption.Yes);
+        vm.expectRevert(AutonomousPredictionMarket.BetBelowMinimum.selector);
+        market.bet{value: 0.0001 ether}(marketId, AutonomousPredictionMarket.BetOption.Yes);
     }
 
     function testBetRejectsAfterEndTime() public {
@@ -389,6 +406,36 @@ contract AutonomousPredictionMarketTest is Test {
         assertEq(uint256(market.requestStage(1)), uint256(AutonomousPredictionMarket.RequestStage.None));
     }
 
+    function testParseFailureOnHomepageUrlReopensMarket() public {
+        // v7 prompt requires SPECIFIC article URLs because the parse agent returns
+        // HTTP 422 on homepages. Simulate the agent's parse failure on a homepage
+        // URL and assert the market reopens cleanly for a retry.
+        uint256 marketId = market.createMarket(
+            "Did Bitcoin reach 100k USD in 2024?", "https://bitcoin.org/", 300
+        );
+        vm.warp(block.timestamp + 600);
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        // Simulate the agent returning failure (e.g. HTTP 422 on homepage).
+        Response[] memory responses = new Response[](0);
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, responses, ResponseStatus.Failed, _emptyRequest());
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "market reopens");
+        assertEq(m.parseRequestId, 0, "parse request cleared");
+
+        // A second requestResolution call should now succeed (the re-relay path).
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+        assertEq(uint256(market.getMarket(marketId).status), uint256(AutonomousPredictionMarket.MarketStatus.Resolving));
+    }
+
     function testParseCallbackRevertsWhileStillPending() public {
         uint256 marketId = _createEndedMarket();
         uint256 totalDeposit = market.getRequiredDeposit();
@@ -547,6 +594,13 @@ contract AutonomousPredictionMarketTest is Test {
         assertTrue(_contains(manifest, "scanResolvableMarkets"));
         assertTrue(_contains(manifest, "getAgentMarketContext"));
         assertTrue(_contains(manifest, "requestResolution"));
+    }
+
+    function testAgentManifestAdvertisesV7() public {
+        string memory manifest = market.agentManifest();
+        assertTrue(_contains(manifest, "v7"), "manifest should advertise v7");
+        assertTrue(_contains(manifest, "inferToolsChat"), "manifest should mention inferToolsChat");
+        assertTrue(_contains(manifest, "SPECIFIC"), "manifest should mention SPECIFIC-URL requirement");
     }
 
     function _contains(string memory haystack, string memory needle) internal pure returns (bool) {
@@ -884,7 +938,43 @@ contract AutonomousPredictionMarketTest is Test {
         );
 
         assertEq(market.nextMarketId(), 1, "no market created");
-        _assertGenerationFailed(requestId, "create-reverted");
+        _assertGenerationFailed(requestId, "QuestionTooLong");
+    }
+
+    function testRequestMarketGenerationDecodesInnerDurationTooShort() public {
+        _fundContractForGeneration();
+        bytes[] memory tools = new bytes[](1);
+        // duration 100s < MIN_DURATION (300) -> DurationTooShort.
+        tools[0] = _createMarketCall("Q?", "https://s", 100);
+        bytes memory inferResult = _inferToolsResponse("tool_calls", tools);
+
+        vm.recordLogs();
+        uint256 requestId = market.requestMarketGeneration("Some topic");
+        vm.prank(PLATFORM);
+        market.handleGenerationCallback(
+            requestId, _generationResponses(inferResult), ResponseStatus.Success, _emptyRequest()
+        );
+
+        assertEq(market.nextMarketId(), 1, "no market created");
+        _assertGenerationFailed(requestId, "DurationTooShort");
+    }
+
+    function testRequestMarketGenerationDecodesInnerInvalidSourceUrl() public {
+        _fundContractForGeneration();
+        bytes[] memory tools = new bytes[](1);
+        // ftp:// URL is not http(s) -> InvalidSourceUrl.
+        tools[0] = _createMarketCall("Q?", "ftp://example.com", 600);
+        bytes memory inferResult = _inferToolsResponse("tool_calls", tools);
+
+        vm.recordLogs();
+        uint256 requestId = market.requestMarketGeneration("Some topic");
+        vm.prank(PLATFORM);
+        market.handleGenerationCallback(
+            requestId, _generationResponses(inferResult), ResponseStatus.Success, _emptyRequest()
+        );
+
+        assertEq(market.nextMarketId(), 1, "no market created");
+        _assertGenerationFailed(requestId, "InvalidSourceUrl");
     }
 
     function testRequestMarketGenerationRefundsOverfunding() public {

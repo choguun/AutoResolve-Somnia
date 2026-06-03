@@ -51,6 +51,8 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     error GenerationStillPending();
     error NoResolverRefund();
     error TransferFailed();
+    error InvalidSourceUrl();
+    error BetBelowMinimum();
 
     IAgentRequester public constant PLATFORM = IAgentRequester(0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776);
 
@@ -64,6 +66,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     uint256 public constant MAX_SOURCE_LENGTH = 300;
     uint256 public constant MAX_TOPIC_LENGTH = 200;
     uint256 public constant MAX_AGENT_SCAN_LIMIT = 50;
+    uint256 public constant MIN_BET = 0.001 ether;
     address public constant AGENT_CREATOR_SENTINEL = address(0xA1);
 
     uint256 public nextMarketId;
@@ -161,6 +164,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         if (bytes(resolutionSource).length == 0) revert SourceEmpty();
         if (bytes(question).length > MAX_QUESTION_LENGTH) revert QuestionTooLong();
         if (bytes(resolutionSource).length > MAX_SOURCE_LENGTH) revert SourceTooLong();
+        if (!_isHttpUrl(resolutionSource)) revert InvalidSourceUrl();
         if (durationSeconds < MIN_DURATION) revert DurationTooShort();
 
         marketId = nextMarketId++;
@@ -184,12 +188,23 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         emit MarketCreated(marketId, msg.sender, question, resolutionSource, endTime);
     }
 
+    function _isHttpUrl(string memory url) private pure returns (bool) {
+        bytes memory b = bytes(url);
+        if (b.length < 8) return false;
+        // "https://" = 8 chars, "http://" = 7 chars
+        bool isHttps = b[0] == 0x68 && b[1] == 0x74 && b[2] == 0x74 && b[3] == 0x70 && b[4] == 0x73 && b[5] == 0x3A
+            && b[6] == 0x2F && b[7] == 0x2F;
+        if (isHttps) return true;
+        if (b.length < 7) return false;
+        return b[0] == 0x68 && b[1] == 0x74 && b[2] == 0x74 && b[3] == 0x70 && b[4] == 0x3A && b[5] == 0x2F && b[6] == 0x2F;
+    }
+
     function bet(uint256 marketId, BetOption option) external payable nonReentrant {
         if (!marketExists(marketId)) revert MarketNotFound();
         Market storage market = markets[marketId];
         if (market.status != MarketStatus.Open) revert MarketNotOpen();
         if (block.timestamp >= market.endTime) revert MarketEnded();
-        if (msg.value == 0) revert BetAmountRequired();
+        if (msg.value < MIN_BET) revert BetBelowMinimum();
 
         if (option == BetOption.Yes) {
             market.yesTotal += msg.value;
@@ -216,7 +231,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         return getParseDeposit() + getInferenceDeposit();
     }
 
-    function requestResolution(uint256 marketId) external payable {
+    function requestResolution(uint256 marketId) external payable nonReentrant returns (uint256 requestId) {
         if (!marketExists(marketId)) revert MarketNotFound();
         Market storage market = markets[marketId];
         if (market.status != MarketStatus.Open) revert MarketNotOpen();
@@ -244,7 +259,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             uint8(70)
         );
 
-        uint256 requestId = PLATFORM.createRequest{value: parseDeposit}(
+        requestId = PLATFORM.createRequest{value: parseDeposit}(
             LLM_PARSE_WEBSITE_AGENT_ID, address(this), this.handleAgentResponse.selector, parsePayload
         );
 
@@ -271,7 +286,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         topUpNeeded = contractBalance >= requiredDeposit ? 0 : requiredDeposit - contractBalance;
     }
 
-    function requestMarketGeneration(string calldata topic) external payable returns (uint256 requestId) {
+    function requestMarketGeneration(string calldata topic) external payable nonReentrant returns (uint256 requestId) {
         if (bytes(topic).length == 0) revert InvalidTopic();
         if (bytes(topic).length > MAX_TOPIC_LENGTH) revert TopicTooLong();
 
@@ -495,12 +510,27 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
         (bool ok, bytes memory ret) = address(this).call(callData);
         if (!ok) {
-            emit GenerationFailed(requestId, ResponseStatus.Failed, "create-reverted");
+            emit GenerationFailed(requestId, ResponseStatus.Failed, _describeCreateRevert(ret));
             return;
         }
         uint256 marketId = abi.decode(ret, (uint256));
         markets[marketId].creator = AGENT_CREATOR_SENTINEL;
         emit MarketCreatedByAgent(requestId, marketId, proposer);
+    }
+
+    function _describeCreateRevert(bytes memory ret) private pure returns (string memory) {
+        if (ret.length < 4) return "create-reverted";
+        bytes4 sel;
+        assembly {
+            sel := mload(add(ret, 32))
+        }
+        if (sel == bytes4(keccak256("QuestionEmpty()"))) return "QuestionEmpty";
+        if (sel == bytes4(keccak256("SourceEmpty()"))) return "SourceEmpty";
+        if (sel == bytes4(keccak256("QuestionTooLong()"))) return "QuestionTooLong";
+        if (sel == bytes4(keccak256("SourceTooLong()"))) return "SourceTooLong";
+        if (sel == bytes4(keccak256("InvalidSourceUrl()"))) return "InvalidSourceUrl";
+        if (sel == bytes4(keccak256("DurationTooShort()"))) return "DurationTooShort";
+        return "create-reverted";
     }
 
     function _slice4(bytes memory data, uint256 start) private pure returns (bytes4 out) {
@@ -661,6 +691,6 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     }
 
     function agentManifest() external pure returns (string memory) {
-        return "AutoResolve agent interface v5. Resolution: scanResolvableMarkets(cursor,limit) to discover expired open markets; getAgentMarketContext(marketId) for question, source, funding, and request IDs; requestResolution(marketId) with topUpNeeded STT to trigger the Somnia Parse Website -> LLM Inference resolver pipeline. Creation: requestMarketGeneration(string topic) payable triggers an LLM Inference inferToolsChat call that yields createMarket(question, source, duration) calldata; getGenerationFundingStatus() returns the inference deposit and topUpNeeded; scanAgentCreatedMarkets(cursor,limit) lists markets created by the agent (creator == AGENT_CREATOR_SENTINEL 0xA1).";
+        return "AutoResolve agent interface v7. Resolution: scanResolvableMarkets(cursor,limit) to discover expired open markets; getAgentMarketContext(marketId) for question, source, funding, and request IDs; requestResolution(marketId) with topUpNeeded STT to trigger the Somnia Parse Website -> LLM Inference resolver pipeline. Creation: requestMarketGeneration(string topic) payable triggers an LLM Inference inferToolsChat call that yields createMarket(question, source, duration) calldata; the prompt requires a SPECIFIC article URL (not a site homepage) and a [300,600] second duration; getGenerationFundingStatus() returns the inference deposit and topUpNeeded; scanAgentCreatedMarkets(cursor,limit) lists markets created by the agent (creator == AGENT_CREATOR_SENTINEL 0xA1). Source URLs must be http(s) and bets must be >= MIN_BET (0.001 STT).";
     }
 }

@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt, useBalance } from 'wagmi';
 import { toast } from 'sonner';
-import { Bot, Info, Activity } from 'lucide-react';
+import { Bot, Info, Activity, ExternalLink } from 'lucide-react';
 import { Tooltip } from '@/components/shared/Tooltip';
 import { CONTRACT_ABI, CONTRACT_ADDRESS, formatStt } from '@/lib-web/contract';
 import { useResolutionDeposit } from '@/hooks/useMarkets';
@@ -22,14 +22,32 @@ export function ResolutionPanel({
   const { data: deposit } = useResolutionDeposit();
   const { data: contractBalance } = useBalance({ address: CONTRACT_ADDRESS });
   const { writeContract, data: hash, isPending } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const { isLoading: isConfirming, isSuccess, data: receipt } =
+    useWaitForTransactionReceipt({ hash });
+  const [parseRequestId, setParseRequestId] = useState<bigint | null>(null);
 
   const poolBalance = contractBalance?.value ?? 0n;
   const topUp =
     deposit && poolBalance < deposit ? deposit - poolBalance : 0n;
 
+  useEffect(() => {
+    if (!isSuccess || !receipt) return;
+    // Decode ResolutionRequested(uint256 indexed marketId, uint256 indexed requestId, uint8 stage)
+    // from the receipt logs so we can deep-link to /receipt/[requestId].
+    for (const log of receipt.logs) {
+      if (!log.topics[0] || !log.topics[1] || !log.topics[2]) continue;
+      if (log.address.toLowerCase() !== CONTRACT_ADDRESS.toLowerCase()) continue;
+      // marketId is topic[1], requestId is topic[2]
+      const loggedMarketId = BigInt(log.topics[1]);
+      if (loggedMarketId !== marketId) continue;
+      setParseRequestId(BigInt(log.topics[2]));
+      return;
+    }
+  }, [isSuccess, receipt, marketId]);
+
   const requestResolution = () => {
     if (!deposit) return;
+    setParseRequestId(null);
 
     writeContract(
       {
@@ -108,6 +126,17 @@ export function ResolutionPanel({
         {isPending || isConfirming ? 'Submitting...' : 'Request Resolution'}
       </button>
       <TransactionStatus hash={hash} isConfirming={isConfirming} />
+      {parseRequestId != null && (
+        <a
+          href={`/receipt/${parseRequestId.toString()}`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-flex items-center gap-1.5 text-xs text-cyan-300 underline-offset-2 hover:underline"
+        >
+          <ExternalLink className="h-3 w-3" />
+          Watch live parse receipt (request #{parseRequestId.toString()})
+        </a>
+      )}
     </div>
   );
 }

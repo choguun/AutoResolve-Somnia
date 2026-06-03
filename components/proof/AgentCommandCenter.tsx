@@ -207,10 +207,6 @@ export function AgentCommandCenter() {
       toast.error('Funding status not loaded');
       return;
     }
-    if (genData.topUpNeeded === 0n) {
-      toast.error('Contract has no inference deposit — top up the contract first');
-      return;
-    }
     reset();
     setActivePipeline('generate');
     writeContract(
@@ -281,7 +277,7 @@ export function AgentCommandCenter() {
     {
       label: 'Generate',
       detail: isPending && activePipeline === 'generate' ? 'Submitting' : 'Ready to invoke',
-      active: isConnected && (genData?.topUpNeeded ?? 0n) > 0n,
+      active: isConnected && genData?.topics.length != null,
     },
     {
       label: 'Verify',

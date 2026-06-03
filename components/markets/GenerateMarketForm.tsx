@@ -110,10 +110,6 @@ export function GenerateMarketForm() {
       toast.error('Funding status not loaded yet — try again in a moment');
       return;
     }
-    if (topUpNeeded === 0n) {
-      toast.error('Contract has no inference deposit — top up the contract first');
-      return;
-    }
 
     writeContract(
       {
