@@ -158,6 +158,18 @@ contract AutonomousPredictionMarketTest is Test {
         assertEq(market.nextMarketId(), 3, "two markets created");
     }
 
+    function testCreateMarketAcceptsCaseInsensitiveSchemeAndWhitespace() public {
+        // Uppercase scheme (RFC 3986 says scheme is case-insensitive).
+        market.createMarket("Q?", "HTTPS://example.com/wiki/Paris", 300);
+        // Leading whitespace from a copy-paste.
+        market.createMarket("Q?", "   https://example.com/wiki/Paris", 300);
+        // Trailing whitespace should also be tolerated.
+        market.createMarket("Q?", "https://example.com/wiki/Paris   ", 300);
+        // http (not https).
+        market.createMarket("Q?", "HTTP://example.com/wiki/Paris", 300);
+        assertEq(market.nextMarketId(), 5, "four markets created");
+    }
+
     function testBetUpdatesTotals() public {
         uint256 marketId = market.createMarket("Will it rain?", "https://example.com", 300);
 
@@ -387,6 +399,39 @@ contract AutonomousPredictionMarketTest is Test {
         assertEq(uint256(market.requestStage(2)), uint256(AutonomousPredictionMarket.RequestStage.Inference));
     }
 
+    function testParseCallbackSuccessWithInsufficientInferenceBalanceReopens() public {
+        // Contract has the full resolution deposit at requestResolution time,
+        // but the parse callback arrives after another callback has drained
+        // the contract below the inference deposit. _resolveWithLLMInference
+        // must roll the market back to Open and emit ResolutionFailed so the
+        // relayer can retry once the contract is refilled.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        // Drain the contract below the inference deposit. getInferenceDeposit()
+        // is 0.31 STT — leave only 0.1 STT so the inference call can't pay.
+        uint256 inferenceDeposit = market.getInferenceDeposit();
+        vm.deal(address(market), 0.1 ether);
+        assertLt(address(market).balance, inferenceDeposit, "contract underfunded for inference");
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(
+            1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest()
+        );
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "market reopens");
+        assertEq(m.parseRequestId, 0, "parse request cleared");
+        assertEq(m.inferenceRequestId, 0, "no inference request made");
+        // The parse request slot is also cleared so a relayer can re-resolve.
+        assertEq(market.requestToMarket(1), 0, "requestToMarket cleared");
+        assertEq(uint256(market.requestStage(1)), uint256(AutonomousPredictionMarket.RequestStage.None), "requestStage cleared");
+    }
+
     function testParseCallbackFailureReopensMarket() public {
         uint256 marketId = _createEndedMarket();
         uint256 totalDeposit = market.getRequiredDeposit();
@@ -515,6 +560,33 @@ contract AutonomousPredictionMarketTest is Test {
         assertEq(m.inferenceRequestId, 0);
         assertFalse(m.outcome);
         assertEq(bytes(m.resolutionReason).length, 0);
+    }
+
+    function testInferenceCallbackRejectsLooseYesNo() public {
+        // The tightened _parseYesNo only accepts the exact strings "YES" / "NO"
+        // (3 ASCII chars). Anything that merely starts with Y/y/N/n is rejected.
+        // "YEAH" (4 chars starting with Y) and "NOPE" (4 chars starting with N)
+        // both used to be silently accepted; now they must reopen the market.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        // Read the inference requestId from the market state (the mock platform
+        // increments its counter globally, so we can't hardcode id 2 here).
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, _successfulResponse("Evidence"), ResponseStatus.Success, _emptyRequest());
+        uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
+        assertGt(inferenceId, 0, "parse callback created inference request");
+
+        vm.prank(PLATFORM);
+        market.handleInferenceCallback(inferenceId, _successfulResponse("YEAH"), ResponseStatus.Success, _emptyRequest());
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "YEAH reopens market");
+        assertFalse(m.outcome, "outcome stays false for YEAH");
     }
 
     function testUnauthorizedCallbacksRevert() public {

@@ -94,14 +94,13 @@ console.log(`  max top-up:  ${MAX_BET_GAS_STT} STT per market`);
 let lastScannedBlock = await publicClient.getBlockNumber();
 console.log(`  resume from block: ${lastScannedBlock}\n`);
 
-async function tryResolveMarket(marketId) {
+async function tryResolveMarket(marketId, topUp, alreadySubmitted) {
+  if (alreadySubmitted.has(marketId.toString())) {
+    if (VERBOSE) console.log(`[relayer]   skipping market ${marketId} (already queued this tick)`);
+    return false;
+  }
+  alreadySubmitted.add(marketId.toString());
   try {
-    const status = await publicClient.readContract({
-      address: CONTRACT,
-      abi: ABI,
-      functionName: 'getResolutionFundingStatus',
-    });
-    const topUp = status[2]; // topUpNeeded
     const maxWei = parseEther(MAX_BET_GAS_STT);
     if (topUp > maxWei) {
       console.warn(`[relayer] market ${marketId} needs ${formatEther(topUp)} STT top-up, exceeds cap`);
@@ -125,39 +124,42 @@ async function tryResolveMarket(marketId) {
   }
 }
 
-async function scanForRetryableMarkets() {
+async function scanForRetryableMarkets(topUp, alreadySubmitted) {
   const nextId = await publicClient.readContract({
     address: CONTRACT, abi: ABI, functionName: 'nextMarketId',
   });
   if (nextId === 1n) return;
-  const totalDeposit = await publicClient.readContract({
-    address: CONTRACT, abi: ABI, functionName: 'getRequiredDeposit',
-  });
 
-  const marketIds = [];
-  for (let id = 1n; id < nextId; id++) {
-    const ctx = await publicClient.readContract({
+  // Paginate via the contract's own scan agent surface. MAX_AGENT_SCAN_LIMIT is 50.
+  const allIds = [];
+  let cursor = 1n;
+  const limit = 50n;
+  while (cursor < nextId) {
+    const [ids, nextCursor] = await publicClient.readContract({
       address: CONTRACT,
       abi: ABI,
-      functionName: 'getAgentMarketContext',
-      args: [id],
+      functionName: 'scanResolvableMarkets',
+      args: [cursor, limit],
     });
-    if (ctx.exists && ctx.canResolve) marketIds.push(id);
+    allIds.push(...ids);
+    if (nextCursor <= cursor || nextCursor >= nextId) break;
+    cursor = nextCursor;
   }
 
   if (VERBOSE) {
     console.log(
-      `[relayer] scanned ${nextId - 1n} markets, ${marketIds.length} resolvable, ` +
-        `required deposit ${formatEther(totalDeposit)} STT`,
+      `[relayer] scanned ${nextId - 1n} markets via scanResolvableMarkets, ` +
+        `${allIds.length} resolvable, top-up needed ${formatEther(topUp)} STT`,
     );
   }
-  for (const id of marketIds) {
+  for (const id of allIds) {
+    if (alreadySubmitted.has(id.toString())) continue;
     console.log(`[relayer] retrying market ${id}`);
-    await tryResolveMarket(id);
+    await tryResolveMarket(id, topUp, alreadySubmitted);
   }
 }
 
-async function drainFailureEvents() {
+async function drainFailureEvents(topUp, alreadySubmitted) {
   const head = await publicClient.getBlockNumber();
   if (head < lastScannedBlock) {
     // Chain reorg or RPC reset; resync to a safe margin.
@@ -191,10 +193,11 @@ async function drainFailureEvents() {
   for (const log of failedLogs) {
     const marketId = log.topics[1];
     const requestId = log.topics[2];
+    if (alreadySubmitted.has(marketId)) continue;
     console.log(
       `[relayer] re-resolving market ${marketId} after failure (requestId ${requestId})`,
     );
-    await tryResolveMarket(marketId);
+    await tryResolveMarket(marketId, topUp, alreadySubmitted);
   }
   lastScannedBlock = toBlock;
 }
@@ -222,9 +225,19 @@ process.on('SIGINT', () => { stopping = true; });
 process.on('SIGTERM', () => { stopping = true; });
 
 while (!stopping) {
+  // One set per tick so a market that appears in both the event stream and
+  // the scan isn't re-submitted (the second call would revert with MarketNotOpen).
+  const alreadySubmitted = new Set();
   try {
-    await drainFailureEvents();
-    await scanForRetryableMarkets();
+    const status = await publicClient.readContract({
+      address: CONTRACT,
+      abi: ABI,
+      functionName: 'getResolutionFundingStatus',
+    });
+    const topUp = status[2]; // topUpNeeded
+
+    await drainFailureEvents(topUp, alreadySubmitted);
+    await scanForRetryableMarkets(topUp, alreadySubmitted);
     await logResolvedMarkets();
   } catch (err) {
     console.error('[relayer] loop error:', err.shortMessage ?? err.message);

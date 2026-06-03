@@ -35,7 +35,6 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     error MarketNotResolved();
     error AlreadyRequested();
     error InsufficientContractBalance();
-    error BetAmountRequired();
     error NoWinningBets();
     error NoWinningPool();
     error OnlyPlatform();
@@ -43,13 +42,9 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     error UnknownRequest();
     error InvalidStage();
     error InvalidLimit();
-    error InvalidInferenceOutput();
     error InvalidTopic();
     error TopicTooLong();
-    error InvalidGenerationOutput();
-    error InvalidToolSelector();
     error GenerationStillPending();
-    error NoResolverRefund();
     error TransferFailed();
     error InvalidSourceUrl();
     error BetBelowMinimum();
@@ -190,13 +185,32 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
     function _isHttpUrl(string memory url) private pure returns (bool) {
         bytes memory b = bytes(url);
-        if (b.length < 8) return false;
-        // "https://" = 8 chars, "http://" = 7 chars
-        bool isHttps = b[0] == 0x68 && b[1] == 0x74 && b[2] == 0x74 && b[3] == 0x70 && b[4] == 0x73 && b[5] == 0x3A
-            && b[6] == 0x2F && b[7] == 0x2F;
-        if (isHttps) return true;
-        if (b.length < 7) return false;
-        return b[0] == 0x68 && b[1] == 0x74 && b[2] == 0x74 && b[3] == 0x70 && b[4] == 0x3A && b[5] == 0x2F && b[6] == 0x2F;
+        // Skip leading ASCII whitespace — copy-paste often brings a stray
+        // space. The scheme itself is case-insensitive per RFC 3986 §3.1.
+        uint256 start;
+        while (start < b.length && _isAsciiWhitespace(b[start])) start++;
+        uint256 len = b.length - start;
+        if (_schemeIs(b, start, len, "http://")) return true;
+        if (_schemeIs(b, start, len, "https://")) return true;
+        return false;
+    }
+
+    function _schemeIs(bytes memory b, uint256 start, uint256 len, bytes memory scheme)
+        private
+        pure
+        returns (bool)
+    {
+        if (len < scheme.length) return false;
+        for (uint256 i = 0; i < scheme.length; i++) {
+            bytes1 c = b[start + i];
+            if (c >= 0x41 && c <= 0x5A) c = bytes1(uint8(c) + 32); // uppercase -> lowercase
+            if (c != scheme[i]) return false;
+        }
+        return true;
+    }
+
+    function _isAsciiWhitespace(bytes1 c) private pure returns (bool) {
+        return c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D;
     }
 
     function bet(uint256 marketId, BetOption option) external payable nonReentrant {
@@ -373,6 +387,21 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     function _resolveWithLLMInference(uint256 marketId, string memory scrapedData) private {
         Market storage market = markets[marketId];
 
+        uint256 inferenceDeposit = getInferenceDeposit();
+        if (address(this).balance < inferenceDeposit) {
+            // Contract is underfunded for the inference call. Roll the market
+            // back to Open and emit ResolutionFailed so the relayer can retry
+            // once the contract is refilled. The parse result is discarded,
+            // but a fresh parse on retry is cheap.
+            uint256 failedRequestId = market.parseRequestId;
+            market.status = MarketStatus.Open;
+            market.parseRequestId = 0;
+            delete requestToMarket[failedRequestId];
+            delete requestStage[failedRequestId];
+            emit ResolutionFailed(marketId, failedRequestId, RequestStage.ParseWebsite, ResponseStatus.Failed);
+            return;
+        }
+
         string memory prompt = string.concat(
             "Based on the following data, answer ONLY 'YES' or 'NO' to this question: ",
             market.question,
@@ -393,9 +422,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             allowedValues
         );
 
-        uint256 deposit = getInferenceDeposit();
-
-        uint256 requestId = PLATFORM.createRequest{value: deposit}(
+        uint256 requestId = PLATFORM.createRequest{value: inferenceDeposit}(
             LLM_INFERENCE_AGENT_ID, address(this), this.handleInferenceCallback.selector, inferPayload
         );
 
@@ -510,7 +537,10 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
         (bool ok, bytes memory ret) = address(this).call(callData);
         if (!ok) {
-            emit GenerationFailed(requestId, ResponseStatus.Failed, _describeCreateRevert(ret));
+            // Platform response succeeded; the inner createMarket reverted. Pass
+            // the original status so agents monitoring the event stream see the
+            // real outcome, and put the descriptive selector in `reason`.
+            emit GenerationFailed(requestId, status, _describeCreateRevert(ret));
             return;
         }
         uint256 marketId = abi.decode(ret, (uint256));
@@ -542,9 +572,13 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
     function _parseYesNo(string memory result) private pure returns (bool valid, bool outcome) {
         bytes memory resultBytes = bytes(result);
-        if (resultBytes.length >= 3) {
-            if (resultBytes[0] == "Y" || resultBytes[0] == "y") return (true, true);
-            if (resultBytes[0] == "N" || resultBytes[0] == "n") return (true, false);
+        if (resultBytes.length == 3) {
+            if (
+                resultBytes[0] == "Y" && resultBytes[1] == "E" && resultBytes[2] == "S"
+            ) return (true, true);
+            if (
+                resultBytes[0] == "N" && resultBytes[1] == "O" && resultBytes[2] == "O"
+            ) return (true, false);
         }
         return (false, false);
     }

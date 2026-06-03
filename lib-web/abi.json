@@ -1725,11 +1725,6 @@
   },
   {
     "type": "error",
-    "name": "BetAmountRequired",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "BetBelowMinimum",
     "inputs": []
   },
@@ -1750,16 +1745,6 @@
   },
   {
     "type": "error",
-    "name": "InvalidGenerationOutput",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidInferenceOutput",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidLimit",
     "inputs": []
   },
@@ -1771,11 +1756,6 @@
   {
     "type": "error",
     "name": "InvalidStage",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidToolSelector",
     "inputs": []
   },
   {
@@ -1806,11 +1786,6 @@
   {
     "type": "error",
     "name": "MarketStillActive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoResolverRefund",
     "inputs": []
   },
   {
