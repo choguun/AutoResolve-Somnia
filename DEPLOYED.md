@@ -2,7 +2,10 @@
 
 | Contract | Address | Explorer |
 |---|---|---|
-| **AutonomousPredictionMarket (v10 — current, 12 audit gaps closed: relayer dedup + retry cap + per-tick topUp read, inference Pending guard, honest rollback stage, fresh manifest, receipt polling timeout, client-side URL validation)** | `0x6c94AA83e2C8D1d8f22B1E17537D8736E3d7fB65` | [View](https://shannon-explorer.somnia.network/address/0x6c94AA83e2C8D1d8f22B1E17537D8736E3d7fB65) |
+| **AutonomousPredictionMarket (v13 — current, 5 v12-audit gaps closed: stuck-generation recovery, agent output length cap, relayer GenerationFailed visibility + recovery, non-reverting callbacks on over-long output, `lastGenerationRequestId` high-water mark)** | `0x37822751E5ab0688344135797ee8FFCFa76443fB` | [View](https://shannon-explorer.somnia.network/address/0x37822751E5ab0688344135797ee8FFCFa76443fB) |
+| AutonomousPredictionMarket (v12 — 3 v11-audit gaps closed: `MarketReset.stuckRequestId`, `useAgentReceipt` recovery flag reset, 502 cache removed) | `0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5` | [View](https://shannon-explorer.somnia.network/address/0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5) |
+| AutonomousPredictionMarket (v11 — 5 v10-audit gaps closed: stuck-request recovery, relayer getLogs chunking, refetch on error, attemptCount clear on success, 404 cache) | `0x58df0efc0cF6B1322e8d998257d750b18bb10ee7` | [View](https://shannon-explorer.somnia.network/address/0x58df0efc0cF6B1322e8d998257d750b18bb10ee7) |
+| AutonomousPredictionMarket (v10 — 12 audit gaps closed: relayer dedup + retry cap + per-tick topUp read, inference Pending guard, honest rollback stage, fresh manifest, receipt polling timeout, client-side URL validation) | `0x6c94AA83e2C8D1d8f22B1E17537D8736E3d7fB65` | [View](https://shannon-explorer.somnia.network/address/0x6c94AA83e2C8D1d8f22B1E17537D8736E3d7fB65) |
 | AutonomousPredictionMarket (v9 — last autonomy gaps closed: stuck-market balance check, exact YES/NO parse, original status on inner revert, case-insensitive URL scheme, paginated relayer) | `0x7D47a5eF4BE519D1B712C8609a100f27D6c4Eb7E` | [View](https://shannon-explorer.somnia.network/address/0x7D47a5eF4BE519D1B712C8609a100f27D6c4Eb7E) |
 | AutonomousPredictionMarket (v8 — MIN_BET + URL validation + nonReentrant + relayer + return requestId) | `0x53C5A4c83DC646e7c94168da04A08524C1D6249E` | [View](https://shannon-explorer.somnia.network/address/0x53C5A4c83DC646e7c94168da04A08524C1D6249E) |
 | AutonomousPredictionMarket (v7 — SPECIFIC-URL prompt + end-to-end proof) | `0xd3E946aC5aDfCd7772778ce841886BF933b04B69` | [View](https://shannon-explorer.somnia.network/address/0xd3E946aC5aDfCd7772778ce841886BF933b04B69) |
@@ -13,10 +16,200 @@
 | AutonomousPredictionMarket (v2) | `0x1631303A748076648a0AbbE077a657Ad7812834F` | [View](https://shannon-explorer.somnia.network/address/0x1631303A748076648a0AbbE077a657Ad7812834F) |
 | AgentSmokeTest | `0x6e1dfB44AEc5c52dE3b12753726ea57207862F65` | [View](https://shannon-explorer.somnia.network/address/0x6e1dfB44AEc5c52dE3b12753726ea57207862F65) |
 
-## Latest deployment (v10 — 12 audit gaps closed) — completed
+## Latest deployment (v13 — 5 audit gaps closed) — completed
 
-v10 is the current live contract. It closes the 12 issues surfaced by a fresh
-audit of the v9 deployment, grouped into four buckets:
+v13 is the current live contract. It closes the 5 issues surfaced by a fresh
+audit of the v12 deployment (1 HIGH + 2 MEDIUM + 2 LOW). All change-types are
+additive — the resolution pipeline, the generation pipeline, the relayer
+invocation, and the receipt proxy URL shape are unchanged.
+
+**Contract (4 fixes)**
+- **Stuck-generation recovery (symmetric to v11's stuck-resolution recovery).**
+  A generation request whose callback never arrives (platform drop, validator
+  stall) used to leave the inference deposit in limbo forever, since the
+  relayer had no path to detect it. v13 adds:
+  - `scanStuckGenerationRequests(cursor, limit)` — agent-discoverable surface
+    mirroring `scanStuckMarkets`, walking `[cursor, lastGenerationRequestId]`
+    with a tight upper bound (high-water mark set on every
+    `requestMarketGeneration`).
+  - `forceResetGeneration(requestId)` — `nonReentrant`, clears the four state
+    mappings (`requestStage`, `requestToTopic`, `generationProposer`,
+    `generationRequestedAt`) and emits `GenerationReset(uint256 indexed
+    requestId, address indexed resetBy)`. Reverts `GenerationNotStuck` if the
+    request is fresh or already cleared. The relayer can now drive this
+    automatically on every tick.
+  - The user's inference deposit was forwarded to the platform at request
+    time and is *not* refundable — this is consistent with the existing
+    `ResolutionFailed` failure path, which also drops the deposit.
+- **Agent output length cap (`MAX_AGENT_OUTPUT_LENGTH = 1024` bytes).** A
+  misbehaving or jailbroken agent could return a multi-MB string, which
+  would bloat chain state via `market.resolutionReason` and the inference
+  prompt (the prompt is built from the parse result). v13 caps both the
+  parse and inference callbacks at 1 KiB.
+- **Over-long responses treated as graceful failure, not a revert.** A
+  revert in `handleAgentResponse` / `handleInferenceCallback` would leave
+  the market stuck in `Resolving` for `STALE_REQUEST_TIMEOUT` (30 min)
+  before the relayer could force-reset it. v13 emits `ResolutionFailed`
+  and reopens the market immediately, so the relayer can retry on the
+  next tick. *The contract never reverts in callbacks.*
+- **`lastGenerationRequestId` high-water mark.** Each
+  `requestMarketGeneration` call sets this to `max(current, requestId)`.
+  The stuck-generation scan reads it as its upper bound so it doesn't
+  walk the entire uint256 space. It's a sticky high-water mark, not a
+  state pointer (the `forceResetGeneration` test asserts this).
+
+**Relayer (2 fixes)**
+- **`scanStuckGenerationRequests` + `tryResetStuckGeneration` tick step.**
+  Mirrors the existing `scanStuckMarkets` / `tryResetStuckMarket` pattern.
+  The relayer emits a console note that the inference deposit was
+  forwarded to the platform at request time and is not refundable.
+- **`drainGenerationFailureEvents` advisory log step.** `GenerationFailed`
+  is *not* auto-retried (a "wrong-selector" / "no-tool-calls" failure
+  means the proposer's topic was unsolvable by the agent — that's the
+  proposer's call to fix and re-submit). The relayer just emits a warning
+  with the request id and a link to the agent receipt so the operator
+  can see the failure rate. Uses a 50-block backward window (like
+  `logResolvedMarkets`) rather than the shared `lastScannedBlock` cursor
+  — generation failures are advisory, not act-on-able.
+- **New log line:** `[relayer] starting (v13)`.
+
+**Test coverage:** 79/79 Foundry (was 71/71 on v12). Eight new tests:
+- `testRequestMarketGenerationTracksLastGenerationRequestId`
+- `testForceResetGenerationRevertsWhenNotStuck`
+- `testForceResetGenerationRevertsForUnknownRequest`
+- `testForceResetGenerationRecoversStuckRequest`
+- `testScanStuckGenerationRequestsFindsAndExcludesFresh`
+- `testScanStuckGenerationRequestsPagination`
+- `testParseCallbackReopensMarketOnOverlongOutput`
+- `testInferenceCallbackReopensMarketOnOverlongOutput`
+
+Renamed: `testAgentManifestAdvertisesV12` → `testAgentManifestAdvertisesV13`
+(the assertion set expanded to cover the three v13 additions:
+`scanStuckGenerationRequests`, `forceResetGeneration`, and
+`MAX_AGENT_OUTPUT_LENGTH`).
+
+## Previous deployment (v12 — 3 audit gaps closed) — historical
+
+v12 closed the 3 issues surfaced by a fresh audit of the v11 deployment
+(1 MEDIUM + 2 LOW). All change-types were additive — the resolution
+pipeline, the generation pipeline, the relayer invocation, and the
+receipt proxy URL shape are unchanged.
+
+**Contract (1 fix)**
+- **`MarketReset` event gains `stuckRequestId` (non-indexed).** A relayer
+  that scans for resets needs to know which platform request id was in
+  flight, so it can drop that id from any local retry bookkeeping.
+  Previously the relayer had to walk `market.parseRequestId` /
+  `market.inferenceRequestId` separately, which was racy under concurrent
+  resets. v12 emits the value as part of the event payload.
+
+**Frontend (2 fixes)**
+- **`useAgentReceipt` recovery flag reset.** The `isLongRunning` effect
+  now sets `isLongRunning(false)` in the healthy-polling branch (was
+  sticking on "this is taking longer than expected" once a transient
+  upstream error tripped it). Also: the setTimeout is now scheduled
+  against `MAX_POLL_MS - (Date.now() - startedAt)` (the *remaining*
+  time to the deadline) rather than the full duration. The previous
+  effect re-armed with the full duration on every `query.data` update,
+  so under continuous polling the timeout could be pushed out
+  indefinitely.
+- **Receipt proxy 502 path is no longer cached.** The previous logic
+  applied `Cache-Control: public, max-age=10` to *both* 404 and 502,
+  so a transient upstream 502 would be served from cache for 10s —
+  masking a brief outage. v12 only caches 404; 502 responses are
+  served without `Cache-Control`, so the next call goes straight to
+  the upstream.
+
+**Test coverage:** 71/71 Foundry (was 70/70 on v11). New test:
+`testMarketResetEmitsStuckRequestId` (decodes the event log and
+asserts the emitted id matches the parse request that was in flight).
+Renamed: `testAgentManifestAdvertisesV11` → `testAgentManifestAdvertisesV12`.
+
+The other two findings (`useAgentReceipt` setTimeout reset and
+receipt proxy 502 cache) are frontend-only and have no automated test
+coverage — the repo has no frontend test framework. They are
+defended by the code change itself and a manual review.
+
+**Relayer note:** unchanged invocation. No new env. New log line:
+`[relayer] starting (v12)` for sanity-checking which build is running.
+The `attemptCount` Map deletion on resolution/reset success (from v11)
+remains in place.
+
+## Previous deployment (v11 — 5 audit gaps closed) — historical
+
+v11 closes the 5 issues surfaced by a fresh audit of the v10 deployment:
+
+**Contract (1 fix — HIGH severity)**
+- **Stuck-request recovery.** The biggest gap in v10: if a parse or inference
+  callback never arrived (platform dropped the request, validator stall), the
+  market was stuck in `Resolving` with `parseRequestId != 0`, invisible to
+  `scanResolvableMarkets` and `scanForRetryableMarkets`, and emitting no
+  `ResolutionFailed` event (so the relayer's event-driven retry path couldn't
+  help either). v11 adds:
+  - `STALE_REQUEST_TIMEOUT = 30 minutes` constant.
+  - `parseRequestedAt` and `inferenceRequestedAt` fields on `Market`,
+  populated on `requestResolution` and `_resolveWithLLMInference`, cleared
+  by the callbacks and the inference-balance-check rollback.
+  - `scanStuckMarkets(cursor, limit)` — agent-discoverable paginated view.
+  - `forceResetMarket(marketId)` — anyone can call it once a request is
+  stale; reverts the market to `Open` and emits `MarketReset(marketId,
+  resetBy, stage)` so the relayer can pick it up.
+  - `agentManifest()` bumped to v11; mentions the recovery surface.
+  - `via_ir = true` in `foundry.toml` to keep the build passing under the
+  extra local-variable pressure.
+
+**Relayer (3 fixes)**
+- **`getLogs` chunking.** `drainFailureEvents` and `logResolvedMarkets` now
+  walk the `fromBlock..toBlock` range in 1000-block windows via a new
+  `getLogsChunked()` helper. On a chunk failure, `lastScannedBlock` is NOT
+  advanced, so the relayer retries next tick from the same cursor instead
+  of wedging permanently on an oversized range. viem does not auto-chunk
+  and the Shannon RPC rejects ranges > ~1000.
+- **Per-tick stuck scan.** New `scanStuckMarkets()` step in the main loop
+  calls `forceResetMarket` on every stuck market, then clears the
+  `attemptCount` slot for that market id.
+- **Clear `attemptCount` on resolution success.** When `requestResolution`
+  lands on-chain, the previous attempt budget is meaningless (the market
+  is now `Resolving` and a future stuck-then-reset market should start
+  fresh). Also: `forceResetMarket` on success clears the slot for the
+  same reason.
+
+**Frontend (2 fixes)**
+- **`useAgentReceipt` refetch on error gate.** `refetchInterval` now also
+  returns `false` when `query.state.status === 'error'`. Previously a
+  persistent upstream error (502 from the receipt proxy, malformed
+  response) would burn through retries and then keep firing every 5s
+  forever — the 5-min wall clock was the only stop. The `isLongRunning`
+  effect also reacts to `query.error` so the "this is taking longer than
+  expected" UI shows up immediately on errors instead of waiting for the
+  full 5 minutes.
+- **Negative cache on the receipt proxy.** 404 responses now include
+  `Cache-Control: public, max-age=10`, so stale links (typos, never-valid
+  requestIds) don't round-trip to the upstream on every page view.
+  10 s is short enough that a real receipt appearing within seconds of
+  the link being opened is still served live.
+
+**Test coverage:** 70/70 Foundry (was 63/63 on v10). New tests:
+`testForceResetMarketRevertsWhenNotStuck`,
+`testForceResetMarketRevertsWhenRequestIsFresh`,
+`testForceResetMarketRevertsWhenMarketNotFound`,
+`testForceResetMarketRecoversStuckParseRequest`,
+`testForceResetMarketRecoversStuckInferenceRequest`,
+`testScanStuckMarketsFindsAndExcludesFreshRequests`,
+`testScanStuckMarketsPagination`. Renamed:
+`testAgentManifestAdvertisesV10` → `testAgentManifestAdvertisesV11`.
+
+**Relayer note:** unchanged invocation. New optional env unchanged from v10.
+The `attemptCount` Map is now deleted on resolution success and on
+successful `forceResetMarket`, so an operator who refills the contract and
+restarts the relayer (or lets a recovery happen) gets a fresh budget
+without a full restart. New env: `RELAYER_MAX_TOPUP_STT` (default 1) —
+same as v10.
+
+## Previous deployment (v10 — 12 audit gaps closed) — historical
+
+v10 closes the 12 issues surfaced by a fresh audit of the v9 deployment,
+grouped into four buckets:
 
 **Contract (3 fixes)**
 - `handleInferenceCallback` now reverts on `Pending`/`None` (was silently
@@ -270,17 +463,41 @@ This proof is from the v2 contract and remains valid as the canonical end-to-end
 | **Resolved tx** | [0x349fb0…4035](https://shannon-explorer.somnia.network/tx/0x349fb03fa6262befb581347a979fb5fa2706d48df5d818daec749f624fe54035) |
 | **Claim tx** | [0x888327…2380](https://shannon-explorer.somnia.network/tx/0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380) — 0.03 STT winnings to YES bettor |
 
-## On-chain state (current v10)
+## On-chain state (current v13)
 
-- v10 Market **#1**: "Is the capital of France Paris?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
-- v10 Market **#2**: "Did Bitcoin exist before 2010?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
-- v10 Contract balance: `1.0 STT`
-- v10 `nextMarketId`: `3`
-- v10 `AGENT_CREATOR_SENTINEL`: `0x00000000000000000000000000000000000000A1`
-- v10 `MIN_BET`: `0.001 ether` (reverts `BetBelowMinimum` for smaller bets)
-- v10 `createMarket` requires `http://` or `https://` source URLs, case-insensitive, leading whitespace allowed (reverts `InvalidSourceUrl` otherwise)
-- v10 `_parseYesNo`: exact 3-byte `YES`/`NO` match required — `"YEAH"` no longer resolves
-- v10 `_resolveWithLLMInference` rollback: emits `stage=Inference` (not `ParseWebsite`) so the failure point is honest
+- v13 Market **#1**: "Is the capital of France Paris?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v13 Market **#2**: "Did Bitcoin exist before 2010?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v13 Contract balance: `1.0 STT`
+- v13 `nextMarketId`: `3`
+- v13 `AGENT_CREATOR_SENTINEL`: `0x00000000000000000000000000000000000000A1`
+- v13 `MAX_AGENT_OUTPUT_LENGTH`: `1024` (1 KiB cap on agent responses — parse + inference)
+- v13 `STALE_REQUEST_TIMEOUT`: `1800` seconds (30 min, unchanged from v11)
+- v13 `lastGenerationRequestId`: `0` (no generation requests yet)
+- v13 new events: `GenerationReset(uint256 indexed requestId, address indexed resetBy)` — emitted by `forceResetGeneration` after clearing the four state mappings
+- v13 `MarketReset` event: same v12 shape — `MarketReset(uint256 indexed marketId, address indexed resetBy, RequestStage stage, uint256 stuckRequestId)`
+- v13 new contract surface: `scanStuckGenerationRequests(uint256 cursor, uint256 limit) → (uint256[] requestIds, uint256 nextCursor)`; `forceResetGeneration(uint256 requestId) external nonReentrant` (reverts `GenerationNotStuck` if fresh or cleared)
+- v13 `agentManifest()` body bumped to v13 — adds `STUCK-GENERATION RECOVERY`, `OUTPUT CAPS` sections; enumerates the v12 `MarketReset.stuckRequestId` field
+- v13 inherits all v12 behavior: stuck-resolution recovery (forceResetMarket + scanStuckMarkets + STALE_REQUEST_TIMEOUT), `MarketReset.stuckRequestId`, useAgentReceipt recovery reset + setTimeout remaining-time fix, 404-only cache on the receipt proxy, relayer getLogs chunking, attemptCount clear-on-success, MIN_BET, URL validation, nonReentrant, exact 3-byte YES/NO parse, case-insensitive URL, paginated relayer
+
+## On-chain state (v12 — historical)
+
+- v12 Market **#1**: "Is the capital of France Paris?" — seeded, 5-min demo
+- v12 Market **#2**: "Did Bitcoin exist before 2010?" — seeded, 5-min demo
+- v12 Contract balance: `1.0 STT`
+- v12 `nextMarketId`: `3`
+- v12 `AGENT_CREATOR_SENTINEL`: `0x00000000000000000000000000000000000000A1`
+- v12 `MarketReset` event: `MarketReset(uint256 indexed marketId, address indexed resetBy, RequestStage stage, uint256 stuckRequestId)` — the `stuckRequestId` field is non-indexed and matches the in-flight parse or inference request id
+
+## On-chain state (v11 — historical)
+
+- v11 Market **#1**: "Is the capital of France Paris?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v11 Market **#2**: "Did Bitcoin exist before 2010?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v11 Contract balance: `1.0 STT`
+- v11 `nextMarketId`: `3`
+- v11 `AGENT_CREATOR_SENTINEL`: `0x00000000000000000000000000000000000000A1`
+- v11 `MarketReset` event: `MarketReset(uint256 indexed marketId, address indexed resetBy, RequestStage stage)` — v12 added the `stuckRequestId` field
+- v11 `_parseYesNo`: exact 3-byte `YES`/`NO` match required — `"YEAH"` no longer resolves
+- v11 `_resolveWithLLMInference` rollback: emits `stage=Inference` (not `ParseWebsite`) so the failure point is honest
 
 ## On-chain state (v9 — historical)
 
@@ -353,7 +570,7 @@ pnpm dev   # http://localhost:3000
 ```
 
 Set in `.env`:
-- `NEXT_PUBLIC_CONTRACT_ADDRESS=0x6c94AA83e2C8D1d8f22B1E17537D8736E3d7fB65`
+- `NEXT_PUBLIC_CONTRACT_ADDRESS=0x37822751E5ab0688344135797ee8FFCFa76443fB`
 
 ## Auto-retry relayer
 
@@ -364,7 +581,7 @@ request, then re-submits `requestResolution` with the wallet's top-up.
 
 ```bash
 PRIVATE_KEY=0x... \
-  NEXT_PUBLIC_CONTRACT_ADDRESS=0x6c94AA83e2C8D1d8f22B1E17537D8736E3d7fB65 \
+  NEXT_PUBLIC_CONTRACT_ADDRESS=0x37822751E5ab0688344135797ee8FFCFa76443fB \
   node scripts/relayer.mjs
 ```
 

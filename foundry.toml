@@ -5,6 +5,12 @@ libs = ["lib"]
 solc = "0.8.24"
 optimizer = true
 optimizer_runs = 200
+# v11 added the stuck-request recovery path (forceResetMarket + scanStuckMarkets
+# + the new timestamp fields). The combined local-variable pressure on the
+# resolution callbacks and the new recovery entry pushed the optimizer past
+# the stack-too-deep threshold. via_ir is the standard fix for complex Solidity
+# contracts; it only affects compilation time, not runtime behavior.
+via_ir = true
 
 [rpc_endpoints]
 shannon = "${SHANNON_RPC_URL}"

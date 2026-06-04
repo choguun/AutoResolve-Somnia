@@ -25,6 +25,7 @@ export function useAgentReceipt(requestId?: string | bigint) {
     },
     refetchInterval: (query) => {
       if (receiptIsComplete(query.state.data)) return false;
+      if (query.state.status === 'error') return false;
       if (Date.now() - startedAt > MAX_POLL_MS) return false;
       return 5000;
     },
@@ -38,15 +39,28 @@ export function useAgentReceipt(requestId?: string | bigint) {
       setIsLongRunning(false);
       return;
     }
+    // On error after the retry budget is exhausted, surface the long-running
+    // UI early so the user can hit Refresh instead of staring at a spinner.
+    if (query.error) {
+      setIsLongRunning(true);
+      return;
+    }
     if (Date.now() - startedAt > MAX_POLL_MS) {
       setIsLongRunning(true);
       return;
     }
+    // Healthy polling — clear the long-running flag in case it was set by a
+    // transient error, then schedule a setTimeout for the *remaining* time
+    // until the deadline. (Re-arming with the full MAX_POLL_MS on every
+    // query.data update would push the timeout out indefinitely under
+    // continuous polling.)
+    setIsLongRunning(false);
+    const remaining = MAX_POLL_MS - (Date.now() - startedAt);
     const handle = setTimeout(() => {
       if (!receiptIsComplete(query.data)) setIsLongRunning(true);
-    }, MAX_POLL_MS);
+    }, remaining);
     return () => clearTimeout(handle);
-  }, [query.data, startedAt]);
+  }, [query.data, query.error, startedAt]);
 
   return { ...query, isLongRunning };
 }

@@ -27,9 +27,21 @@ export async function GET(
     });
 
     if (!upstream.ok) {
+      // A 404 from the upstream is a "this requestId will never resolve"
+      // signal — negative cache it for 10s so a stale link (typo, never-valid
+      // requestId) doesn't round-trip on every page view. Anything else
+      // (502/503/504 from a flaky upstream) must NOT be cached: the next call
+      // may recover immediately, and we'd rather burn an extra upstream
+      // request than mask a transient outage.
+      if (upstream.status === 404) {
+        return NextResponse.json(
+          { error: 'Receipt not found', requestId },
+          { status: 404, headers: { 'Cache-Control': 'public, max-age=10' } }
+        );
+      }
       return NextResponse.json(
-        { error: 'Receipt not found', requestId },
-        { status: upstream.status === 404 ? 404 : 502 }
+        { error: 'Receipt upstream unavailable', requestId },
+        { status: 502 }
       );
     }
 

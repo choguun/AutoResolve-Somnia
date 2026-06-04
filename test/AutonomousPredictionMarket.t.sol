@@ -712,13 +712,468 @@ contract AutonomousPredictionMarketTest is Test {
         assertTrue(_contains(manifest, "requestResolution"));
     }
 
-    function testAgentManifestAdvertisesV10() public {
+    function testAgentManifestAdvertisesV13() public {
         string memory manifest = market.agentManifest();
-        assertTrue(_contains(manifest, "v10"), "manifest should advertise v10");
+        assertTrue(_contains(manifest, "v13"), "manifest should advertise v13");
         assertTrue(_contains(manifest, "inferToolsChat"), "manifest should mention inferToolsChat");
         assertTrue(_contains(manifest, "SPECIFIC"), "manifest should mention SPECIFIC-URL requirement");
         assertTrue(_contains(manifest, "MIN_BET"), "manifest should mention MIN_BET");
         assertTrue(_contains(manifest, "YES"), "manifest should mention YES/NO output format");
+        assertTrue(_contains(manifest, "scanStuckMarkets"), "manifest should advertise stuck-market recovery");
+        assertTrue(_contains(manifest, "forceResetMarket"), "manifest should advertise forceResetMarket");
+        // v13 additions
+        assertTrue(_contains(manifest, "scanStuckGenerationRequests"), "manifest should advertise stuck-generation recovery");
+        assertTrue(_contains(manifest, "forceResetGeneration"), "manifest should advertise forceResetGeneration");
+        assertTrue(_contains(manifest, "MAX_AGENT_OUTPUT_LENGTH"), "manifest should advertise the output cap");
+    }
+
+    function testForceResetMarketRevertsWhenNotStuck() public {
+        // A freshly-created market is not in Resolving at all, so NotStuck.
+        uint256 marketId = _createEndedMarket();
+        vm.expectRevert(AutonomousPredictionMarket.NotStuck.selector);
+        market.forceResetMarket(marketId);
+    }
+
+    function testForceResetMarketRevertsWhenRequestIsFresh() public {
+        // After requestResolution the market is in Resolving, but the parse
+        // request is brand new — NotStuck because the timeout hasn't elapsed.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.expectRevert(AutonomousPredictionMarket.NotStuck.selector);
+        market.forceResetMarket(marketId);
+    }
+
+    function testForceResetMarketRevertsWhenMarketNotFound() public {
+        vm.expectRevert(AutonomousPredictionMarket.MarketNotFound.selector);
+        market.forceResetMarket(999);
+    }
+
+    function testForceResetMarketRecoversStuckParseRequest() public {
+        // The most important case: a parse request whose callback never
+        // arrives (platform dropped it). After STALE_REQUEST_TIMEOUT, anyone
+        // can call forceResetMarket, the market goes back to Open, and a
+        // fresh requestResolution can pick it up.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        // Capture the parse request id and warp past the timeout.
+        uint256 parseRequestId = market.getMarket(marketId).parseRequestId;
+        assertGt(parseRequestId, 0, "parse request created");
+        vm.warp(block.timestamp + market.STALE_REQUEST_TIMEOUT() + 1);
+
+        vm.expectEmit(true, true, false, true, address(market));
+        emit AutonomousPredictionMarket.MarketReset(
+            marketId, address(this), AutonomousPredictionMarket.RequestStage.ParseWebsite, parseRequestId
+        );
+        market.forceResetMarket(marketId);
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "back to Open");
+        assertEq(m.parseRequestId, 0, "parse request cleared");
+        assertEq(m.inferenceRequestId, 0, "no inference request");
+        assertEq(m.parseRequestedAt, 0, "parse timestamp cleared");
+        assertEq(market.requestToMarket(parseRequestId), 0, "requestToMarket cleared");
+        assertEq(
+            uint256(market.requestStage(parseRequestId)),
+            uint256(AutonomousPredictionMarket.RequestStage.None),
+            "requestStage cleared"
+        );
+
+        // A fresh requestResolution now succeeds (the relayer's recovery path).
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+        assertEq(
+            uint256(market.getMarket(marketId).status),
+            uint256(AutonomousPredictionMarket.MarketStatus.Resolving),
+            "recovery path works"
+        );
+    }
+
+    function testMarketResetEmitsStuckRequestId() public {
+        // Decodes the MarketReset event from the receipt log to confirm the
+        // stuckRequestId matches the parse request that was in flight. A
+        // relayer that scans for MarketReset events uses this field to know
+        // which platform request id to drop from any local retry bookkeeping.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        uint256 parseRequestId = market.getMarket(marketId).parseRequestId;
+        assertGt(parseRequestId, 0, "parse request created");
+        vm.warp(block.timestamp + market.STALE_REQUEST_TIMEOUT() + 1);
+
+        vm.recordLogs();
+        market.forceResetMarket(marketId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bool found;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (
+                logs[i].topics[0] == keccak256("MarketReset(uint256,address,uint8,uint256)")
+                && logs[i].emitter == address(market)
+            ) {
+                // The non-indexed args are packed after the topics.
+                (uint256 emittedStuckRequestId) = abi.decode(logs[i].data, (uint256));
+                assertEq(emittedStuckRequestId, parseRequestId, "stuckRequestId matches the in-flight parse request");
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found, "MarketReset event was emitted");
+    }
+
+    function testForceResetMarketRecoversStuckInferenceRequest() public {
+        // Same as the parse-stuck test, but the parse callback ran successfully
+        // and the inference callback is the one that never came back. This
+        // exercises the Inference branch of _isStuck.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(
+            1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest()
+        );
+
+        // On the parse-callback success path, market.parseRequestId is left
+        // pointing at the now-completed parse request (it is only cleared on
+        // the failure path). inferenceRequestId is the new in-flight one.
+        uint256 inferenceRequestId = market.getMarket(marketId).inferenceRequestId;
+        assertGt(inferenceRequestId, 0, "inference request created");
+
+        vm.warp(block.timestamp + market.STALE_REQUEST_TIMEOUT() + 1);
+
+        vm.expectEmit(true, true, false, true, address(market));
+        emit AutonomousPredictionMarket.MarketReset(
+            marketId, address(this), AutonomousPredictionMarket.RequestStage.Inference, inferenceRequestId
+        );
+        market.forceResetMarket(marketId);
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Open));
+        assertEq(m.inferenceRequestId, 0);
+        assertEq(m.parseRequestId, 0);
+        assertEq(m.inferenceRequestedAt, 0);
+        assertEq(market.requestToMarket(inferenceRequestId), 0);
+    }
+
+    function testScanStuckMarketsFindsAndExcludesFreshRequests() public {
+        // Time-gap the two markets so their parseRequestedAt values are
+        // distinct and the fresh one falls inside the timeout window.
+        uint256 staleMarketId = _createEndedMarket(); // endTime already passed
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(staleMarketId);
+        // Stale's parseRequestedAt = T1.
+
+        // Create the fresh market and request resolution later, so the fresh
+        // request's parseRequestedAt is T2 > T1.
+        vm.warp(block.timestamp + market.STALE_REQUEST_TIMEOUT()); // 30 min later
+        uint256 freshMarketId = market.createMarket("Will it rain?", "https://example.com", 300);
+        vm.warp(block.timestamp + 301);
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(freshMarketId);
+        // Fresh's parseRequestedAt = T1 + 1800 + 301.
+
+        // Sanity: both in Resolving.
+        assertEq(
+            uint256(market.getMarket(staleMarketId).status),
+            uint256(AutonomousPredictionMarket.MarketStatus.Resolving)
+        );
+        assertEq(
+            uint256(market.getMarket(freshMarketId).status),
+            uint256(AutonomousPredictionMarket.MarketStatus.Resolving)
+        );
+
+        // Warp forward by just over the timeout from T1. Stale is past the
+        // window; fresh's parseRequestedAt is only 301s in the past, well
+        // inside its 30-min window.
+        vm.warp(block.timestamp + 1);
+
+        (uint256[] memory ids, uint256 nextCursor) = market.scanStuckMarkets(0, 10);
+        assertEq(ids.length, 1, "only the stale market is reported");
+        assertEq(ids[0], staleMarketId, "stale market id matches");
+        assertEq(nextCursor, market.nextMarketId(), "cursor advances to end");
+
+        // forceResetMarket on the fresh one reverts NotStuck.
+        vm.expectRevert(AutonomousPredictionMarket.NotStuck.selector);
+        market.forceResetMarket(freshMarketId);
+    }
+
+    function testScanStuckMarketsPagination() public {
+        // Limit must reject 0 and oversize.
+        vm.expectRevert(AutonomousPredictionMarket.InvalidLimit.selector);
+        market.scanStuckMarkets(0, 0);
+
+        uint256 invalidLimit = market.MAX_AGENT_SCAN_LIMIT() + 1;
+        vm.expectRevert(AutonomousPredictionMarket.InvalidLimit.selector);
+        market.scanStuckMarkets(0, invalidLimit);
+    }
+
+    // -----------------------------------------------------------------------
+    // v13: stuck-generation recovery + output length cap
+    // -----------------------------------------------------------------------
+
+    function testRequestMarketGenerationTracksLastGenerationRequestId() public {
+        // Each successful requestMarketGeneration call must advance
+        // lastGenerationRequestId so scanStuckGenerationRequests has a tight
+        // upper bound (rather than walking the entire uint256 space).
+        _fundContractForGeneration();
+        assertEq(market.lastGenerationRequestId(), 0, "starts at 0");
+
+        uint256 requestId1 = market.requestMarketGeneration("Topic one");
+        assertEq(market.lastGenerationRequestId(), requestId1, "first id recorded");
+
+        // Re-fund so the second call can also create a request.
+        (uint256 requiredDeposit,,) = market.getGenerationFundingStatus();
+        vm.deal(address(this), requiredDeposit);
+        (bool ok,) = address(market).call{value: requiredDeposit}("");
+        assertTrue(ok, "refund for second call");
+
+        uint256 requestId2 = market.requestMarketGeneration("Topic two");
+        assertEq(market.lastGenerationRequestId(), requestId2, "second id recorded (monotonic)");
+    }
+
+    function testForceResetGenerationRevertsWhenNotStuck() public {
+        // A fresh generation request is not stuck yet — the contract refuses
+        // a force-reset until STALE_REQUEST_TIMEOUT has elapsed.
+        _fundContractForGeneration();
+        uint256 requestId = market.requestMarketGeneration("Some topic");
+
+        vm.expectRevert(AutonomousPredictionMarket.GenerationNotStuck.selector);
+        market.forceResetGeneration(requestId);
+    }
+
+    function testForceResetGenerationRevertsForUnknownRequest() public {
+        // A request id that was never created (stage != GenerateMarket) is
+        // _isGenerationStuck -> false, so forceResetGeneration reverts. This
+        // also covers the case where the callback already ran and cleared the
+        // stage — the relayer's scan won't see it again.
+        vm.expectRevert(AutonomousPredictionMarket.GenerationNotStuck.selector);
+        market.forceResetGeneration(999);
+    }
+
+    function testForceResetGenerationRecoversStuckRequest() public {
+        // The symmetric case of testForceResetMarketRecoversStuckParseRequest:
+        // a generation request whose callback never arrived (platform dropped
+        // it). After STALE_REQUEST_TIMEOUT, anyone can call forceResetGeneration,
+        // and all four state mappings are cleared so a fresh request can land.
+        _fundContractForGeneration();
+        uint256 requestId = market.requestMarketGeneration("Some topic");
+
+        // Sanity: the four mappings were populated.
+        assertEq(
+            uint256(market.requestStage(requestId)),
+            uint256(AutonomousPredictionMarket.RequestStage.GenerateMarket),
+            "stage set"
+        );
+        assertEq(market.requestToTopic(requestId), "Some topic", "topic set");
+        assertEq(market.generationProposer(requestId), address(this), "proposer set");
+        assertGt(market.generationRequestedAt(requestId), 0, "timestamp set");
+
+        vm.warp(block.timestamp + market.STALE_REQUEST_TIMEOUT() + 1);
+
+        vm.expectEmit(true, true, false, false, address(market));
+        emit AutonomousPredictionMarket.GenerationReset(requestId, address(this));
+        market.forceResetGeneration(requestId);
+
+        // All four mappings cleared.
+        assertEq(
+            uint256(market.requestStage(requestId)),
+            uint256(AutonomousPredictionMarket.RequestStage.None),
+            "stage cleared"
+        );
+        assertEq(bytes(market.requestToTopic(requestId)).length, 0, "topic cleared");
+        assertEq(market.generationProposer(requestId), address(0), "proposer cleared");
+        assertEq(market.generationRequestedAt(requestId), 0, "timestamp cleared");
+
+        // lastGenerationRequestId is sticky on purpose (it's a high-water mark
+        // for the scan's upper bound, not a state pointer). Confirm.
+        assertEq(market.lastGenerationRequestId(), requestId, "high-water mark unchanged");
+    }
+
+    function testScanStuckGenerationRequestsFindsAndExcludesFresh() public {
+        // Mirror of testScanStuckMarketsFindsAndExcludesFreshRequests: create
+        // two generation requests time-gapped so the first is past the timeout
+        // and the second is fresh. The scan must return only the stuck one.
+        _fundContractForGeneration();
+        uint256 staleRequestId = market.requestMarketGeneration("Stale topic");
+        // staleRequestId's generationRequestedAt = T1.
+
+        // Re-fund and time-warp forward so the fresh one has a later timestamp.
+        (uint256 requiredDeposit,,) = market.getGenerationFundingStatus();
+        vm.deal(address(this), requiredDeposit);
+        (bool ok,) = address(market).call{value: requiredDeposit}("");
+        assertTrue(ok, "refund for second call");
+
+        vm.warp(block.timestamp + market.STALE_REQUEST_TIMEOUT()); // 30 min later
+        uint256 freshRequestId = market.requestMarketGeneration("Fresh topic");
+        // freshRequestId's generationRequestedAt = T1 + 1800.
+
+        // Sanity: both are at the GenerateMarket stage.
+        assertEq(
+            uint256(market.requestStage(staleRequestId)),
+            uint256(AutonomousPredictionMarket.RequestStage.GenerateMarket)
+        );
+        assertEq(
+            uint256(market.requestStage(freshRequestId)),
+            uint256(AutonomousPredictionMarket.RequestStage.GenerateMarket)
+        );
+
+        // Warp forward by 1s. stale is now T1 + 1800 + 1s old, well past 30 min.
+        // fresh is T1 + 1800, which is 1s old (still inside the 30-min window).
+        vm.warp(block.timestamp + 1);
+
+        (uint256[] memory ids, uint256 nextCursor) = market.scanStuckGenerationRequests(0, 10);
+        assertEq(ids.length, 1, "only the stale request is reported");
+        assertEq(ids[0], staleRequestId, "stale id matches");
+        assertGt(nextCursor, 0, "cursor advanced");
+
+        // forceResetGeneration on the fresh one reverts GenerationNotStuck.
+        vm.expectRevert(AutonomousPredictionMarket.GenerationNotStuck.selector);
+        market.forceResetGeneration(freshRequestId);
+    }
+
+    function testScanStuckGenerationRequestsPagination() public {
+        // Limit must reject 0 and oversize.
+        vm.expectRevert(AutonomousPredictionMarket.InvalidLimit.selector);
+        market.scanStuckGenerationRequests(0, 0);
+
+        uint256 invalidLimit = market.MAX_AGENT_SCAN_LIMIT() + 1;
+        vm.expectRevert(AutonomousPredictionMarket.InvalidLimit.selector);
+        market.scanStuckGenerationRequests(0, invalidLimit);
+    }
+
+    function testParseCallbackReopensMarketOnOverlongOutput() public {
+        // A misbehaving agent returns a > MAX_AGENT_OUTPUT_LENGTH (1024) byte
+        // string. The contract must treat this as a parse failure (reopen the
+        // market, emit ResolutionFailed) rather than reverting, since a revert
+        // would leave the market stuck in Resolving for STALE_REQUEST_TIMEOUT.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        // Build a 1025-byte response (one over the cap).
+        bytes memory tooLong = new bytes(market.MAX_AGENT_OUTPUT_LENGTH() + 1);
+        for (uint256 i = 0; i < tooLong.length; i++) tooLong[i] = "x";
+        string memory longResult = string(tooLong);
+        assertEq(bytes(longResult).length, market.MAX_AGENT_OUTPUT_LENGTH() + 1, "one over the cap");
+
+        vm.recordLogs();
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, _successfulResponse(longResult), ResponseStatus.Success, _emptyRequest());
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "market reopens");
+        assertEq(m.parseRequestId, 0, "parse request cleared");
+        assertEq(m.parseRequestedAt, 0, "parse timestamp cleared");
+        assertEq(market.requestToMarket(1), 0, "requestToMarket cleared");
+        assertEq(
+            uint256(market.requestStage(1)),
+            uint256(AutonomousPredictionMarket.RequestStage.None),
+            "requestStage cleared"
+        );
+
+        // ResolutionFailed was emitted with stage=ParseWebsite.
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("ResolutionFailed(uint256,uint256,uint8,uint8)");
+        bool found;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] != sig) continue;
+            // topics[1] = marketId, topics[2] = requestId (both indexed).
+            // data = (uint8 stage, uint8 status) - both padded to 32 bytes.
+            uint256 loggedMarketId = uint256(logs[i].topics[1]);
+            (uint8 loggedStage, uint8 loggedStatus) = abi.decode(logs[i].data, (uint8, uint8));
+            if (
+                loggedMarketId == marketId &&
+                loggedStage == uint8(AutonomousPredictionMarket.RequestStage.ParseWebsite) &&
+                loggedStatus == uint8(ResponseStatus.Failed)
+            ) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found, "ResolutionFailed(stage=ParseWebsite) emitted");
+    }
+
+    function testInferenceCallbackReopensMarketOnOverlongOutput() public {
+        // Same shape as the parse-overlong test but on the inference callback.
+        // An over-long inference result must also be treated as a failure, not
+        // a revert — a revert would leave the market stuck in Resolving.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest());
+
+        uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
+        assertGt(inferenceId, 0, "inference request created");
+
+        bytes memory tooLong = new bytes(market.MAX_AGENT_OUTPUT_LENGTH() + 1);
+        for (uint256 i = 0; i < tooLong.length; i++) tooLong[i] = "x";
+        string memory longResult = string(tooLong);
+
+        vm.recordLogs();
+        vm.prank(PLATFORM);
+        market.handleInferenceCallback(inferenceId, _successfulResponse(longResult), ResponseStatus.Success, _emptyRequest());
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "market reopens");
+        assertEq(m.parseRequestId, 0, "parse request cleared");
+        assertEq(m.inferenceRequestId, 0, "inference request cleared");
+        assertFalse(m.outcome, "outcome stays false");
+        assertEq(bytes(m.resolutionReason).length, 0, "reason stays empty");
+        assertEq(market.requestToMarket(inferenceId), 0, "requestToMarket cleared");
+        assertEq(
+            uint256(market.requestStage(inferenceId)),
+            uint256(AutonomousPredictionMarket.RequestStage.None),
+            "requestStage cleared"
+        );
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("ResolutionFailed(uint256,uint256,uint8,uint8)");
+        bool found;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] != sig) continue;
+            uint256 loggedMarketId = uint256(logs[i].topics[1]);
+            (uint8 loggedStage, uint8 loggedStatus) = abi.decode(logs[i].data, (uint8, uint8));
+            if (
+                loggedMarketId == marketId &&
+                loggedStage == uint8(AutonomousPredictionMarket.RequestStage.Inference) &&
+                loggedStatus == uint8(ResponseStatus.Failed)
+            ) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found, "ResolutionFailed(stage=Inference) emitted");
     }
 
     function _contains(string memory haystack, string memory needle) internal pure returns (bool) {

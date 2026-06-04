@@ -42,6 +42,10 @@ export function getAutoResolveAgentManifest() {
     autonomousInterface: {
       discover: 'scanResolvableMarkets(uint256 cursor,uint256 limit)',
       discoverCreated: 'scanAgentCreatedMarkets(uint256 cursor,uint256 limit)',
+      discoverStuck: 'scanStuckMarkets(uint256 cursor,uint256 limit)',
+      discoverStuckGeneration: 'scanStuckGenerationRequests(uint256 cursor,uint256 limit)',
+      recover: 'forceResetMarket(uint256 marketId)',
+      recoverGeneration: 'forceResetGeneration(uint256 requestId)',
       inspect: 'getAgentMarketContext(uint256 marketId)',
       invoke: 'requestResolution(uint256 marketId) payable',
       invokeCreation: 'requestMarketGeneration(string topic) payable returns (uint256 requestId)',

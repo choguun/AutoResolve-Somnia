@@ -75,6 +75,19 @@
   },
   {
     "type": "function",
+    "name": "MAX_AGENT_OUTPUT_LENGTH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_AGENT_SCAN_LIMIT",
     "inputs": [],
     "outputs": [
@@ -160,6 +173,19 @@
         "name": "",
         "type": "address",
         "internalType": "contract IAgentRequester"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "STALE_REQUEST_TIMEOUT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -271,6 +297,32 @@
   },
   {
     "type": "function",
+    "name": "forceResetGeneration",
+    "inputs": [
+      {
+        "name": "requestId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "forceResetMarket",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "generationProposer",
     "inputs": [
       {
@@ -284,6 +336,25 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "generationRequestedAt",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -483,6 +554,16 @@
           },
           {
             "name": "resolvedAt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "parseRequestedAt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "inferenceRequestedAt",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -1117,6 +1198,19 @@
   },
   {
     "type": "function",
+    "name": "lastGenerationRequestId",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "marketBets",
     "inputs": [
       {
@@ -1236,6 +1330,16 @@
       },
       {
         "name": "resolvedAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "parseRequestedAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "inferenceRequestedAt",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1410,6 +1514,64 @@
   },
   {
     "type": "function",
+    "name": "scanStuckGenerationRequests",
+    "inputs": [
+      {
+        "name": "cursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "requestIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "nextCursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "scanStuckMarkets",
+    "inputs": [
+      {
+        "name": "cursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "marketIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "nextCursor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "userNoBets",
     "inputs": [
       {
@@ -1533,6 +1695,25 @@
   },
   {
     "type": "event",
+    "name": "GenerationReset",
+    "inputs": [
+      {
+        "name": "requestId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "resetBy",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "MarketCreated",
     "inputs": [
       {
@@ -1589,6 +1770,37 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MarketReset",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "resetBy",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "stage",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum AutonomousPredictionMarket.RequestStage"
+      },
+      {
+        "name": "stuckRequestId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1720,6 +1932,11 @@
   },
   {
     "type": "error",
+    "name": "AgentOutputTooLong",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AlreadyRequested",
     "inputs": []
   },
@@ -1731,6 +1948,11 @@
   {
     "type": "error",
     "name": "DurationTooShort",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GenerationNotStuck",
     "inputs": []
   },
   {
@@ -1796,6 +2018,11 @@
   {
     "type": "error",
     "name": "NoWinningPool",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotStuck",
     "inputs": []
   },
   {

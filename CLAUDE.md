@@ -14,25 +14,51 @@ hard constraints that are easy to break.
 - **Hackathon**: Built for the Somnia Agentathon. The repo is a single demo product
   with a hardening pass (v4 contract). Future multi-outcome markets, dispute windows,
   and protocol fees are intentionally out of scope (see `README.md` → Known limitations).
-- **Current deployed contract (v10)**:
-  `0x6c94AA83e2C8D1d8f22B1E17537D8736E3d7fB65` on Somnia Shannon Testnet
+- **Current deployed contract (v13)**:
+  `0x37822751E5ab0688344135797ee8FFCFa76443fB` on Somnia Shannon Testnet
   (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
 - **Live app**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
   at `/api/agent-manifest` and `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof**: market #1 on the v2 contract resolved `YES` via parse
   receipt `2400421` and inference receipt `2400485`; winnings claimed on-chain
-  (`claimTx: 0x888327…2380`). The v10 deployment is the current live target.
+  (`claimTx: 0x888327…2380`). The v13 deployment is the current live target.
 - **v7 E2E AI-created→AI-resolved proof**: market #3 on v7
   (`0xd3E946aC…4B69`) was created by the inference agent and resolved YES via
   parse receipt `4254170` and inference receipt `4254291` (tx
-  `0x362daa6f…b5143`). v10 inherits the same prompt + pipeline; the address
-  changed because v10 added the inference-callback Pending/None guard /
-  honest rollback stage / fresh manifest / receipt polling timeout /
-  client-side URL validation / relayer dedup fix + retry cap + per-tick
-  topUp re-read on top of the v9 hardening (stuck-market balance check /
-  exact YES/NO parsing / case-insensitive URL validation / paginated relayer)
-  and the v8 hardening (MIN_BET / URL validation / nonReentrant / return
-  `requestId` / inner-revert decoder).
+  `0x362daa6f…b5143`). v13 inherits the same prompt + pipeline; the address
+  changed because v13 added the
+  stuck-generation recovery path (forceResetGeneration +
+  scanStuckGenerationRequests + GenerationReset event +
+  lastGenerationRequestId high-water mark — symmetric to the v11
+  stuck-resolution recovery but for the creation pipeline) + the
+  agent output length cap (MAX_AGENT_OUTPUT_LENGTH = 1024 bytes on
+  parse + inference results, with over-long treated as graceful
+  ResolutionFailed rather than a revert) + the relayer GenerationFailed
+  advisory log step (operators can see creation failure rate without
+  auto-retry, since wrong topic is the proposer's call to fix) on top
+  of the v12 hardening (MarketReset.stuckRequestId field + useAgentReceipt
+  recovery-flag reset + receipt-proxy 502 cache removed) and the v11
+  hardening (stuck-request recovery path: forceResetMarket +
+  scanStuckMarkets + STALE_REQUEST_TIMEOUT / relayer getLogs chunking /
+  useAgentReceipt refetch-on-error gate / attemptCount clear-on-success /
+  404 cache on the receipt proxy) and the v10 hardening
+  (inference-callback Pending/None guard / honest rollback stage / fresh
+  manifest / receipt polling timeout / client-side URL validation /
+  relayer dedup fix + retry cap + per-tick topUp re-read) and the v9
+  hardening (stuck-market balance check / exact YES/NO parsing /
+  case-insensitive URL validation / paginated relayer) and the v8
+  hardening (MIN_BET / URL validation / nonReentrant / return `requestId` /
+  inner-revert decoder).
+  STALE_REQUEST_TIMEOUT / relayer getLogs chunking / useAgentReceipt
+  refetch-on-error gate / attemptCount clear-on-success / 404 cache on
+  the receipt proxy) and the v10 hardening
+  (inference-callback Pending/None guard / honest rollback stage / fresh
+  manifest / receipt polling timeout / client-side URL validation /
+  relayer dedup fix + retry cap + per-tick topUp re-read) and the v9
+  hardening (stuck-market balance check / exact YES/NO parsing /
+  case-insensitive URL validation / paginated relayer) and the v8
+  hardening (MIN_BET / URL validation / nonReentrant / return `requestId` /
+  inner-revert decoder).
 
 ## Repo layout
 
@@ -91,7 +117,7 @@ lib-web/                          Frontend-agnostic chain + contract glue
 
 lib/forge-std/                    Forge standard library (vendored — keep tracked)
 
-scripts/relayer.mjs                Always-on auto-retry relayer (watches ResolutionFailed + open markets, re-calls requestResolution)
+scripts/relayer.mjs                Always-on auto-retry relayer (watches ResolutionFailed + GenerationFailed + open markets, re-calls requestResolution; force-resets stuck markets and stuck generation requests)
 
 plan.md, PITCH_DECK.md, DEMO.md, DEPLOYED.md, README.md
                                   Long-form context. README is the canonical public spec; DEPLOYED.md tracks addresses and tx hashes.
@@ -170,16 +196,50 @@ All agent callbacks use `nonReentrant`. The funding math and the
 - `agentManifest()` returns a one-string description of the interface.
 - `scanResolvableMarkets(cursor, limit)` paginates markets that
   `canResolveMarket` (status `Open`, endTime passed, never requested).
+- `scanStuckMarkets(cursor, limit)` paginates markets in `Resolving` whose
+  parse or inference request is older than `STALE_REQUEST_TIMEOUT` (30 min).
+- `scanStuckGenerationRequests(cursor, limit)` paginates stuck generation
+  requests (older than `STALE_REQUEST_TIMEOUT`); walks
+  `[cursor, lastGenerationRequestId]` with a tight upper bound.
+- `scanAgentCreatedMarkets(cursor, limit)` paginates markets whose
+  `creator == AGENT_CREATOR_SENTINEL` (`0x0000…A1`).
 - `getAgentMarketContext(marketId)` returns question, source, status, end time,
   pool, request ids, and live funding requirements.
 - `getResolutionFundingStatus()` returns `(requiredDeposit, contractBalance, topUpNeeded)`.
+- `getGenerationFundingStatus()` returns the inference deposit and top-up needed
+  for `requestMarketGeneration`.
 
-`MAX_AGENT_SCAN_LIMIT = 50`; `scanResolvableMarkets` reverts `InvalidLimit` on 0 or oversize.
+`MAX_AGENT_SCAN_LIMIT = 50`; all `scan*` functions revert `InvalidLimit` on 0 or oversize.
+
+### Stuck-request recovery (the v11+ pattern, applied symmetrically in v13)
+
+- `forceResetMarket(marketId)` reverts a stuck market (parse or inference
+  request older than `STALE_REQUEST_TIMEOUT`) back to `Open` and emits
+  `MarketReset(marketId, resetBy, stage, stuckRequestId)`. The
+  `stuckRequestId` field is non-indexed and matches the in-flight parse or
+  inference request id, so a relayer that scans for resets learns which
+  platform request to drop from local retry bookkeeping. Reverts
+  `NotStuck` if the market is fresh or already cleared.
+- `forceResetGeneration(requestId)` is the symmetric v13 path for the
+  creation pipeline: reverts a stuck generation request, clears the four
+  state mappings (`requestStage`, `requestToTopic`, `generationProposer`,
+  `generationRequestedAt`), and emits `GenerationReset(requestId, resetBy)`.
+  The inference deposit was forwarded to the platform at request time and
+  is not refundable. Reverts `GenerationNotStuck` if fresh or cleared.
+
+### Output cap (v13)
+
+- `MAX_AGENT_OUTPUT_LENGTH = 1024` bytes caps the agent's parse and
+  inference result strings. Over-long responses are treated as a graceful
+  parse/inference failure — the market reopens and `ResolutionFailed` is
+  emitted. **The contract never reverts in callbacks**: a revert would
+  leave the market stuck in `Resolving` until `STALE_REQUEST_TIMEOUT`.
 
 ### Security
 
 - Custom errors throughout (cheaper + indexable than revert strings).
-- `nonReentrant` on `bet`, `claimWinnings`, and both agent callbacks.
+- `nonReentrant` on `bet`, `claimWinnings`, both agent callbacks, and both
+  `forceReset*` functions.
 - `TransferFailed` custom error on all `.call{value:}` paths.
 - The deposit math in `requestResolution` is test-covered for partial top-up,
   no-top-up, and over-funding. Don't rewrite it without re-running the
@@ -259,7 +319,7 @@ Notes:
 ```bash
 # Solidity (Foundry)
 forge build                       # compile
-forge test -vv                    # 63 tests in test/AutonomousPredictionMarket.t.sol
+forge test -vv                    # 79 tests in test/AutonomousPredictionMarket.t.sol
 
 # Frontend
 pnpm lint                         # eslint --max-warnings=0

@@ -48,6 +48,9 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     error TransferFailed();
     error InvalidSourceUrl();
     error BetBelowMinimum();
+    error NotStuck();
+    error GenerationNotStuck();
+    error AgentOutputTooLong();
 
     IAgentRequester public constant PLATFORM = IAgentRequester(0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776);
 
@@ -62,7 +65,20 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     uint256 public constant MAX_TOPIC_LENGTH = 200;
     uint256 public constant MAX_AGENT_SCAN_LIMIT = 50;
     uint256 public constant MIN_BET = 0.001 ether;
+    /// @dev Cap on the byte length of any agent response string the contract
+    /// stores on-chain (parse result, inference result). A misbehaving or
+    /// jailbroken agent that returns a multi-MB blob could otherwise bloat
+    /// chain state via market.resolutionReason and the inference prompt.
+    /// 1 KiB is more than enough for a YES/NO classifier output plus any
+    /// short reasoning text the agent might include.
+    uint256 public constant MAX_AGENT_OUTPUT_LENGTH = 1024;
     address public constant AGENT_CREATOR_SENTINEL = address(0xA1);
+    /// @dev If a market is left in Resolving for longer than this with a pending
+    /// parse or inference request, anyone may force-reset it back to Open so the
+    /// relayer can re-trigger resolution. Protects against a dropped agent
+    /// callback (e.g. platform outage, validator stall) leaving a market stuck
+    /// in a limbo state that scanResolvableMarkets cannot pick up.
+    uint256 public constant STALE_REQUEST_TIMEOUT = 30 minutes;
 
     uint256 public nextMarketId;
 
@@ -97,6 +113,13 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         uint256 parseRequestId;
         uint256 inferenceRequestId;
         uint256 resolvedAt;
+        /// @dev block.timestamp when the parse request was created. 0 means
+        /// no parse request is in flight. Used by the stuck-request recovery
+        /// path to detect a dropped parse callback.
+        uint256 parseRequestedAt;
+        /// @dev block.timestamp when the inference request was created. 0
+        /// means no inference request is in flight.
+        uint256 inferenceRequestedAt;
     }
 
     struct Bet {
@@ -129,6 +152,17 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     mapping(uint256 => RequestStage) public requestStage;
     mapping(uint256 => address) public generationProposer;
     mapping(uint256 => string) public requestToTopic;
+    /// @dev block.timestamp when each generation request was created. 0 means
+    /// no generation request in flight. Used by the stuck-generation recovery
+    /// path (forceResetGeneration + scanStuckGenerationRequests) to detect a
+    /// dropped generation callback — the symmetric case of v11's parse/inference
+    /// recovery. v12 only added the recovery for *resolution* requests; v13
+    /// closes the symmetric gap for *creation* requests.
+    mapping(uint256 => uint256) public generationRequestedAt;
+    /// @dev Highest platform-assigned request id seen by a generation call.
+    /// The scan iterates [cursor, lastGenerationRequestId] so it doesn't have
+    /// to walk the entire uint256 space looking for in-flight generation ids.
+    uint256 public lastGenerationRequestId;
 
     event MarketCreated(
         uint256 indexed marketId, address indexed creator, string question, string resolutionSource, uint256 endTime
@@ -146,6 +180,8 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     event MarketCreatedByAgent(
         uint256 indexed requestId, uint256 indexed marketId, address indexed proposer
     );
+    event MarketReset(uint256 indexed marketId, address indexed resetBy, RequestStage stage, uint256 stuckRequestId);
+    event GenerationReset(uint256 indexed requestId, address indexed resetBy);
 
     constructor() {
         nextMarketId = 1;
@@ -177,7 +213,9 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             resolutionReason: "",
             parseRequestId: 0,
             inferenceRequestId: 0,
-            resolvedAt: 0
+            resolvedAt: 0,
+            parseRequestedAt: 0,
+            inferenceRequestedAt: 0
         });
 
         emit MarketCreated(marketId, msg.sender, question, resolutionSource, endTime);
@@ -278,6 +316,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         );
 
         market.parseRequestId = requestId;
+        market.parseRequestedAt = block.timestamp;
         requestToMarket[requestId] = marketId;
         requestStage[requestId] = RequestStage.ParseWebsite;
 
@@ -345,6 +384,8 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         requestStage[requestId] = RequestStage.GenerateMarket;
         requestToTopic[requestId] = topic;
         generationProposer[requestId] = msg.sender;
+        generationRequestedAt[requestId] = block.timestamp;
+        if (requestId > lastGenerationRequestId) lastGenerationRequestId = requestId;
 
         emit GenerationRequested(requestId, topic);
 
@@ -372,12 +413,27 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
         if (status == ResponseStatus.Success && responses.length > 0) {
             string memory result = abi.decode(responses[0].result, (string));
-            _resolveWithLLMInference(marketId, result);
-            delete requestToMarket[requestId];
-            delete requestStage[requestId];
+            if (bytes(result).length > MAX_AGENT_OUTPUT_LENGTH) {
+                // Over-long agent output — treat as a parse failure so the
+                // market reopens and the relayer can retry, rather than
+                // reverting (which would leave the market stuck in
+                // Resolving until STALE_REQUEST_TIMEOUT).
+                market.status = MarketStatus.Open;
+                market.parseRequestId = 0;
+                market.parseRequestedAt = 0;
+                delete requestToMarket[requestId];
+                delete requestStage[requestId];
+                emit ResolutionFailed(marketId, requestId, RequestStage.ParseWebsite, ResponseStatus.Failed);
+            } else {
+                _resolveWithLLMInference(marketId, result);
+                delete requestToMarket[requestId];
+                delete requestStage[requestId];
+                market.parseRequestedAt = 0;
+            }
         } else {
             market.status = MarketStatus.Open;
             market.parseRequestId = 0;
+            market.parseRequestedAt = 0;
             delete requestToMarket[requestId];
             delete requestStage[requestId];
             emit ResolutionFailed(marketId, requestId, RequestStage.ParseWebsite, status);
@@ -399,6 +455,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             uint256 failedRequestId = market.parseRequestId;
             market.status = MarketStatus.Open;
             market.parseRequestId = 0;
+            market.parseRequestedAt = 0;
             delete requestToMarket[failedRequestId];
             delete requestStage[failedRequestId];
             emit ResolutionFailed(marketId, failedRequestId, RequestStage.Inference, ResponseStatus.Failed);
@@ -432,6 +489,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         requestToMarket[requestId] = marketId;
         requestStage[requestId] = RequestStage.Inference;
         market.inferenceRequestId = requestId;
+        market.inferenceRequestedAt = block.timestamp;
 
         emit ResolutionRequested(marketId, requestId, RequestStage.Inference);
     }
@@ -453,12 +511,27 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
         if (status == ResponseStatus.Success && responses.length > 0) {
             string memory result = abi.decode(responses[0].result, (string));
+            if (bytes(result).length > MAX_AGENT_OUTPUT_LENGTH) {
+                // Over-long agent output — same as a non-YES/NO result,
+                // reopen the market and let the relayer retry. We never
+                // revert in callbacks: a revert would leave the market
+                // stuck in Resolving for STALE_REQUEST_TIMEOUT.
+                market.status = MarketStatus.Open;
+                market.parseRequestId = 0;
+                market.inferenceRequestId = 0;
+                market.inferenceRequestedAt = 0;
+                emit ResolutionFailed(marketId, requestId, RequestStage.Inference, ResponseStatus.Failed);
+                delete requestToMarket[requestId];
+                delete requestStage[requestId];
+                return;
+            }
             (bool valid, bool outcome) = _parseYesNo(result);
 
             if (!valid) {
                 market.status = MarketStatus.Open;
                 market.parseRequestId = 0;
                 market.inferenceRequestId = 0;
+                market.inferenceRequestedAt = 0;
                 emit ResolutionFailed(marketId, requestId, RequestStage.Inference, status);
                 delete requestToMarket[requestId];
                 delete requestStage[requestId];
@@ -469,12 +542,14 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             market.status = MarketStatus.Resolved;
             market.resolutionReason = result;
             market.resolvedAt = block.timestamp;
+            market.inferenceRequestedAt = 0;
 
             emit MarketResolved(marketId, outcome, result, block.timestamp);
         } else {
             market.status = MarketStatus.Open;
             market.parseRequestId = 0;
             market.inferenceRequestId = 0;
+            market.inferenceRequestedAt = 0;
             emit ResolutionFailed(marketId, requestId, RequestStage.Inference, status);
         }
 
@@ -730,18 +805,150 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
     function agentManifest() external pure returns (string memory) {
         return string.concat(
-            "AutoResolve agent interface v10. ",
+            "AutoResolve agent interface v13. ",
             "RESOLUTION PIPELINE: scanResolvableMarkets(cursor, limit) to discover expired open markets (returns (uint256[] ids, uint256 nextCursor), max limit 50). ",
             "getAgentMarketContext(marketId) for question, source, funding, and request IDs. ",
             "requestResolution(marketId) payable returns (uint256 requestId); the call is gated on market.status==Open, endTime passed, parseRequestId==0; requires topUpNeeded STT. ",
             "On success the parse request is created; the platform calls back asynchronously. ",
             "If parse succeeds but the contract is underfunded for the inference call, the market rolls back to Open and emits ResolutionFailed(stage=Inference) so the relayer retries once the contract is refilled. ",
             "Inference output must be exactly 3-byte YES or NO (not YEAH, Yessir, etc). ",
+            "STUCK-MARKET RECOVERY: scanStuckMarkets(cursor, limit) lists markets stuck in Resolving whose parse or inference request is older than STALE_REQUEST_TIMEOUT (30 minutes); forceResetMarket(marketId) reverts such a market back to Open so the relayer can re-trigger resolution. ",
+            "forceResetMarket emits MarketReset(uint256 indexed marketId, address indexed resetBy, RequestStage stage, uint256 stuckRequestId) so external agents tracking platform request ids can correlate the reset with their own bookkeeping; the bundled relayer keys its own retry state by marketId and does not consume stuckRequestId. ",
+            "STUCK-GENERATION RECOVERY: scanStuckGenerationRequests(cursor, limit) lists in-flight generation requests older than STALE_REQUEST_TIMEOUT (30 minutes); forceResetGeneration(requestId) clears the requestToTopic, generationProposer, and requestStage mappings so the user's inference deposit is the only lost value (the deposit was forwarded to the platform at request time and is not refundable). ",
+            "forceResetGeneration emits GenerationReset(uint256 indexed requestId, address indexed resetBy). ",
             "CREATION PIPELINE: requestMarketGeneration(string topic) payable returns (uint256 requestId); triggers LLM Inference inferToolsChat that yields createMarket(question, source, durationSeconds) calldata. ",
             "getGenerationFundingStatus() returns the inference deposit and topUpNeeded. ",
             "scanAgentCreatedMarkets(cursor, limit) lists markets whose creator == AGENT_CREATOR_SENTINEL (0xA1). ",
+            "OUTPUT CAPS: agent responses (parse result, inference result) are capped at MAX_AGENT_OUTPUT_LENGTH (1024 bytes). Over-long responses are treated as a parse/inference failure - the market reopens and ResolutionFailed is emitted. The contract never reverts in callbacks. ",
             "CONSTRAINTS: question <= 500 chars, source is an http(s) URL (case-insensitive scheme, leading whitespace allowed) pointing at a SPECIFIC article or page (not a site homepage), duration in [300, 86400] seconds, bet >= MIN_BET (0.001 STT), topic <= 200 chars. ",
             "Agent receipts: https://agents.testnet.somnia.network/receipts/<requestId>."
         );
+    }
+
+    function _isStuck(Market storage market) private view returns (bool stuck_, RequestStage stage_) {
+        if (market.status != MarketStatus.Resolving) return (false, RequestStage.None);
+        if (market.parseRequestId != 0 && market.parseRequestedAt != 0) {
+            if (block.timestamp > market.parseRequestedAt + STALE_REQUEST_TIMEOUT) {
+                return (true, RequestStage.ParseWebsite);
+            }
+        }
+        if (market.inferenceRequestId != 0 && market.inferenceRequestedAt != 0) {
+            if (block.timestamp > market.inferenceRequestedAt + STALE_REQUEST_TIMEOUT) {
+                return (true, RequestStage.Inference);
+            }
+        }
+        return (false, RequestStage.None);
+    }
+
+    function _stuckStage(Market storage market) private view returns (RequestStage) {
+        (bool stuck, RequestStage stage) = _isStuck(market);
+        return stuck ? stage : RequestStage.None;
+    }
+
+    function _isGenerationStuck(uint256 requestId) private view returns (bool) {
+        if (requestStage[requestId] != RequestStage.GenerateMarket) return false;
+        uint256 startedAt = generationRequestedAt[requestId];
+        if (startedAt == 0) return false;
+        return block.timestamp > startedAt + STALE_REQUEST_TIMEOUT;
+    }
+
+    function scanStuckGenerationRequests(uint256 cursor, uint256 limit)
+        external
+        view
+        returns (uint256[] memory requestIds, uint256 nextCursor)
+    {
+        if (limit == 0 || limit > MAX_AGENT_SCAN_LIMIT) revert InvalidLimit();
+
+        uint256 start = cursor < 1 ? 1 : cursor;
+        uint256 end = start + limit;
+        uint256 cap = lastGenerationRequestId;
+        if (end > cap) end = cap;
+
+        uint256 count;
+        for (uint256 id = start; id < end; id++) {
+            if (_isGenerationStuck(id)) count++;
+        }
+
+        requestIds = new uint256[](count);
+        uint256 index;
+        for (uint256 id = start; id < end; id++) {
+            if (_isGenerationStuck(id)) {
+                requestIds[index++] = id;
+            }
+        }
+
+        nextCursor = end;
+    }
+
+    function forceResetGeneration(uint256 requestId) external nonReentrant {
+        if (!_isGenerationStuck(requestId)) revert GenerationNotStuck();
+
+        // Clear the request state. The id is unique, so the deletes are safe
+        // even if the callback has already run and the mappings are empty.
+        delete requestStage[requestId];
+        delete requestToTopic[requestId];
+        delete generationProposer[requestId];
+        delete generationRequestedAt[requestId];
+        // requestToMarket[requestId] is 0 (the "not a market-resolution" sentinel
+        // set by requestMarketGeneration) — leave it alone or delete, both safe.
+
+        emit GenerationReset(requestId, msg.sender);
+    }
+
+    function scanStuckMarkets(uint256 cursor, uint256 limit)
+        external
+        view
+        returns (uint256[] memory marketIds, uint256 nextCursor)
+    {
+        if (limit == 0 || limit > MAX_AGENT_SCAN_LIMIT) revert InvalidLimit();
+
+        uint256 start = cursor < 1 ? 1 : cursor;
+        uint256 end = start + limit;
+        if (end > nextMarketId) end = nextMarketId;
+
+        uint256 count;
+        for (uint256 id = start; id < end; id++) {
+            if (!marketExists(id)) continue;
+            if (_stuckStage(markets[id]) != RequestStage.None) count++;
+        }
+
+        marketIds = new uint256[](count);
+        uint256 index;
+        for (uint256 id = start; id < end; id++) {
+            if (!marketExists(id)) continue;
+            if (_stuckStage(markets[id]) != RequestStage.None) {
+                marketIds[index++] = id;
+            }
+        }
+
+        nextCursor = end;
+    }
+
+    function forceResetMarket(uint256 marketId) external nonReentrant {
+        if (!marketExists(marketId)) revert MarketNotFound();
+        Market storage market = markets[marketId];
+
+        RequestStage stage = _stuckStage(market);
+        if (stage == RequestStage.None) revert NotStuck();
+
+        // Snapshot the request id into a local before mutating storage — the
+        // compiler otherwise runs into a stack-too-deep on the if/else reads.
+        uint256 stuckRequestId = stage == RequestStage.ParseWebsite
+            ? market.parseRequestId
+            : market.inferenceRequestId;
+
+        // Clear the request state. The request id is a unique platform-assigned
+        // value, so the deletes are safe even if the callback has already run
+        // and the mappings are empty.
+        delete requestToMarket[stuckRequestId];
+        delete requestStage[stuckRequestId];
+
+        market.status = MarketStatus.Open;
+        market.parseRequestId = 0;
+        market.inferenceRequestId = 0;
+        market.parseRequestedAt = 0;
+        market.inferenceRequestedAt = 0;
+
+        emit MarketReset(marketId, msg.sender, stage, stuckRequestId);
     }
 }

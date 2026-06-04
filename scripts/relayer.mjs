@@ -44,6 +44,12 @@ const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
 const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';
 const VERBOSE = process.env.RELAYER_VERBOSE !== '0';
 const MAX_ATTEMPTS_PER_MARKET = Number(process.env.RELAYER_MAX_ATTEMPTS ?? 5);
+// viem does not auto-chunk getLogs. The Shannon RPC rejects oversized ranges
+// (typical cap ~1000 blocks), so after a long relayer downtime the fromBlock→toBlock
+// span can be 10K+ blocks and a single getLogs call fails. We chunk in 1000-block
+// windows and only advance the cursor on a fully-successful drain — otherwise the
+// relayer would wedge on every subsequent tick re-trying the same oversized range.
+const LOG_CHUNK_SIZE = 1000n;
 
 if (!process.env.PRIVATE_KEY) {
   console.error('Error: PRIVATE_KEY is not set. Copy .env.example to .env and add your key.');
@@ -87,8 +93,11 @@ const RESOLUTION_FAILED_TOPIC = keccak256(
 const MARKET_RESOLVED_TOPIC = keccak256(
   toBytes('MarketResolved(uint256,bool,string,uint256)'),
 );
+const GENERATION_FAILED_TOPIC = keccak256(
+  toBytes('GenerationFailed(uint256,uint8,string)'),
+);
 
-console.log('[relayer] starting');
+console.log('[relayer] starting (v13)');
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
@@ -112,6 +121,26 @@ function marketKey(marketId) {
   // scan (bigint) hits the same Set entry. Topics are 32-byte ABI-encoded
   // uint256, so BigInt() decodes both shapes the same way.
   return BigInt(marketId).toString();
+}
+
+async function getLogsChunked(address, fromBlock, toBlock) {
+  // Walk [fromBlock, toBlock] in LOG_CHUNK_SIZE windows. Returns the concat
+  // of all successful window results. Throws if any window fails — the caller
+  // decides whether to advance the cursor or retry next tick.
+  const all = [];
+  let cursor = fromBlock;
+  while (cursor <= toBlock) {
+    const end = cursor + LOG_CHUNK_SIZE - 1n;
+    const windowEnd = end > toBlock ? toBlock : end;
+    const chunk = await publicClient.getLogs({
+      address,
+      fromBlock: cursor,
+      toBlock: windowEnd,
+    });
+    all.push(...chunk);
+    cursor = windowEnd + 1n;
+  }
+  return all;
 }
 
 async function readTopUp() {
@@ -167,6 +196,13 @@ async function tryResolveMarket(marketId, alreadySubmitted) {
     );
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     console.log(`[relayer]   confirmed in block ${receipt.blockNumber} (status ${receipt.status})`);
+    if (receipt.status === 'success') {
+      // The market either moved to Resolving (in-flight resolution) or rolled
+      // back to Open on inner failure. Either way the previous attempt budget
+      // is no longer meaningful — clear it so a future stuck-then-reset market
+      // gets a fresh budget.
+      attemptCount.delete(key);
+    }
     return receipt.status === 'success';
   } catch (err) {
     attemptCount.set(key, attempts + 1);
@@ -221,14 +257,16 @@ async function drainFailureEvents(alreadySubmitted) {
   const toBlock = head;
   if (fromBlock > toBlock) return;
 
-  const logs = await publicClient.getLogs({
-    address: CONTRACT,
-    fromBlock,
-    toBlock,
-  }).catch((err) => {
-    console.error('[relayer] getLogs failed:', err.shortMessage ?? err.message);
-    return [];
-  });
+  let logs;
+  try {
+    logs = await getLogsChunked(CONTRACT, fromBlock, toBlock);
+  } catch (err) {
+    // Do NOT advance lastScannedBlock — retrying next tick from the same cursor
+    // is the only way to recover. Without this guard, a single bad RPC range
+    // would wedge the relayer permanently.
+    console.error('[relayer] getLogs failed (will retry next tick):', err.shortMessage ?? err.message);
+    return;
+  }
 
   const failedLogs = logs.filter(
     (l) => l.topics[0]?.toLowerCase() === RESOLUTION_FAILED_TOPIC.toLowerCase(),
@@ -257,17 +295,170 @@ async function logResolvedMarkets() {
   // Cheap side-effect: log when a market actually resolves, so the operator can see the loop closed.
   const head = await publicClient.getBlockNumber();
   const from = head > 50n ? head - 50n : 0n;
-  const logs = await publicClient.getLogs({
-    address: CONTRACT,
-    fromBlock: from,
-    toBlock: head,
-  }).catch(() => []);
+  const logs = await getLogsChunked(CONTRACT, from, head).catch((err) => {
+    console.error('[relayer] getLogs (logResolved) failed:', err.shortMessage ?? err.message);
+    return [];
+  });
   const resolved = logs.filter(
     (l) => l.topics[0]?.toLowerCase() === MARKET_RESOLVED_TOPIC.toLowerCase(),
   );
   for (const log of resolved) {
     const outcome = BigInt(log.topics[2]) === 1n ? 'YES' : 'NO';
     console.log(`[relayer] ✓ market ${log.topics[1]} resolved outcome=${outcome}`);
+  }
+}
+
+async function tryResetStuckMarket(marketId, alreadySubmitted) {
+  const key = marketKey(marketId);
+  if (alreadySubmitted.has(key)) return false;
+
+  alreadySubmitted.add(key);
+  try {
+    const hash = await walletClient.writeContract({
+      address: CONTRACT,
+      abi: ABI,
+      functionName: 'forceResetMarket',
+      args: [marketId],
+    });
+    console.log(
+      `[relayer]   forceResetMarket(${marketId}) → ${hash} (recovered stuck market)`,
+    );
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status === 'success') {
+      // The market is now Open again — clear any per-market attempt count so
+      // the next requestResolution call gets a fresh budget.
+      attemptCount.delete(key);
+    }
+    return receipt.status === 'success';
+  } catch (err) {
+    console.error(
+      `[relayer]   forceResetMarket(${marketId}) failed:`,
+      err.shortMessage ?? err.message,
+    );
+    return false;
+  }
+}
+
+async function tryResetStuckGeneration(requestId, alreadySubmitted) {
+  // Unlike tryResetStuckMarket, the request id (not a market id) is the key —
+  // the generation pipeline has no associated market. Idempotent: the contract
+  // reverts GenerationNotStuck if the request is fresh or already cleared.
+  const key = marketKey(requestId);
+  if (alreadySubmitted.has(key)) return false;
+
+  alreadySubmitted.add(key);
+  try {
+    const hash = await walletClient.writeContract({
+      address: CONTRACT,
+      abi: ABI,
+      functionName: 'forceResetGeneration',
+      args: [requestId],
+    });
+    console.log(
+      `[relayer]   forceResetGeneration(${requestId}) → ${hash} (recovered stuck generation)`,
+    );
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status === 'success') {
+      console.warn(
+        `[relayer]   note: inference deposit for request ${requestId} was forwarded to the platform at request time and is not refundable.`,
+      );
+    }
+    return receipt.status === 'success';
+  } catch (err) {
+    console.error(
+      `[relayer]   forceResetGeneration(${requestId}) failed:`,
+      err.shortMessage ?? err.message,
+    );
+    return false;
+  }
+}
+
+async function scanStuckGenerationRequests(alreadySubmitted) {
+  // Paginate via the contract's own agent surface. MAX_AGENT_SCAN_LIMIT is 50.
+  // The contract walks [cursor, lastGenerationRequestId] so the upper bound is
+  // tight — no wasted iterations over the entire uint256 space.
+  const allIds = [];
+  let cursor = 1n;
+  const limit = 50n;
+  while (true) {
+    const [ids, nextCursor] = await publicClient.readContract({
+      address: CONTRACT,
+      abi: ABI,
+      functionName: 'scanStuckGenerationRequests',
+      args: [cursor, limit],
+    });
+    allIds.push(...ids);
+    if (nextCursor <= cursor) break;
+    cursor = nextCursor;
+  }
+
+  if (allIds.length > 0) {
+    console.log(`[relayer] found ${allIds.length} stuck generation request(s); force-resetting each`);
+  }
+  for (const id of allIds) {
+    if (alreadySubmitted.has(marketKey(id))) continue;
+    await tryResetStuckGeneration(id, alreadySubmitted);
+  }
+}
+
+async function drainGenerationFailureEvents(alreadySubmitted) {
+  // GenerationFailed is *not* auto-retried: a "wrong-selector" or
+  // "no-tool-calls" failure means the proposer's topic was unsolvable by the
+  // agent, which is the proposer's call to fix (and re-submit with a
+  // different topic if they want). The relayer only logs so the operator can
+  // see the failure rate.
+  //
+  // Use a small backward window (like logResolvedMarkets) rather than the
+  // shared lastScannedBlock cursor — generation failures are advisory, not
+  // act-on-able, so we don't need a forward-only scan with cursor advance.
+  // Dedupe with a Set so we don't spam the same warning every 30s.
+  const head = await publicClient.getBlockNumber();
+  const from = head > 50n ? head - 50n : 0n;
+  const logs = await getLogsChunked(CONTRACT, from, head).catch((err) => {
+    console.error('[relayer] getLogs (generation) failed:', err.shortMessage ?? err.message);
+    return [];
+  });
+  const failedLogs = logs.filter(
+    (l) => l.topics[0]?.toLowerCase() === GENERATION_FAILED_TOPIC.toLowerCase(),
+  );
+  for (const log of failedLogs) {
+    if (alreadySubmitted.has(marketKey(log.topics[1]))) continue;
+    // topics[1] is the requestId; the reason is non-indexed so we can't decode
+    // it without a full ABI log decode, but the operator can correlate by id.
+    console.warn(
+      `[relayer] generation request ${log.topics[1]} failed (no auto-retry; see receipt at https://agents.testnet.somnia.network/receipts/${log.topics[1]})`,
+    );
+    alreadySubmitted.add(marketKey(log.topics[1]));
+  }
+}
+
+async function scanStuckMarkets(alreadySubmitted) {
+  const nextId = await publicClient.readContract({
+    address: CONTRACT, abi: ABI, functionName: 'nextMarketId',
+  });
+  if (nextId === 1n) return;
+
+  const allIds = [];
+  let cursor = 1n;
+  const limit = 50n;
+  while (cursor < nextId) {
+    const [ids, nextCursor] = await publicClient.readContract({
+      address: CONTRACT,
+      abi: ABI,
+      functionName: 'scanStuckMarkets',
+      args: [cursor, limit],
+    });
+    allIds.push(...ids);
+    if (nextCursor <= cursor || nextCursor >= nextId) break;
+    cursor = nextCursor;
+  }
+
+  if (allIds.length > 0) {
+    console.log(`[relayer] found ${allIds.length} stuck market(s); force-resetting each`);
+  }
+  for (const id of allIds) {
+    if (alreadySubmitted.has(marketKey(id))) continue;
+    await tryResetStuckMarket(id, alreadySubmitted);
   }
 }
 
@@ -280,7 +471,10 @@ while (!stopping) {
   // the scan isn't re-submitted (the second call would revert with MarketNotOpen).
   const alreadySubmitted = new Set();
   try {
+    await scanStuckMarkets(alreadySubmitted);
+    await scanStuckGenerationRequests(alreadySubmitted);
     await drainFailureEvents(alreadySubmitted);
+    await drainGenerationFailureEvents(alreadySubmitted);
     await scanForRetryableMarkets(alreadySubmitted);
     await logResolvedMarkets();
   } catch (err) {
