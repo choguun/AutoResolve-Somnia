@@ -1431,6 +1431,102 @@ contract AutonomousPredictionMarketTest is Test {
         assertTrue(_contains(manifest, "MAX_DURATION"), "manifest documents the upper bound");
     }
 
+    // --- v17 hardening tests ---
+
+    function testRequestResolutionClearsStaleCacheOnAlreadyRequested() public {
+        // v17 (H1): a successful requestResolution that fails its parse
+        // callback rolls the market back to Open WITH the cache populated
+        // (so a relayer can call retryInferenceFromCache). v16 left the
+        // cache populated in that state, and a fresh requestResolution
+        // would either revert (parseRequestId != 0 → AlreadyRequested) or,
+        // if the parse succeeded again, leave the OLD cache entry behind
+        // after the new parse succeeded — a stale-cache race. v17 clears
+        // the cache up-front on every fresh requestResolution, so the only
+        // cache that survives a successful requestResolution is the one
+        // the new request writes.
+        //
+        // Note: the symmetric cleanups in forceResetMarket and the
+        // parse-failure branch of handleAgentResponse are defensive — the
+        // underfunded-inference path that populates the cache also rolls
+        // the market back to Open, so forceResetMarket reverts with
+        // NotStuck and the parse-failure branch sees an already-empty
+        // cache (cleared by the v17 line in requestResolution). Code
+        // review + the v17 manifest bump cover those sites; we test the
+        // load-bearing requestResolution path here.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+        uint256 inferenceDeposit = market.getInferenceDeposit();
+
+        // First requestResolution + underfunded parse callback → cache
+        // populated, market rolled back to Open.
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+        vm.deal(address(market), 0.1 ether);
+        assertLt(address(market).balance, inferenceDeposit, "underfunded for inference");
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(
+            1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest()
+        );
+        assertTrue(bytes(market.marketParseResult(marketId)).length > 0, "cache populated after underfunded parse");
+        assertEq(uint256(market.getMarket(marketId).status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "rolled back");
+
+        // A second requestResolution must clear the stale cache entry up-front.
+        vm.deal(address(market), 2 ether);
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+        assertEq(
+            bytes(market.marketParseResult(marketId)).length,
+            0,
+            "v17: stale cache cleared on fresh requestResolution"
+        );
+    }
+
+    function testAgentContextExposesParseResultCached() public {
+        // v17 (L1): AgentMarketContext.parseResultCached should be true
+        // when the cache is populated and false otherwise. External
+        // agents use this to decide whether to call retryInferenceFromCache
+        // vs the standard requestResolution path from a single read.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+        uint256 inferenceDeposit = market.getInferenceDeposit();
+
+        // Before any resolution: no cache.
+        AutonomousPredictionMarket.AgentMarketContext memory ctx = market.getAgentMarketContext(marketId);
+        assertFalse(ctx.parseResultCached, "no cache before resolution");
+
+        // Run requestResolution + underfunded-inference path to populate.
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+        vm.deal(address(market), 0.1 ether);
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(
+            1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest()
+        );
+
+        ctx = market.getAgentMarketContext(marketId);
+        assertTrue(ctx.parseResultCached, "cache present after underfunded inference");
+
+        // Drain the cache via retryInferenceFromCache with a funded contract.
+        vm.deal(address(market), inferenceDeposit + 0.1 ether);
+        market.retryInferenceFromCache(marketId);
+        ctx = market.getAgentMarketContext(marketId);
+        assertFalse(ctx.parseResultCached, "cache consumed by retry");
+    }
+
+    function testAgentManifestAdvertisesV17() public {
+        // v17 surfaces: marketParseResult cleanup invariant, parseResultCached
+        // in AgentMarketContext, the manifest version bump.
+        string memory manifest = market.agentManifest();
+        assertTrue(_contains(manifest, "v17"), "manifest advertises v17");
+        assertTrue(
+            _contains(manifest, "parseResultCached") || _contains(manifest, "marketParseResult"),
+            "manifest mentions the v17 cache invariant"
+        );
+    }
+
     function _contains(string memory haystack, string memory needle) internal pure returns (bool) {
         bytes memory h = bytes(haystack);
         bytes memory n = bytes(needle);

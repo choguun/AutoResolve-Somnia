@@ -34,7 +34,7 @@
 // Requires `pnpm install` to have produced lib-web/abi.json (via `pnpm export-abi`).
 
 import { readFile } from 'node:fs/promises';
-import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
@@ -81,9 +81,10 @@ const PARSE_FAILURE_TTL_MS = 60 * 60 * 1000;
 const PARSE_FAILURE_CACHE_LIMIT = 256;
 // Override via env. Default lives under the repo's .gitignore'd `state/`
 // directory so the cache is naturally co-located with `deploy-state.json`.
-const PARSE_FAILURE_CACHE_FILE = process.env.PARSE_FAILURE_CACHE_FILE
-  || join(ROOT, 'state', 'parse-failure-cache.json');
-
+// v17 (M1): the file is namespaced by the relayer EOA — two relayers running
+// on the same host (or sharing a volume) no longer clobber each other's
+// parse-failure cache. The EOA suffix is lowercase so it's filesystem-safe
+// on case-sensitive hosts.
 if (!process.env.PRIVATE_KEY) {
   console.error('Error: PRIVATE_KEY is not set. Copy .env.example to .env and add your key.');
   process.exit(1);
@@ -97,6 +98,13 @@ const CONTRACT = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS;
 const account = privateKeyToAccount(process.env.PRIVATE_KEY.startsWith('0x')
   ? process.env.PRIVATE_KEY
   : `0x${process.env.PRIVATE_KEY}`);
+
+// v17 (M1): derive the cache file path after `account` is set so the EOA
+// address is available for namespacing. Operators can still override with
+// PARSE_FAILURE_CACHE_FILE for unusual layouts (read-only volume, custom
+// test fixture, etc.).
+const PARSE_FAILURE_CACHE_FILE = process.env.PARSE_FAILURE_CACHE_FILE
+  || join(ROOT, 'state', `parse-failure-cache.${account.address.toLowerCase()}.json`);
 
 const abiJson = JSON.parse(await readFile(join(ROOT, 'lib-web/abi.json'), 'utf8'));
 const ABI = abiJson.abi ?? abiJson;
@@ -296,6 +304,17 @@ function isUrlInParseFailureCache(url) {
 }
 
 loadParseFailureCache();
+// v17 (M3): ensure the cache directory exists. A fresh clone may not have
+// `state/` yet (deploy.sh creates it, but operators that run the relayer
+// standalone won't have that step). Without this, the first save (or
+// SIGTERM flush) throws ENOENT and the relayer logs a warning, then loses
+// the LRU on shutdown. Idempotent: mkdirSync with recursive:true is a
+// no-op when the directory already exists.
+try {
+  mkdirSync(dirname(PARSE_FAILURE_CACHE_FILE), { recursive: true });
+} catch (err) {
+  console.warn('[relayer] could not create state directory:', err.message);
+}
 
 async function getLogsChunked(address, fromBlock, toBlock) {
   // Walk [fromBlock, toBlock] in LOG_CHUNK_SIZE windows. Returns the concat
@@ -617,6 +636,49 @@ async function tryRetryInferenceFromCache(marketId, alreadySubmitted) {
   if (retryAt !== undefined && retryAt > Date.now()) {
     if (VERBOSE) {
       console.log(`[relayer]   skipping market ${marketId} (inference-retry backoff until ${new Date(retryAt).toISOString()})`);
+    }
+    return false;
+  }
+  // v17 (M2): pre-check the on-chain cache. retryInferenceFromCache reverts
+  // InferenceNotCached if the parse callback never wrote a result
+  // (e.g. parse callback itself failed — ResolutionFailed was emitted
+  // before the cache was populated). Burning a tx + an attempt-slot on a
+  // guaranteed revert is wasteful, so skip silently and let the operator
+  // investigate the parse failure separately.
+  let hasCachedParse = false;
+  try {
+    const cached = await publicClient.readContract({
+      address: CONTRACT,
+      abi: ABI,
+      functionName: 'marketParseResult',
+      args: [marketId],
+    });
+    // viem decodes `bytes` as a hex string (`'0x'` for empty, `'0xabcd...'`
+    // for non-empty). The on-chain cache is also reachable as a Uint8Array
+    // depending on the contract's ABI mode, so handle both.
+    if (cached instanceof Uint8Array) {
+      hasCachedParse = cached.length > 0;
+    } else if (typeof cached === 'string') {
+      hasCachedParse = cached.length > 2; // '0x' alone = empty
+    } else if (cached && typeof cached === 'object' && 'length' in cached) {
+      hasCachedParse = Number(cached.length) > 0;
+    }
+  } catch (err) {
+    // Fall through — if the pre-check RPC fails, let the contract be the
+    // source of truth (and the attempt counter is unaffected since we
+    // haven't called writeContract yet).
+    if (VERBOSE) {
+      console.warn(
+        `[relayer]   pre-check marketParseResult(${marketId}) failed:`,
+        err.shortMessage ?? err.message,
+      );
+    }
+  }
+  if (!hasCachedParse) {
+    if (VERBOSE) {
+      console.log(
+        `[relayer]   skipping market ${marketId} (no cached parse result — retry would revert InferenceNotCached)`,
+      );
     }
     return false;
   }

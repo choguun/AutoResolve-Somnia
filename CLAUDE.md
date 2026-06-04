@@ -14,9 +14,9 @@ hard constraints that are easy to break.
 - **Hackathon**: Built for the Somnia Agentathon. The repo is a single demo product
   with a hardening pass (v4 contract). Future multi-outcome markets, dispute windows,
   and protocol fees are intentionally out of scope (see `README.md` → Known limitations).
-- **Current deployed contract (v16 — pending deploy; v15 still live)**:
-  `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` is the **v15** address. v16
-  has been built and tested (95/95 Foundry) and is ready for `./scripts/deploy.sh`
+- **Current deployed contract (v17 — pending deploy; v16/v15 still live)**:
+  `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` is the **v15** address. v17
+  has been built and tested (98/98 Foundry) and is ready for `./scripts/deploy.sh`
   to ship a fresh contract address on Somnia Shannon Testnet
   (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
 - **Live app (v15)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
@@ -67,6 +67,22 @@ hard constraints that are easy to break.
   /api/receipt/by-tx endpoint + receipt proxy retries the primary host
   once on 5xx before the alternate-host fallback + AgentReceiptViewer
   keyed on requestId for fresh startedAt + manifest v16 bump).
+  Once `./scripts/deploy.sh` ships the v17 contract, update the
+  `Current deployed contract` line above with the new address and
+  flip the `Live app` line's parenthetical from `(v15)` to `(v17)`.
+  on top of
+  the v17 hardening (requestResolution clears marketParseResult
+  up-front to close the stale-cache race + symmetric defensive cleanups
+  in forceResetMarket and the parse-failure branch + AgentMarketContext
+  adds parseResultCached bool so external agents can decide whether
+  to call retryInferenceFromCache from a single read + receipt proxy
+  reads process.env.NEXT_PUBLIC_CONTRACT_ADDRESS instead of hardcoding
+  the platform address + receipt proxy M4 retry loop catches fetch
+  network errors and treats them as 599 so the alternate-host fallback
+  still runs + relayer per-instance parse-failure cache file keyed by
+  the relayer EOA + mkdirSync state/ on relayer startup + relayer
+  pre-checks marketParseResult(marketId) before retryInferenceFromCache
+  to skip the guaranteed InferenceNotCached revert + manifest v17 bump).
   Once `./scripts/deploy.sh` ships the v16 contract, update the
   `Current deployed contract` line above with the new address and
   flip the `Live app` line's parenthetical from `(v15)` to `(v16)`.

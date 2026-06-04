@@ -14,13 +14,17 @@ export const dynamic = 'force-dynamic';
 // that fronts the same data). The two hosts run on different infra, so a
 // single-host outage shouldn't break the receipt page. We try the alternate
 // host on a 5xx from the primary before returning 502.
+// v17 (H2): accept the same `contractAddress` param as the primary
+// `receiptServiceUrl` so both URLs target the AutoResolve contract (not the
+// platform address).
 function alternateReceiptServiceUrl(
   requestId: string,
-  type: 'minimal' | 'full' = 'minimal'
+  type: 'minimal' | 'full' = 'minimal',
+  contractAddress: string
 ): string {
   const url = new URL(`${AGENTS_EXPLORER}/agent-receipts`);
   url.searchParams.set('requestId', requestId);
-  url.searchParams.set('contractAddress', '0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776');
+  url.searchParams.set('contractAddress', contractAddress);
   url.searchParams.set('type', type);
   return url.toString();
 }
@@ -34,6 +38,20 @@ export async function GET(
   if (!requestId || requestId === '0' || !/^\d+$/.test(requestId)) {
     return NextResponse.json({ error: 'Invalid request ID' }, { status: 400 });
   }
+
+  // v17 (H2): the receipt service filters by originating contract. The
+  // AutoResolve contract (from NEXT_PUBLIC_CONTRACT_ADDRESS) is the one
+  // that called `PLATFORM.createRequest`, so the platform's receipts
+  // for those requests are filed under that address. Falling back to
+  // the platform address keeps the function callable in dev/test where
+  // the env var isn't set, but the production path uses the deployed
+  // contract address. This matches `app/api/receipt/by-tx/[hash]/route.ts`
+  // which also reads NEXT_PUBLIC_CONTRACT_ADDRESS.
+  const SOMNIA_PLATFORM_FALLBACK = '0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776';
+  const contractAddress =
+    (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS && process.env.NEXT_PUBLIC_CONTRACT_ADDRESS !== '0x0000000000000000000000000000000000000000')
+      ? process.env.NEXT_PUBLIC_CONTRACT_ADDRESS
+      : SOMNIA_PLATFORM_FALLBACK;
 
   const fetchUpstream = (url: string) =>
     fetch(url, {
@@ -57,7 +75,20 @@ export async function GET(
     let primary: Response | null = null;
     let primaryStatus = 0;
     for (let attempt = 0; attempt < PRIMARY_MAX_ATTEMPTS; attempt++) {
-      const res = await fetchUpstream(receiptServiceUrl(requestId, 'minimal'));
+      // v17 (L2): wrap the upstream call in try/catch so a thrown error
+      // (DNS resolution failure, connection reset, fetch abort) doesn't
+      // short-circuit the retry loop and skip the alternate-host fallback.
+      // A thrown error is treated as a transient 599 (outside the standard
+      // status range) so the >= 500 branch below still routes to the
+      // fallback host. The 4xx short-circuit logic is unchanged — only the
+      // thrown-error path is new.
+      let res: Response;
+      try {
+        res = await fetchUpstream(receiptServiceUrl(requestId, 'minimal', contractAddress));
+      } catch {
+        primaryStatus = 599;
+        continue;
+      }
       if (res.ok) {
         primary = res;
         primaryStatus = 200;
@@ -89,10 +120,12 @@ export async function GET(
     // v15: on a 5xx from the primary host, try the alternate host before
     // giving up. The platform exposes the same `agent-receipts` endpoint on
     // both hosts, so a single-host outage shouldn't break the receipt page.
+    // v17 (L2): 599 (sentinel for fetch-threw) falls into this branch so the
+    // alternate host still gets a chance on a network error.
     if (primaryStatus >= 500) {
       try {
         const fallback = await fetchUpstream(
-          alternateReceiptServiceUrl(requestId, 'minimal'),
+          alternateReceiptServiceUrl(requestId, 'minimal', contractAddress),
         );
         if (fallback.ok) {
           const data = (await fallback.json()) as RawMinimalReceiptResponse;

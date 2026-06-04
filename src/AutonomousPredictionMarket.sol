@@ -175,6 +175,15 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         /// @dev block.timestamp the inference request was created (0 if none
         /// in flight). Added in v14.
         uint256 inferenceRequestedAt;
+        /// @dev true if `marketParseResult[marketId]` is non-empty (i.e. the
+        /// parse callback succeeded but the inference call was underfunded,
+        /// so a `retryInferenceFromCache` would skip the re-parse). v17
+        /// surface addition — the public mapping is reachable directly, but
+        /// folding the boolean into the context struct lets external agents
+        /// decide whether to invoke the cache-aware retry path from a single
+        /// call. The full string is NOT included to keep the struct compact
+        /// and avoid bloating every getAgentMarketContext response.
+        bool parseResultCached;
     }
 
     mapping(uint256 => Market) public markets;
@@ -350,6 +359,17 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         if (market.status != MarketStatus.Open) revert MarketNotOpen();
         if (block.timestamp < market.endTime) revert MarketStillActive();
         if (market.parseRequestId != 0) revert AlreadyRequested();
+
+        // v17 (H1): clear any stale parse-result cache from a previous
+        // underfunded-inference cycle. v16 only cleared the cache in
+        // retryInferenceFromCache (consume-on-success) and handleInferenceCallback
+        // (on every exit), leaving the door open for a stale-cache race: if a
+        // new requestResolution is attempted and the fresh parse FAILS, the
+        // market rolls back to Open with the OLD cache still populated — at
+        // which point a relayer could call retryInferenceFromCache and use
+        // the stale result instead of re-parsing. Clearing on entry is the
+        // safe invariant: a parse request in flight never has a cache.
+        delete marketParseResult[marketId];
 
         (uint256 totalDeposit,,) = getResolutionFundingStatus();
         uint256 balanceBeforeTopUp = address(this).balance - msg.value;
@@ -575,6 +595,11 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             market.status = MarketStatus.Open;
             market.parseRequestId = 0;
             market.parseRequestedAt = 0;
+            // v17 (H1): clear the parse-result cache on the parse-failure path.
+            // v16 only cleared on the inference-callback path; a parse failure
+            // here would leave the cache intact, so a relayer could call
+            // retryInferenceFromCache and use a stale result.
+            delete marketParseResult[marketId];
             delete requestToMarket[requestId];
             delete requestStage[requestId];
             emit ResolutionFailed(marketId, requestId, RequestStage.ParseWebsite, status);
@@ -945,7 +970,8 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             question: market.question,
             resolutionSource: market.resolutionSource,
             parseRequestedAt: market.parseRequestedAt,
-            inferenceRequestedAt: market.inferenceRequestedAt
+            inferenceRequestedAt: market.inferenceRequestedAt,
+            parseResultCached: bytes(marketParseResult[marketId]).length > 0
         });
     }
 
@@ -1005,7 +1031,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
     function agentManifest() external pure returns (string memory) {
         return string.concat(
-            "AutoResolve agent interface v16. ",
+            "AutoResolve agent interface v17. ",
             "RESOLUTION PIPELINE: scanResolvableMarkets(cursor, limit) to discover expired open markets (returns (uint256[] ids, uint256 nextCursor), max limit 50). ",
             "getAgentMarketContext(marketId) for question, source, funding, request IDs, and per-request timestamps (parseRequestedAt, inferenceRequestedAt - both 0 when no request is in flight, including for Open markets in the inference-rollback window). ",
             "requestResolution(marketId) payable returns (uint256 requestId); the call is gated on market.status==Open, endTime passed, parseRequestId==0; requires topUpNeeded STT. ",
@@ -1024,6 +1050,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             "If the agent returns multiple createMarket tool calls in one response, the contract executes the first and emits DuplicateToolCall(requestId, count) as a non-fatal advisory; the rest are discarded. ",
             "OUTPUT CAPS: agent responses (parse result, inference result) are capped at MAX_AGENT_OUTPUT_LENGTH (1024 bytes). Over-long responses are treated as a parse/inference failure - the market reopens and ResolutionFailed is emitted. The contract never reverts in callbacks. ",
             "CONSTRAINTS: question <= 500 chars, source is an http(s) URL (case-insensitive scheme, leading whitespace allowed) pointing at a SPECIFIC article or page (not a site homepage), duration in [300, 86400] seconds (MAX_DURATION upper bound added in v16 - v1-v15 only enforced the lower bound), bet >= MIN_BET (0.001 STT), topic <= 200 chars. ",
+            "CACHE INVARIANT (v17): marketParseResult[marketId] is cleared on every requestResolution entry (preventing stale-cache races on underfunded-then-re-requested markets), on every forceResetMarket, and on the parse-failure branch of handleAgentResponse. getAgentMarketContext exposes a parseResultCached bool so external agents can decide whether to call retryInferenceFromCache from a single read. ",
             "Agent receipts: https://agents.testnet.somnia.network/receipts/<requestId>."
         );
     }
@@ -1155,6 +1182,11 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         market.inferenceRequestId = 0;
         market.parseRequestedAt = 0;
         market.inferenceRequestedAt = 0;
+        // v17 (H1): clear any stale parse-result cache. v16 missed this site
+        // in its symmetric-cleanup audit — a force-reset followed by a fresh
+        // resolve attempt and a parse failure would leave the cache pointing
+        // at the old scrape, letting retryInferenceFromCache skip the parse.
+        delete marketParseResult[marketId];
 
         emit MarketReset(marketId, msg.sender, stage, stuckRequestId);
     }

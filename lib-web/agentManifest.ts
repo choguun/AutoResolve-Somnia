@@ -14,7 +14,7 @@ const SHANNON_RPC_URL = 'https://dream-rpc.somnia.network';
 export function getAutoResolveAgentManifest() {
   return {
     name: 'AutoResolve',
-    version: 'v16',
+    version: 'v17',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {

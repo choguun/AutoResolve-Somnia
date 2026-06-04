@@ -488,6 +488,11 @@
             "name": "inferenceRequestedAt",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "parseResultCached",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

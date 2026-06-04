@@ -11,13 +11,22 @@ export function receiptExplorerUrl(requestId: string | bigint): string {
   return `${AGENTS_EXPLORER}/receipts/${requestId.toString()}`;
 }
 
+// v17 (H2): the `contractAddress` query param should be the AutoResolve
+// contract that initiated the request, not the Somnia platform address.
+// The platform filters receipts by the originating contract; passing
+// `SOMNIA_PLATFORM_ADDRESS` returns the platform's own receipts (which
+// isn't what the receipt page wants). Default to SOMNIA_PLATFORM_ADDRESS
+// for back-compat with the deprecated client-side `receiptUrl()`, but
+// server-side route handlers should pass the AutoResolve contract
+// address (read from `process.env.NEXT_PUBLIC_CONTRACT_ADDRESS`).
 export function receiptServiceUrl(
   requestId: string | bigint,
-  type: 'minimal' | 'full' = 'minimal'
+  type: 'minimal' | 'full' = 'minimal',
+  contractAddress: string = SOMNIA_PLATFORM_ADDRESS
 ): string {
   const url = new URL(`${AGENTS_RECEIPT_API}/agent-receipts`);
   url.searchParams.set('requestId', requestId.toString());
-  url.searchParams.set('contractAddress', SOMNIA_PLATFORM_ADDRESS);
+  url.searchParams.set('contractAddress', contractAddress);
   url.searchParams.set('type', type);
   return url.toString();
 }
