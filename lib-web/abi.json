@@ -127,6 +127,19 @@
   },
   {
     "type": "function",
+    "name": "MAX_DURATION",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_QUESTION_LENGTH",
     "inputs": [],
     "outputs": [
@@ -1318,6 +1331,25 @@
   },
   {
     "type": "function",
+    "name": "marketParseResult",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "markets",
     "inputs": [
       {
@@ -1507,6 +1539,25 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "retryInferenceFromCache",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "requestId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -1787,6 +1838,31 @@
   },
   {
     "type": "event",
+    "name": "InferenceUnderfunded",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "parseRequestId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "parseResult",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "MarketCreated",
     "inputs": [
       {
@@ -2020,6 +2096,11 @@
   },
   {
     "type": "error",
+    "name": "DurationTooLong",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "DurationTooShort",
     "inputs": []
   },
@@ -2031,6 +2112,11 @@
   {
     "type": "error",
     "name": "GenerationStillPending",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InferenceNotCached",
     "inputs": []
   },
   {

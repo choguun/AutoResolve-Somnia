@@ -34,6 +34,7 @@
 // Requires `pnpm install` to have produced lib-web/abi.json (via `pnpm export-abi`).
 
 import { readFile } from 'node:fs/promises';
+import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
@@ -72,10 +73,16 @@ const MAX_BACKOFF_MS = 30 * 60 * 1000;
 // v15: parse-failure LRU cache. A market whose parse callback fails
 // (ResolutionFailed with stage=ParseWebsite) won't resolve on the next retry
 // either — the same bad URL will fail the same way. The LRU keys on a
-// normalized URL hash and skips re-submission for PARSE_FAILURE_TTL_MS. Cleared
-// when the relayer restarts, same as the attempt counters.
+// normalized URL hash and skips re-submission for PARSE_FAILURE_TTL_MS. v15
+// was in-memory only; v16 (H3) persists the cache to disk via an atomic
+// rename so a relayer restart doesn't re-attempt a URL it already proved
+// unparseable.
 const PARSE_FAILURE_TTL_MS = 60 * 60 * 1000;
 const PARSE_FAILURE_CACHE_LIMIT = 256;
+// Override via env. Default lives under the repo's .gitignore'd `state/`
+// directory so the cache is naturally co-located with `deploy-state.json`.
+const PARSE_FAILURE_CACHE_FILE = process.env.PARSE_FAILURE_CACHE_FILE
+  || join(ROOT, 'state', 'parse-failure-cache.json');
 
 if (!process.env.PRIVATE_KEY) {
   console.error('Error: PRIVATE_KEY is not set. Copy .env.example to .env and add your key.');
@@ -122,8 +129,15 @@ const MARKET_RESOLVED_TOPIC = keccak256(
 const GENERATION_FAILED_TOPIC = keccak256(
   toBytes('GenerationFailed(uint256,uint8,string)'),
 );
+// v16 (M1): emitted by _resolveWithLLMInference when the parse callback
+// succeeded but the inference deposit couldn't be paid. The relayer watches
+// these and routes them to retryInferenceFromCache (instead of the
+// wasteful re-parse path) once the contract is refilled.
+const INFERENCE_UNDERFUNDED_TOPIC = keccak256(
+  toBytes('InferenceUnderfunded(uint256,uint256,string)'),
+);
 
-console.log('[relayer] starting (v15)');
+console.log('[relayer] starting (v16)');
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
@@ -178,6 +192,86 @@ function urlKey(url) {
   return hash.toString();
 }
 
+// v16 (H3): persistence layer for the parse-failure cache. v15's cache was
+// in-memory only, so a relayer restart (deploy, host reboot, OOM) wiped the
+// LRU and the relayer would re-attempt every previously-failed URL. v16
+// writes through to a JSON file with an atomic rename (write to .tmp, then
+// rename — rename is atomic on the same filesystem), so a crash mid-write
+// leaves either the old file or the new file, never a half-written one.
+//
+// The write is debounced: a tick that hits 5 failed URLs in quick succession
+// only triggers one disk write. The single-tick concurrency model means we
+// don't need a write lock — the file rename is the lock.
+function loadParseFailureCache() {
+  if (!existsSync(PARSE_FAILURE_CACHE_FILE)) return;
+  try {
+    const raw = readFileSync(PARSE_FAILURE_CACHE_FILE, 'utf8');
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    const now = Date.now();
+    let loaded = 0;
+    let droppedExpired = 0;
+    for (const [k, v] of Object.entries(data)) {
+      if (typeof v !== 'number') continue;
+      if (v > now) {
+        parseFailureCache.set(k, v);
+        loaded++;
+      } else {
+        droppedExpired++;
+      }
+    }
+    if (loaded > 0) {
+      console.log(
+        `[relayer] loaded ${loaded} parse-failure cache entries from disk` +
+          (droppedExpired > 0 ? ` (dropped ${droppedExpired} expired)` : ''),
+      );
+    }
+  } catch (err) {
+    console.warn(
+      '[relayer] parse-failure cache load failed (starting empty):',
+      err.message,
+    );
+  }
+}
+
+let parseFailureCacheWriteTimer = null;
+let parseFailureCacheWriteDirty = false;
+function scheduleParseFailureCacheSave() {
+  parseFailureCacheWriteDirty = true;
+  if (parseFailureCacheWriteTimer) return;
+  parseFailureCacheWriteTimer = setTimeout(() => {
+    parseFailureCacheWriteTimer = null;
+    if (!parseFailureCacheWriteDirty) return;
+    parseFailureCacheWriteDirty = false;
+    saveParseFailureCache();
+  }, 5000);
+}
+
+function saveParseFailureCache() {
+  try {
+    const data = Object.fromEntries(parseFailureCache);
+    const tmp = PARSE_FAILURE_CACHE_FILE + '.tmp';
+    writeFileSync(tmp, JSON.stringify(data));
+    renameSync(tmp, PARSE_FAILURE_CACHE_FILE);
+  } catch (err) {
+    console.warn('[relayer] parse-failure cache save failed:', err.message);
+  }
+}
+
+// Synchronous flush used in SIGTERM/SIGINT handlers so we don't lose cache
+// state on a graceful shutdown. Async writes in flight are dropped — the
+// next tick (if any) will reschedule.
+function flushParseFailureCacheSync() {
+  if (parseFailureCacheWriteTimer) {
+    clearTimeout(parseFailureCacheWriteTimer);
+    parseFailureCacheWriteTimer = null;
+  }
+  if (parseFailureCacheWriteDirty) {
+    parseFailureCacheWriteDirty = false;
+    saveParseFailureCache();
+  }
+}
+
 function cacheParseFailure(url) {
   if (parseFailureCache.size >= PARSE_FAILURE_CACHE_LIMIT) {
     // FIFO evict the oldest entry. Map iteration is insertion-order, so the
@@ -186,6 +280,7 @@ function cacheParseFailure(url) {
     parseFailureCache.delete(oldest);
   }
   parseFailureCache.set(urlKey(url), Date.now() + PARSE_FAILURE_TTL_MS);
+  scheduleParseFailureCacheSave();
 }
 
 function isUrlInParseFailureCache(url) {
@@ -194,10 +289,13 @@ function isUrlInParseFailureCache(url) {
   if (expiresAt === undefined) return false;
   if (expiresAt < Date.now()) {
     parseFailureCache.delete(k);
+    scheduleParseFailureCacheSave();
     return false;
   }
   return true;
 }
+
+loadParseFailureCache();
 
 async function getLogsChunked(address, fromBlock, toBlock) {
   // Walk [fromBlock, toBlock] in LOG_CHUNK_SIZE windows. Returns the concat
@@ -241,6 +339,23 @@ async function fetchContextForMarket(marketId) {
   }
 }
 
+// v16 (M1): the inference deposit alone (0.3 STT) — retryInferenceFromCache
+// only needs the inference half because the parse result is already cached
+// on-chain in `marketParseResult`.
+async function readInferenceTopUp() {
+  const deposit = await publicClient.readContract({
+    address: CONTRACT,
+    abi: ABI,
+    functionName: 'getInferenceDeposit',
+  });
+  // Compute topUpNeeded vs contract balance locally — the contract's
+  // getGenerationFundingStatus returns the same arithmetic, but the inference
+  // path doesn't have a direct "getInferenceFundingStatus" view, so we mirror
+  // the math here.
+  const balance = await publicClient.getBalance({ address: CONTRACT });
+  return balance >= deposit ? 0n : deposit - balance;
+}
+
 async function tryResolveMarket(marketId, alreadySubmitted) {
   const key = marketKey(marketId);
   if (alreadySubmitted.has(key)) {
@@ -257,18 +372,21 @@ async function tryResolveMarket(marketId, alreadySubmitted) {
     }
     return false;
   }
-  // v15: parse-failure LRU check. Fetch the context to read resolutionSource,
-  // skip the market if its URL is in the cache. The context read is cheap
-  // (single view call) but we only do it for markets that have actually been
-  // seen before (attemptCount > 0) — fresh markets don't need the LRU check.
-  if (attemptCount.has(key)) {
-    const context = await fetchContextForMarket(marketId);
-    if (context && isUrlInParseFailureCache(context.resolutionSource)) {
-      if (VERBOSE) {
-        console.log(`[relayer]   skipping market ${marketId} (URL in parse-failure cache)`);
-      }
-      return false;
+  // v16 (H3): parse-failure LRU check. v15 only ran the check for markets
+  // that had been seen before (attemptCount > 0); v16 always checks. The
+  // v15 gate was a perf shortcut: a fresh market can't possibly be in the
+  // cache, so the check is wasted work. But with v16's persistent LRU
+  // (survives restarts) the gate is wrong — a fresh market that survives a
+  // relayer restart is a fresh market only from the relayer's view; the
+  // chain still has the cached URL from a previous run. The cost of the
+  // always-on check is one extra view call per market, which is dwarfed by
+  // the wasted parse-failure-resubmit cycle it prevents.
+  const context = await fetchContextForMarket(marketId);
+  if (context && isUrlInParseFailureCache(context.resolutionSource)) {
+    if (VERBOSE) {
+      console.log(`[relayer]   skipping market ${marketId} (URL in parse-failure cache)`);
     }
+    return false;
   }
   const attempts = attemptCount.get(key) ?? 0;
   if (attempts >= MAX_ATTEMPTS_PER_MARKET) {
@@ -437,6 +555,126 @@ async function drainFailureEvents(alreadySubmitted) {
     await tryResolveMarket(marketId, alreadySubmitted);
   }
   lastScannedBlock = toBlock;
+}
+
+// v16 (M1): route InferenceUnderfunded events to retryInferenceFromCache.
+// v15 drained the same logs as ResolutionFailed (which re-runs the full
+// requestResolution path — parse + infer), wasting the parse work the
+// contract just did. v16 listens for the dedicated InferenceUnderfunded
+// event and calls the cached-result path that only spends the inference
+// deposit. Uses its own cursor so it's not coupled to drainFailureEvents
+// (the two events are independent — InferenceUnderfunded doesn't fire on
+// the same path as ResolutionFailed, since the contract reverts the latter
+// to Open BEFORE the former can be emitted under v16).
+let lastScannedInferenceBlock = await publicClient.getBlockNumber();
+
+async function drainInferenceUnderfundedEvents(alreadySubmitted) {
+  const head = await publicClient.getBlockNumber();
+  if (head < lastScannedInferenceBlock) {
+    lastScannedInferenceBlock = head - 10n;
+    return;
+  }
+  const fromBlock = lastScannedInferenceBlock + 1n;
+  const toBlock = head;
+  if (fromBlock > toBlock) return;
+
+  let logs;
+  try {
+    logs = await getLogsChunked(CONTRACT, fromBlock, toBlock);
+  } catch (err) {
+    console.error('[relayer] getLogs (inference-underfunded) failed (will retry next tick):', err.shortMessage ?? err.message);
+    return;
+  }
+
+  const underfundedLogs = logs.filter(
+    (l) => l.topics[0]?.toLowerCase() === INFERENCE_UNDERFUNDED_TOPIC.toLowerCase(),
+  );
+  if (underfundedLogs.length === 0) {
+    lastScannedInferenceBlock = toBlock;
+    return;
+  }
+  console.log(
+    `[relayer] saw ${underfundedLogs.length} InferenceUnderfunded event(s) between blocks ` +
+      `${fromBlock}-${toBlock}`,
+  );
+  for (const log of underfundedLogs) {
+    const marketId = log.topics[1];
+    if (alreadySubmitted.has(marketKey(marketId))) continue;
+    await tryRetryInferenceFromCache(marketId, alreadySubmitted);
+  }
+  lastScannedInferenceBlock = toBlock;
+}
+
+async function tryRetryInferenceFromCache(marketId, alreadySubmitted) {
+  const key = marketKey(marketId);
+  if (alreadySubmitted.has(key)) {
+    if (VERBOSE) console.log(`[relayer]   skipping market ${marketId} (already queued this tick)`);
+    return false;
+  }
+  // Same backoff gate as tryResolveMarket — transient RPC failures on the
+  // retry path shouldn't get hammered on every 30s tick.
+  const retryAt = nextRetryAt.get(key);
+  if (retryAt !== undefined && retryAt > Date.now()) {
+    if (VERBOSE) {
+      console.log(`[relayer]   skipping market ${marketId} (inference-retry backoff until ${new Date(retryAt).toISOString()})`);
+    }
+    return false;
+  }
+  const attempts = attemptCount.get(key) ?? 0;
+  if (attempts >= MAX_ATTEMPTS_PER_MARKET) {
+    if (VERBOSE) {
+      console.warn(
+        `[relayer] market ${marketId} reached max attempts (${MAX_ATTEMPTS_PER_MARKET}); ` +
+          `giving up inference-cache retry until relayer restart.`,
+      );
+    }
+    return false;
+  }
+  alreadySubmitted.add(key);
+  try {
+    const topUp = await readInferenceTopUp();
+    if (topUp > maxWei) {
+      console.warn(
+        `[relayer] market ${marketId} needs ${formatEther(topUp)} STT inference top-up, exceeds cap`,
+      );
+      return false;
+    }
+    const hash = await walletClient.writeContract({
+      address: CONTRACT,
+      abi: ABI,
+      functionName: 'retryInferenceFromCache',
+      args: [marketId],
+      value: topUp,
+    });
+    attemptCount.set(key, attempts + 1);
+    const backoff = Math.min(BASE_BACKOFF_MS * 2 ** attempts, MAX_BACKOFF_MS);
+    nextRetryAt.set(key, Date.now() + backoff);
+    if (VERBOSE) {
+      console.log(
+        `[relayer]   submitted retryInferenceFromCache(${marketId}) → ${hash} ` +
+          `(attempt ${attempts + 1}/${MAX_ATTEMPTS_PER_MARKET}, next retry in ${Math.round(backoff / 1000)}s)`,
+      );
+    }
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (VERBOSE) {
+      console.log(`[relayer]   confirmed in block ${receipt.blockNumber} (status ${receipt.status})`);
+    }
+    if (receipt.status === 'success') {
+      attemptCount.delete(key);
+      nextRetryAt.delete(key);
+    }
+    return receipt.status === 'success';
+  } catch (err) {
+    attemptCount.set(key, attempts + 1);
+    const backoff = Math.min(BASE_BACKOFF_MS * 2 ** (attempts + 1), MAX_BACKOFF_MS);
+    nextRetryAt.set(key, Date.now() + backoff);
+    console.error(
+      `[relayer]   retryInferenceFromCache(${marketId}) failed:`,
+      err.shortMessage ?? err.message,
+      `(next retry in ${Math.round(backoff / 1000)}s)`,
+    );
+    return false;
+  }
 }
 
 async function logResolvedMarkets() {
@@ -651,8 +889,16 @@ async function scanStuckMarkets(alreadySubmitted) {
 }
 
 let stopping = false;
-process.on('SIGINT', () => { stopping = true; });
-process.on('SIGTERM', () => { stopping = true; });
+process.on('SIGINT', () => {
+  stopping = true;
+  // v16 (H3): flush the parse-failure cache synchronously on shutdown so
+  // the next relayer boot can pick up where this one left off.
+  flushParseFailureCacheSync();
+});
+process.on('SIGTERM', () => {
+  stopping = true;
+  flushParseFailureCacheSync();
+});
 
 while (!stopping) {
   // One set per tick so a market that appears in both the event stream and
@@ -662,6 +908,7 @@ while (!stopping) {
     await scanStuckMarkets(alreadySubmitted);
     await scanStuckGenerationRequests(alreadySubmitted);
     await drainFailureEvents(alreadySubmitted);
+    await drainInferenceUnderfundedEvents(alreadySubmitted);
     await drainGenerationFailureEvents(alreadySubmitted);
     await scanForRetryableMarkets(alreadySubmitted);
     await logResolvedMarkets();

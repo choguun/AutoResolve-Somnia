@@ -14,14 +14,16 @@ hard constraints that are easy to break.
 - **Hackathon**: Built for the Somnia Agentathon. The repo is a single demo product
   with a hardening pass (v4 contract). Future multi-outcome markets, dispute windows,
   and protocol fees are intentionally out of scope (see `README.md` → Known limitations).
-- **Current deployed contract (v15)**:
-  `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` on Somnia Shannon Testnet
+- **Current deployed contract (v16 — pending deploy; v15 still live)**:
+  `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` is the **v15** address. v16
+  has been built and tested (95/95 Foundry) and is ready for `./scripts/deploy.sh`
+  to ship a fresh contract address on Somnia Shannon Testnet
   (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
-- **Live app**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
+- **Live app (v15)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
   at `/api/agent-manifest` and `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof**: market #1 on the v2 contract resolved `YES` via parse
   receipt `2400421` and inference receipt `2400485`; winnings claimed on-chain
-  (`claimTx: 0x888327…2380`). The v15 deployment is the current live target.
+  (`claimTx: 0x888327…2380`). The v15 deployment is the current live target until v16 deploys.
 - **v7 E2E AI-created→AI-resolved proof**: market #3 on v7
   (`0xd3E946aC…4B69`) was created by the inference agent and resolved YES via
   parse receipt `4254170` and inference receipt `4254291` (tx
@@ -55,6 +57,19 @@ hard constraints that are easy to break.
   relayer SPOF doc + verbose gate (M1+M7) + the
   `agentManifest()` v15 bump with the parseRequestedAt-rollback +
   prompt-template-getter documentation
+  on top of
+  the v16 hardening (MAX_DURATION=86400 upper bound on createMarket +
+  deploy.sh prefund 1→2 STT + persistent parse-failure URL LRU
+  in `state/parse-failure-cache.json` + drop the v15 attemptCount>0
+  LRU gate + retryInferenceFromCache payable function + marketParseResult
+  cache + InferenceUnderfunded event + handleGenerationCallback clears
+  generationRequestedAt on every exit + GenerateMarketForm wires the
+  /api/receipt/by-tx endpoint + receipt proxy retries the primary host
+  once on 5xx before the alternate-host fallback + AgentReceiptViewer
+  keyed on requestId for fresh startedAt + manifest v16 bump).
+  Once `./scripts/deploy.sh` ships the v16 contract, update the
+  `Current deployed contract` line above with the new address and
+  flip the `Live app` line's parenthetical from `(v15)` to `(v16)`.
   on top of
   the v14 hardening (NO-outcome parser fix + AgentMarketContext
   timestamp fields + DuplicateToolCall advisory event + relayer

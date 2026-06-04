@@ -133,6 +133,25 @@ contract AutonomousPredictionMarketTest is Test {
         market.createMarket("Will it rain?", "https://example.com", 60);
     }
 
+    // v16 (H2): MAX_DURATION upper bound. v1-v15 only enforced MIN_DURATION,
+    // so a creator could mint a market with endTime decades in the future —
+    // requestResolution is gated on block.timestamp >= endTime, so the
+    // market would be permanently unresolvable. The relayer's forceResetMarket
+    // only operates on Resolving markets, so it can't recover a fresh Open
+    // market that was just minted with a huge duration.
+    function testCreateMarketRejectsOverlongDuration() public {
+        uint256 maxDuration = market.MAX_DURATION();
+        vm.expectRevert(AutonomousPredictionMarket.DurationTooLong.selector);
+        market.createMarket("Will it rain?", "https://example.com", maxDuration + 1);
+    }
+
+    function testCreateMarketAcceptsMaxDurationBoundary() public {
+        // Boundary: exactly MAX_DURATION must succeed. Off-by-one in the
+        // comparison would lock the upper end of the market space.
+        uint256 marketId = market.createMarket("Will it rain?", "https://example.com", market.MAX_DURATION());
+        assertEq(marketId, 1, "first market id");
+    }
+
     function testCreateMarketRejectsOverlongQuestion() public {
         bytes memory longQuestion = new bytes(market.MAX_QUESTION_LENGTH() + 1);
         for (uint256 i = 0; i < longQuestion.length; i++) {
@@ -1393,13 +1412,23 @@ contract AutonomousPredictionMarketTest is Test {
         // v15 additions: the parseRequestedAt-rollback fix, the prompt-template
         // getter, and the version bump itself.
         string memory manifest = market.agentManifest();
-        assertTrue(_contains(manifest, "v15"), "manifest advertises v15");
+        assertTrue(_contains(manifest, "v15") || _contains(manifest, "v16"), "manifest advertises v15+");
         assertTrue(_contains(manifest, "getGenerationPromptTemplate"), "manifest mentions the prompt-template getter");
         assertTrue(
             _contains(manifest, "parseRequestedAt") &&
                 _contains(manifest, "inference-rollback"),
             "manifest documents the parseRequestedAt rollback fix"
         );
+    }
+
+    function testAgentManifestAdvertisesV16() public {
+        // v16 additions: the MAX_DURATION upper bound, the retryInferenceFromCache
+        // path with the InferenceUnderfunded event, and the version bump itself.
+        string memory manifest = market.agentManifest();
+        assertTrue(_contains(manifest, "v16"), "manifest advertises v16");
+        assertTrue(_contains(manifest, "retryInferenceFromCache"), "manifest mentions retry-from-cache");
+        assertTrue(_contains(manifest, "InferenceUnderfunded"), "manifest mentions the new event");
+        assertTrue(_contains(manifest, "MAX_DURATION"), "manifest documents the upper bound");
     }
 
     function _contains(string memory haystack, string memory needle) internal pure returns (bool) {
@@ -1899,6 +1928,158 @@ contract AutonomousPredictionMarketTest is Test {
         (uint256[] memory ids,) = market.scanAgentCreatedMarkets(0, 10);
         assertEq(ids.length, 1, "only agent-created");
         assertEq(ids[0], 2, "id 2 is the agent-created one");
+    }
+
+    // v16 (L1): handleGenerationCallback must clear generationRequestedAt on
+    // every exit, mirroring the v15 parseRequestedAt cleanup invariant. v15
+    // left the timestamp set, so getAgentMarketContext readers saw a stale
+    // timestamp on a requestId that had already been processed.
+    function testHandleGenerationCallbackClearsGenerationRequestedAt() public {
+        _fundContractForGeneration();
+        uint256 requestId = market.requestMarketGeneration("test topic");
+        assertGt(market.generationRequestedAt(requestId), 0, "timestamp set on submit");
+
+        bytes[] memory tools = new bytes[](1);
+        tools[0] = _createMarketCall("AI market", "https://s", 600);
+
+        vm.prank(PLATFORM);
+        market.handleGenerationCallback(
+            requestId,
+            _generationResponses(_inferToolsResponse("tool_calls", tools)),
+            ResponseStatus.Success,
+            _emptyRequest()
+        );
+
+        // After the callback, generationRequestedAt is cleared. This is the
+        // L1 invariant — same shape as v15's parseRequestedAt cleanup.
+        assertEq(market.generationRequestedAt(requestId), 0, "timestamp cleared on success");
+    }
+
+    function testHandleGenerationCallbackClearsGenerationRequestedAtOnFailure() public {
+        // v16 (L1): the L1 cleanup must also run on the failure branches
+        // (no-success, no-tool-calls, etc.) — not just the success path.
+        _fundContractForGeneration();
+        uint256 requestId = market.requestMarketGeneration("test topic");
+        assertGt(market.generationRequestedAt(requestId), 0, "timestamp set on submit");
+
+        // Trigger the "no-tool-calls" branch (finishReason="stop").
+        bytes[] memory empty = new bytes[](0);
+        vm.prank(PLATFORM);
+        market.handleGenerationCallback(
+            requestId,
+            _generationResponses(_inferToolsResponse("stop", empty)),
+            ResponseStatus.Success,
+            _emptyRequest()
+        );
+
+        assertEq(market.generationRequestedAt(requestId), 0, "timestamp cleared on failure branch");
+    }
+
+    // -----------------------------------------------------------------------
+    // v16 (M1) tests: retryInferenceFromCache
+    // -----------------------------------------------------------------------
+
+    function testRetryInferenceFromCacheHappyPath() public {
+        // v16 (M1): contract has the full resolution deposit at
+        // requestResolution, but the parse callback arrives after a drain
+        // has put the contract below the inference deposit. The contract
+        // caches the parse result, reopens the market, and emits
+        // InferenceUnderfunded. A subsequent retryInferenceFromCache — with
+        // the contract refilled — succeeds without re-running the parse.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+        uint256 inferenceDeposit = market.getInferenceDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        // Drain below the inference deposit so the underfunded branch runs.
+        vm.deal(address(market), 0.1 ether);
+        assertLt(address(market).balance, inferenceDeposit, "underfunded");
+
+        // Expect InferenceUnderfunded with the parse result embedded.
+        vm.expectEmit(true, true, false, true, address(market));
+        emit AutonomousPredictionMarket.InferenceUnderfunded(
+            marketId, 1, "Paris is the capital of France."
+        );
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(
+            1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest()
+        );
+
+        // The cache is populated.
+        assertEq(market.marketParseResult(marketId), "Paris is the capital of France.", "cache populated");
+        // Market is back to Open with no parse request in flight.
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "market open");
+        assertEq(m.parseRequestId, 0, "parse request cleared");
+
+        // Refill the contract for the inference call, then retry from cache.
+        // The relayer would do this; we simulate by dealing STT to the
+        // contract (since the relayer EOA is in the relayer, not the test).
+        vm.deal(address(this), inferenceDeposit);
+        (bool ok,) = address(market).call{value: inferenceDeposit}("");
+        assertTrue(ok, "refund");
+        assertGe(address(market).balance, inferenceDeposit, "refilled");
+
+        // Retry from cache: should create the inference request (id=2) and
+        // roll the market to Resolving. The cache is consumed.
+        uint256 newReqId = market.retryInferenceFromCache(marketId);
+        assertEq(newReqId, 2, "second platform request id");
+        m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Resolving), "resolving");
+        assertEq(m.inferenceRequestId, 2, "inference request set");
+        assertGt(m.inferenceRequestedAt, 0, "inference timestamp set");
+        assertEq(bytes(market.marketParseResult(marketId)).length, 0, "cache consumed");
+    }
+
+    function testRetryInferenceFromCacheRequiresCachedResult() public {
+        // No cache → InferenceNotCached. A relayer that calls this on a
+        // market whose parse hasn't run would just re-trigger the parse,
+        // not skip it.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        // Fast-forward past endTime; the market is now Resolving (parse
+        // request is in flight). Cancel the parse request by warping past
+        // STALE_REQUEST_TIMEOUT and force-resetting, so the market is Open
+        // with no parse request in flight AND no cache. Then retry must
+        // reject with InferenceNotCached.
+        vm.warp(block.timestamp + market.STALE_REQUEST_TIMEOUT() + 1);
+        market.forceResetMarket(marketId);
+
+        vm.deal(address(this), market.getInferenceDeposit());
+        (bool ok,) = address(market).call{value: market.getInferenceDeposit()}("");
+        assertTrue(ok);
+
+        vm.expectRevert(AutonomousPredictionMarket.InferenceNotCached.selector);
+        market.retryInferenceFromCache(marketId);
+    }
+
+    function testRetryInferenceFromCacheRequiresFundedContract() public {
+        // Set up the cache by running the underfunded path.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+        vm.deal(address(market), 0.1 ether); // drain
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(
+            1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest()
+        );
+        assertEq(market.marketParseResult(marketId), "Paris is the capital of France.", "cache populated");
+
+        // Now drain the contract again so retry can't pay.
+        vm.deal(address(market), 0);
+
+        vm.expectRevert(AutonomousPredictionMarket.InsufficientContractBalance.selector);
+        market.retryInferenceFromCache(marketId);
     }
 
     function _assertGenerationFailed(uint256 requestId, string memory expectedReason) internal {

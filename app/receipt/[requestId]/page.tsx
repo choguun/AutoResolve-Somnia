@@ -22,7 +22,7 @@ export default function ReceiptPage({
           Verifiable proof of decentralized validator consensus on Somnia
         </p>
       </div>
-      <AgentReceiptViewer requestId={requestId} />
+      <AgentReceiptViewer key={requestId} requestId={requestId} />
     </div>
   );
 }

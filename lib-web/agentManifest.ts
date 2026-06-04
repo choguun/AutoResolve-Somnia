@@ -14,6 +14,7 @@ const SHANNON_RPC_URL = 'https://dream-rpc.somnia.network';
 export function getAutoResolveAgentManifest() {
   return {
     name: 'AutoResolve',
+    version: 'v16',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
@@ -46,6 +47,13 @@ export function getAutoResolveAgentManifest() {
       discoverStuckGeneration: 'scanStuckGenerationRequests(uint256 cursor,uint256 limit)',
       recover: 'forceResetMarket(uint256 marketId)',
       recoverGeneration: 'forceResetGeneration(uint256 requestId)',
+      // v16: cache-aware inference resume. When the parse callback succeeded
+      // but the contract was underfunded for the inference call, the contract
+      // caches the parse result and emits InferenceUnderfunded. External
+      // agents can call this to skip the re-parse and pay only the inference
+      // deposit. The relayer is the primary caller; this is documented for
+      // other watchtowers.
+      retryFromCache: 'retryInferenceFromCache(uint256 marketId) payable',
       inspect: 'getAgentMarketContext(uint256 marketId)',
       invoke: 'requestResolution(uint256 marketId) payable',
       invokeCreation: 'requestMarketGeneration(string topic) payable returns (uint256 requestId)',

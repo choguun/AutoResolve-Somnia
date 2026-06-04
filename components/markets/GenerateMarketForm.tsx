@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAccount, useConfig, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
 import { readContract } from 'wagmi/actions';
-import { decodeEventLog, keccak256, toBytes } from 'viem';
 import { toast } from 'sonner';
 import {
   CONTRACT_ABI,
@@ -19,7 +18,6 @@ import {
 } from '@/lib-web/transactionToast';
 
 const MAX_TOPIC = 200;
-const GENERATION_REQUESTED_SIG = keccak256(toBytes('GenerationRequested(uint256,string)'));
 
 export function GenerateMarketForm() {
   const { isConnected } = useAccount();
@@ -52,35 +50,51 @@ export function GenerateMarketForm() {
   }, [config, requestId]);
 
   const { writeContract, data: hash, isPending } = useWriteContract();
-  const { isLoading: isConfirming, isSuccess, data: receipt } =
-    useWaitForTransactionReceipt({ hash });
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
+  // v16 (M3): use the dedicated `/api/receipt/by-tx/[hash]` endpoint to look up
+  // the requestId for the confirmed tx, instead of doing a local event log
+  // decode. v15's local decode had two problems: (a) it was duplicated across
+  // the contract (event topic computation), the receipt proxy, and the form —
+  // easy to drift if the event signature changes; (b) it only matched
+  // GenerationRequested, so a multi-call tx (e.g. requestMarketGeneration +
+  // any other platform call) would silently miss the requestId. The new
+  // endpoint decodes all AutoResolve events in one place and returns
+  // `primaryRequestId` (preferring generation over resolution) so the form
+  // gets a stable, server-computed answer.
   useEffect(() => {
-    if (!isSuccess || !receipt) return;
-    for (const log of receipt.logs) {
-      if (log.topics[0]?.toLowerCase() !== GENERATION_REQUESTED_SIG.toLowerCase()) continue;
+    if (!isSuccess || !hash) return;
+    let cancelled = false;
+    (async () => {
       try {
-        const decoded = decodeEventLog({
-          abi: [
-            {
-              type: 'event',
-              name: 'GenerationRequested',
-              inputs: [
-                { type: 'uint256', name: 'requestId', indexed: true },
-                { type: 'string', name: 'topic' },
-              ],
-            },
-          ],
-          data: log.data,
-          topics: log.topics,
-        });
-        setRequestId(BigInt((decoded.args as { requestId: bigint }).requestId));
-        return;
-      } catch {
-        // skip non-matching logs
+        const res = await fetch(`/api/receipt/by-tx/${hash}`, { cache: 'no-store' });
+        if (!res.ok) {
+          // 404 (not yet indexed) or 500 (RPC failure) — both are transient
+          // and the user can refresh; log to console for debugging.
+          console.warn(
+            `[GenerateMarketForm] by-tx lookup failed (status ${res.status}) for ${hash}`,
+          );
+          return;
+        }
+        const data = (await res.json()) as {
+          primaryRequestId?: string;
+          primaryKind?: 'generation' | 'resolution';
+        };
+        if (cancelled) return;
+        if (data.primaryRequestId && data.primaryKind === 'generation') {
+          setRequestId(BigInt(data.primaryRequestId));
+        }
+      } catch (err) {
+        console.warn(
+          `[GenerateMarketForm] by-tx lookup error for ${hash}:`,
+          err instanceof Error ? err.message : err,
+        );
       }
-    }
-  }, [isSuccess, receipt]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isSuccess, hash]);
 
   const { data: agentReceipt } = useAgentReceipt(requestId ?? undefined, 'generation');
 

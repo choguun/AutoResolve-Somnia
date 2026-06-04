@@ -54,3 +54,6 @@ coverage/
 # Misc
 .turbo
 *.local
+
+# Relayer runtime state (v16 parse-failure cache lives here)
+state/
