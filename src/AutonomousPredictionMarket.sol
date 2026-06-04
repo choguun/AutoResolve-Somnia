@@ -50,7 +50,6 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     error BetBelowMinimum();
     error NotStuck();
     error GenerationNotStuck();
-    error AgentOutputTooLong();
     error DurationTooLong();
     error InferenceNotCached();
 
@@ -85,6 +84,11 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     /// short reasoning text the agent might include.
     uint256 public constant MAX_AGENT_OUTPUT_LENGTH = 1024;
     address public constant AGENT_CREATOR_SENTINEL = address(0xA1);
+    /// @dev v18 (L2): selector for `createMarket(string,string,uint256)`,
+    /// precomputed at compile time. handleGenerationCallback matches agent
+    /// tool calls against this selector; using a constant avoids recomputing
+    /// the keccak on every generation callback.
+    bytes4 internal constant CREATE_MARKET_SELECTOR = bytes4(keccak256("createMarket(string,string,uint256)"));
     /// @dev If a market is left in Resolving for longer than this with a pending
     /// parse or inference request, anyone may force-reset it back to Open so the
     /// relayer can re-trigger resolution. Protects against a dropped agent
@@ -579,9 +583,16 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
                 // market reopens and the relayer can retry, rather than
                 // reverting (which would leave the market stuck in
                 // Resolving until STALE_REQUEST_TIMEOUT).
+                // v18 (M1): symmetric-cleanup invariant from v15/v16/v17
+                // also drops the parse-result cache here. The state is
+                // unreachable in current code (overlong check runs before
+                // _resolveWithLLMInference, so the cache can't be populated
+                // in this state), but every exit of every callback should
+                // clear it for future-proofing.
                 market.status = MarketStatus.Open;
                 market.parseRequestId = 0;
                 market.parseRequestedAt = 0;
+                delete marketParseResult[marketId];
                 delete requestToMarket[requestId];
                 delete requestStage[requestId];
                 emit ResolutionFailed(marketId, requestId, RequestStage.ParseWebsite, ResponseStatus.Failed);
@@ -797,13 +808,12 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             return;
         }
 
-        bytes4 createSel = bytes4(keccak256("createMarket(string,string,uint256)"));
         bytes memory callData;
         uint256 createCallCount;
         for (uint256 i = 0; i < pendingToolCalls.length; i++) {
             if (
                 pendingToolCalls[i].length >= 4 &&
-                bytes4(_slice4(pendingToolCalls[i], 0)) == createSel
+                bytes4(_slice4(pendingToolCalls[i], 0)) == CREATE_MARKET_SELECTOR
             ) {
                 if (callData.length == 0) {
                     callData = pendingToolCalls[i];
@@ -847,6 +857,13 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         if (sel == bytes4(keccak256("SourceTooLong()"))) return "SourceTooLong";
         if (sel == bytes4(keccak256("InvalidSourceUrl()"))) return "InvalidSourceUrl";
         if (sel == bytes4(keccak256("DurationTooShort()"))) return "DurationTooShort";
+        // v18 (H2): v16 added MAX_DURATION=86400 which reverts with
+        // DurationTooLong() when the agent picks a duration above the cap.
+        // The v17 decoder didn't have a case for it, so the receipt showed
+        // a generic "create-reverted" reason. The inference agent is the
+        // primary consumer of GenerationFailed.reason and needs the
+        // descriptive string to debug.
+        if (sel == bytes4(keccak256("DurationTooLong()"))) return "DurationTooLong";
         return "create-reverted";
     }
 
@@ -1031,7 +1048,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
     function agentManifest() external pure returns (string memory) {
         return string.concat(
-            "AutoResolve agent interface v17. ",
+            "AutoResolve agent interface v18. ",
             "RESOLUTION PIPELINE: scanResolvableMarkets(cursor, limit) to discover expired open markets (returns (uint256[] ids, uint256 nextCursor), max limit 50). ",
             "getAgentMarketContext(marketId) for question, source, funding, request IDs, and per-request timestamps (parseRequestedAt, inferenceRequestedAt - both 0 when no request is in flight, including for Open markets in the inference-rollback window). ",
             "requestResolution(marketId) payable returns (uint256 requestId); the call is gated on market.status==Open, endTime passed, parseRequestId==0; requires topUpNeeded STT. ",
@@ -1050,7 +1067,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             "If the agent returns multiple createMarket tool calls in one response, the contract executes the first and emits DuplicateToolCall(requestId, count) as a non-fatal advisory; the rest are discarded. ",
             "OUTPUT CAPS: agent responses (parse result, inference result) are capped at MAX_AGENT_OUTPUT_LENGTH (1024 bytes). Over-long responses are treated as a parse/inference failure - the market reopens and ResolutionFailed is emitted. The contract never reverts in callbacks. ",
             "CONSTRAINTS: question <= 500 chars, source is an http(s) URL (case-insensitive scheme, leading whitespace allowed) pointing at a SPECIFIC article or page (not a site homepage), duration in [300, 86400] seconds (MAX_DURATION upper bound added in v16 - v1-v15 only enforced the lower bound), bet >= MIN_BET (0.001 STT), topic <= 200 chars. ",
-            "CACHE INVARIANT (v17): marketParseResult[marketId] is cleared on every requestResolution entry (preventing stale-cache races on underfunded-then-re-requested markets), on every forceResetMarket, and on the parse-failure branch of handleAgentResponse. getAgentMarketContext exposes a parseResultCached bool so external agents can decide whether to call retryInferenceFromCache from a single read. ",
+            "CACHE INVARIANT (v17): marketParseResult[marketId] is cleared on every requestResolution entry (preventing stale-cache races on underfunded-then-re-requested markets), on every forceResetMarket, on the parse-failure branch of handleAgentResponse, and (v18 M1) on the overlong-output branch. The public getter marketParseResult(uint256 marketId) returns the full cached string for agents that want the raw scrape without going through the context struct; the empty string means no cache. getAgentMarketContext exposes a parseResultCached bool so external agents can decide whether to call retryInferenceFromCache from a single read. ",
             "Agent receipts: https://agents.testnet.somnia.network/receipts/<requestId>."
         );
     }

@@ -1245,6 +1245,33 @@ contract AutonomousPredictionMarketTest is Test {
         assertTrue(found, "ResolutionFailed(stage=ParseWebsite) emitted");
     }
 
+    // v18 (M1): The overlong-output branch in handleAgentResponse was missing
+    // `delete marketParseResult[marketId]`. If a future `retryInferenceFromCache`
+    // was called on the same market, the relayer would skip the re-parse using
+    // a stale (or never-written) cache string, leading to a guaranteed
+    // InferenceNotCached revert. The cache must be cleared symmetrically in
+    // every branch that returns the market to Open, matching the v15/v17
+    // parseRequestedAt + marketParseResult cleanup pattern.
+    function testParseOverlongBranchClearsParseResultCache() public {
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        bytes memory tooLong = new bytes(market.MAX_AGENT_OUTPUT_LENGTH() + 1);
+        for (uint256 i = 0; i < tooLong.length; i++) tooLong[i] = "x";
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, _successfulResponse(string(tooLong)), ResponseStatus.Success, _emptyRequest());
+
+        // v18 invariant: the cache must be empty after any failure path that
+        // returns the market to Open. An overlong parse output is one of
+        // those paths — the v17 cleanup missed it.
+        assertEq(bytes(market.marketParseResult(marketId)).length, 0, "marketParseResult cleared on overlong parse");
+    }
+
     function testInferenceCallbackReopensMarketOnOverlongOutput() public {
         // Same shape as the parse-overlong test but on the inference callback.
         // An over-long inference result must also be treated as a failure, not
@@ -1937,6 +1964,29 @@ contract AutonomousPredictionMarketTest is Test {
 
         assertEq(market.nextMarketId(), 1, "no market created");
         _assertGenerationFailed(requestId, "InvalidSourceUrl");
+    }
+
+    // v18 (H2): DurationTooLong was missing from _describeCreateRevert, so the
+    // generation pipeline emitted the generic "create-reverted" reason for an
+    // overlong duration. That masked a real misconfiguration (a prompt that
+    // asks the agent to set 86401+ seconds) from the operator. Add a
+    // regression test that pins the decoded reason to the inner error name.
+    function testRequestMarketGenerationDecodesInnerDurationTooLong() public {
+        _fundContractForGeneration();
+        bytes[] memory tools = new bytes[](1);
+        // duration > MAX_DURATION (86400) -> DurationTooLong.
+        tools[0] = _createMarketCall("Q?", "https://s", market.MAX_DURATION() + 1);
+        bytes memory inferResult = _inferToolsResponse("tool_calls", tools);
+
+        vm.recordLogs();
+        uint256 requestId = market.requestMarketGeneration("Some topic");
+        vm.prank(PLATFORM);
+        market.handleGenerationCallback(
+            requestId, _generationResponses(inferResult), ResponseStatus.Success, _emptyRequest()
+        );
+
+        assertEq(market.nextMarketId(), 1, "no market created");
+        _assertGenerationFailed(requestId, "DurationTooLong");
     }
 
     function testRequestMarketGenerationRefundsOverfunding() public {

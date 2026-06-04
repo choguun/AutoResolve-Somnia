@@ -2086,11 +2086,6 @@
   },
   {
     "type": "error",
-    "name": "AgentOutputTooLong",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "AlreadyRequested",
     "inputs": []
   },

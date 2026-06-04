@@ -14,12 +14,12 @@ hard constraints that are easy to break.
 - **Hackathon**: Built for the Somnia Agentathon. The repo is a single demo product
   with a hardening pass (v4 contract). Future multi-outcome markets, dispute windows,
   and protocol fees are intentionally out of scope (see `README.md` → Known limitations).
-- **Current deployed contract (v17 — pending deploy; v16/v15 still live)**:
-  `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` is the **v15** address. v17
-  has been built and tested (98/98 Foundry) and is ready for `./scripts/deploy.sh`
+- **Current deployed contract (v18 — pending deploy; v17/v16/v15 still live)**:
+  `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` is the **v15** address. v18
+  has been built and tested (100/100 Foundry) and is ready for `./scripts/deploy.sh`
   to ship a fresh contract address on Somnia Shannon Testnet
   (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
-- **Live app (v15)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
+- **Live app (v18)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
   at `/api/agent-manifest` and `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof**: market #1 on the v2 contract resolved `YES` via parse
   receipt `2400421` and inference receipt `2400485`; winnings claimed on-chain
@@ -86,6 +86,21 @@ hard constraints that are easy to break.
   Once `./scripts/deploy.sh` ships the v16 contract, update the
   `Current deployed contract` line above with the new address and
   flip the `Live app` line's parenthetical from `(v15)` to `(v16)`.
+  on top of
+  the v18 hardening (relayer string-length pre-check for
+  marketParseResult since viem decodes the `string` return as a plain
+  JS string not hex-encoded bytes + _describeCreateRevert decodes
+  DurationTooLong for the most likely over-budget generation path +
+  handleAgentResponse overlong-output branch clears marketParseResult
+  to close the symmetric-cleanup invariant gap + dead AgentOutputTooLong
+  custom error removed + AgentReceiptViewer surfaces the `_source: 'fallback'`
+  field set by the receipt proxy alternate-host fallback + CREATE_MARKET_SELECTOR
+  constant extracted from the per-callback keccak256 + manifest v18 bump
+  documenting the overlong-branch cleanup and the public
+  marketParseResult(uint256 marketId) getter). Once `./scripts/deploy.sh`
+  ships the v17 contract, update the `Current deployed contract` line
+  above with the new address and flip the `Live app` line's parenthetical
+  from `(v15)` to `(v17)`.
   on top of
   the v14 hardening (NO-outcome parser fix + AgentMarketContext
   timestamp fields + DuplicateToolCall advisory event + relayer

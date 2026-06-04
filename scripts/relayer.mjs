@@ -645,6 +645,12 @@ async function tryRetryInferenceFromCache(marketId, alreadySubmitted) {
   // before the cache was populated). Burning a tx + an attempt-slot on a
   // guaranteed revert is wasteful, so skip silently and let the operator
   // investigate the parse failure separately.
+  // v18 (H1): the contract getter returns a plain JS `string` (the storage
+  // is `mapping(uint256 => string) public marketParseResult`). The v17
+  // check used `length > 2` which was wrong for the `string` return —
+  // empty is `''` (length 0), not `'0x'` (length 2). A 1-2 char cache
+  // (rare in practice — parse results are typically 50-500 chars) would
+  // have been incorrectly treated as empty.
   let hasCachedParse = false;
   try {
     const cached = await publicClient.readContract({
@@ -653,13 +659,10 @@ async function tryRetryInferenceFromCache(marketId, alreadySubmitted) {
       functionName: 'marketParseResult',
       args: [marketId],
     });
-    // viem decodes `bytes` as a hex string (`'0x'` for empty, `'0xabcd...'`
-    // for non-empty). The on-chain cache is also reachable as a Uint8Array
-    // depending on the contract's ABI mode, so handle both.
-    if (cached instanceof Uint8Array) {
+    if (typeof cached === 'string') {
       hasCachedParse = cached.length > 0;
-    } else if (typeof cached === 'string') {
-      hasCachedParse = cached.length > 2; // '0x' alone = empty
+    } else if (cached instanceof Uint8Array) {
+      hasCachedParse = cached.length > 0;
     } else if (cached && typeof cached === 'object' && 'length' in cached) {
       hasCachedParse = Number(cached.length) > 0;
     }

@@ -231,6 +231,17 @@ export function AgentReceiptViewer({
             </Link>
           </Tooltip>
           <StatusBadge status={status} />
+          {receipt._source === 'fallback' && (
+            <Tooltip content="Primary host returned 5xx; this data was served by the alternate agent host.">
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-1 text-xs font-medium text-cyan-200"
+                aria-label="Served via fallback host"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-cyan-300" aria-hidden="true" />
+                via fallback
+              </span>
+            </Tooltip>
+          )}
         </div>
       </div>
 
