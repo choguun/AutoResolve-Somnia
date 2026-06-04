@@ -142,6 +142,13 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         uint256 topUpNeeded;
         string question;
         string resolutionSource;
+        /// @dev block.timestamp the parse request was created (0 if none in
+        /// flight). Lets agents compute staleness without a second markets()
+        /// read. Added in v14.
+        uint256 parseRequestedAt;
+        /// @dev block.timestamp the inference request was created (0 if none
+        /// in flight). Added in v14.
+        uint256 inferenceRequestedAt;
     }
 
     mapping(uint256 => Market) public markets;
@@ -182,6 +189,14 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     );
     event MarketReset(uint256 indexed marketId, address indexed resetBy, RequestStage stage, uint256 stuckRequestId);
     event GenerationReset(uint256 indexed requestId, address indexed resetBy);
+    /// @dev Emitted by handleGenerationCallback when the agent returns more
+    /// than one matching createMarket tool call. The contract uses the first
+    /// and silently discards the rest (the v13 callback policy is to never
+    /// revert in a callback), but the operator can use this event to track
+    /// agents that are misbehaving. Today the only on-chain tool is
+    /// createMarket, so duplicates only mean "extra wasted tokens"; a future
+    /// release that exposes additional tools should re-evaluate the policy.
+    event DuplicateToolCall(uint256 indexed requestId, uint256 toolCallCount);
 
     constructor() {
         nextMarketId = 1;
@@ -600,18 +615,27 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
         bytes4 createSel = bytes4(keccak256("createMarket(string,string,uint256)"));
         bytes memory callData;
+        uint256 createCallCount;
         for (uint256 i = 0; i < pendingToolCalls.length; i++) {
             if (
                 pendingToolCalls[i].length >= 4 &&
                 bytes4(_slice4(pendingToolCalls[i], 0)) == createSel
             ) {
-                callData = pendingToolCalls[i];
-                break;
+                if (callData.length == 0) {
+                    callData = pendingToolCalls[i];
+                }
+                createCallCount++;
             }
         }
         if (callData.length == 0) {
             emit GenerationFailed(requestId, status, "wrong-selector");
             return;
+        }
+        if (createCallCount > 1) {
+            // Agent returned multiple createMarket calls — we only execute the
+            // first. Emit an advisory so operators can spot misbehaving agents
+            // without auto-retrying. Graceful (no revert) per v13 callback policy.
+            emit DuplicateToolCall(requestId, createCallCount);
         }
 
         (bool ok, bytes memory ret) = address(this).call(callData);
@@ -650,15 +674,21 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     }
 
     function _parseYesNo(string memory result) private pure returns (bool valid, bool outcome) {
+        // The inference call sets allowedValues=["YES","NO"], so the platform's
+        // constrained classifier returns one of those literals: 3 bytes for YES,
+        // 2 bytes for NO. Anything else (YEAH, NOPE, MAYBE, empty, leading
+        // whitespace) reopens the market via the invalid-output path. v13's
+        // _parseYesNo regressed the NO branch to match "NOO" (also length-3),
+        // which silently rejected every legitimate NO outcome — see v14 fix.
         bytes memory resultBytes = bytes(result);
-        if (resultBytes.length == 3) {
-            if (
-                resultBytes[0] == "Y" && resultBytes[1] == "E" && resultBytes[2] == "S"
-            ) return (true, true);
-            if (
-                resultBytes[0] == "N" && resultBytes[1] == "O" && resultBytes[2] == "O"
-            ) return (true, false);
-        }
+        if (
+            resultBytes.length == 3
+                && resultBytes[0] == "Y" && resultBytes[1] == "E" && resultBytes[2] == "S"
+        ) return (true, true);
+        if (
+            resultBytes.length == 2
+                && resultBytes[0] == "N" && resultBytes[1] == "O"
+        ) return (true, false);
         return (false, false);
     }
 
@@ -745,7 +775,9 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             contractBalance: contractBalance,
             topUpNeeded: topUpNeeded,
             question: market.question,
-            resolutionSource: market.resolutionSource
+            resolutionSource: market.resolutionSource,
+            parseRequestedAt: market.parseRequestedAt,
+            inferenceRequestedAt: market.inferenceRequestedAt
         });
     }
 
@@ -805,13 +837,13 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
     function agentManifest() external pure returns (string memory) {
         return string.concat(
-            "AutoResolve agent interface v13. ",
+            "AutoResolve agent interface v14. ",
             "RESOLUTION PIPELINE: scanResolvableMarkets(cursor, limit) to discover expired open markets (returns (uint256[] ids, uint256 nextCursor), max limit 50). ",
-            "getAgentMarketContext(marketId) for question, source, funding, and request IDs. ",
+            "getAgentMarketContext(marketId) for question, source, funding, request IDs, and per-request timestamps (parseRequestedAt, inferenceRequestedAt). ",
             "requestResolution(marketId) payable returns (uint256 requestId); the call is gated on market.status==Open, endTime passed, parseRequestId==0; requires topUpNeeded STT. ",
             "On success the parse request is created; the platform calls back asynchronously. ",
             "If parse succeeds but the contract is underfunded for the inference call, the market rolls back to Open and emits ResolutionFailed(stage=Inference) so the relayer retries once the contract is refilled. ",
-            "Inference output must be exactly 3-byte YES or NO (not YEAH, Yessir, etc). ",
+            "Inference output must be exactly YES (3 bytes) or NO (2 bytes); anything else (YEAH, NOPE, MAYBE, whitespace) reopens the market. v13 had a parser bug that silently rejected every NO outcome by matching NOO instead of NO; v14 fixes it. ",
             "STUCK-MARKET RECOVERY: scanStuckMarkets(cursor, limit) lists markets stuck in Resolving whose parse or inference request is older than STALE_REQUEST_TIMEOUT (30 minutes); forceResetMarket(marketId) reverts such a market back to Open so the relayer can re-trigger resolution. ",
             "forceResetMarket emits MarketReset(uint256 indexed marketId, address indexed resetBy, RequestStage stage, uint256 stuckRequestId) so external agents tracking platform request ids can correlate the reset with their own bookkeeping; the bundled relayer keys its own retry state by marketId and does not consume stuckRequestId. ",
             "STUCK-GENERATION RECOVERY: scanStuckGenerationRequests(cursor, limit) lists in-flight generation requests older than STALE_REQUEST_TIMEOUT (30 minutes); forceResetGeneration(requestId) clears the requestToTopic, generationProposer, and requestStage mappings so the user's inference deposit is the only lost value (the deposit was forwarded to the platform at request time and is not refundable). ",
@@ -819,6 +851,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             "CREATION PIPELINE: requestMarketGeneration(string topic) payable returns (uint256 requestId); triggers LLM Inference inferToolsChat that yields createMarket(question, source, durationSeconds) calldata. ",
             "getGenerationFundingStatus() returns the inference deposit and topUpNeeded. ",
             "scanAgentCreatedMarkets(cursor, limit) lists markets whose creator == AGENT_CREATOR_SENTINEL (0xA1). ",
+            "If the agent returns multiple createMarket tool calls in one response, the contract executes the first and emits DuplicateToolCall(requestId, count) as a non-fatal advisory; the rest are discarded. ",
             "OUTPUT CAPS: agent responses (parse result, inference result) are capped at MAX_AGENT_OUTPUT_LENGTH (1024 bytes). Over-long responses are treated as a parse/inference failure - the market reopens and ResolutionFailed is emitted. The contract never reverts in callbacks. ",
             "CONSTRAINTS: question <= 500 chars, source is an http(s) URL (case-insensitive scheme, leading whitespace allowed) pointing at a SPECIFIC article or page (not a site homepage), duration in [300, 86400] seconds, bet >= MIN_BET (0.001 STT), topic <= 200 chars. ",
             "Agent receipts: https://agents.testnet.somnia.network/receipts/<requestId>."
@@ -846,6 +879,10 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     }
 
     function _isGenerationStuck(uint256 requestId) private view returns (bool) {
+        // BOTH predicates are required: requestStage gates fresh + already-cleared
+        // requestIds (delete sets the enum back to None=0), and generationRequestedAt
+        // gates the staleness window. A request id outside [1, lastGenerationRequestId]
+        // can never satisfy either predicate, so the scan upper bound is sound.
         if (requestStage[requestId] != RequestStage.GenerateMarket) return false;
         uint256 startedAt = generationRequestedAt[requestId];
         if (startedAt == 0) return false;

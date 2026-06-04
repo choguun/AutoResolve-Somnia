@@ -97,7 +97,7 @@ const GENERATION_FAILED_TOPIC = keccak256(
   toBytes('GenerationFailed(uint256,uint8,string)'),
 );
 
-console.log('[relayer] starting (v13)');
+console.log('[relayer] starting (v14)');
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
@@ -114,6 +114,14 @@ console.log(`  resume from block: ${lastScannedBlock}\n`);
 // can see the "needs refill" log and either refill the contract or restart the
 // relayer after doing so.
 const attemptCount = new Map();
+// v14: parallel cap for forceResetMarket / forceResetGeneration. A reset that
+// keeps failing 3 ticks in a row signals something structurally wrong (RPC
+// rejecting writes, contract reverting on a fresh-enough check, etc.) and we
+// should stop hammering the chain. Reset on relayer restart, same as
+// attemptCount. Keyed with a "reset:" prefix so it never collides with the
+// resolution budget for the same market id.
+const RESET_MAX_ATTEMPTS = 3;
+const resetAttemptCount = new Map();
 const maxWei = parseEther(MAX_TOPUP_STT);
 
 function marketKey(marketId) {
@@ -312,6 +320,22 @@ async function tryResetStuckMarket(marketId, alreadySubmitted) {
   const key = marketKey(marketId);
   if (alreadySubmitted.has(key)) return false;
 
+  // v14: cap reset attempts per market. A reset that fails 3 ticks in a row
+  // means either the RPC keeps rejecting writes or the contract reverts on the
+  // staleness check — neither is helped by hammering. Restart the relayer once
+  // the underlying issue is fixed to clear the budget.
+  const resetKey = `reset:${key}`;
+  const resetAttempts = resetAttemptCount.get(resetKey) ?? 0;
+  if (resetAttempts >= RESET_MAX_ATTEMPTS) {
+    if (VERBOSE) {
+      console.warn(
+        `[relayer] forceResetMarket(${marketId}) reached max attempts ` +
+          `(${RESET_MAX_ATTEMPTS}); giving up until relayer restart.`,
+      );
+    }
+    return false;
+  }
+
   alreadySubmitted.add(key);
   try {
     const hash = await walletClient.writeContract({
@@ -320,17 +344,22 @@ async function tryResetStuckMarket(marketId, alreadySubmitted) {
       functionName: 'forceResetMarket',
       args: [marketId],
     });
+    resetAttemptCount.set(resetKey, resetAttempts + 1);
     console.log(
-      `[relayer]   forceResetMarket(${marketId}) → ${hash} (recovered stuck market)`,
+      `[relayer]   forceResetMarket(${marketId}) → ${hash} (recovered stuck market, ` +
+        `attempt ${resetAttempts + 1}/${RESET_MAX_ATTEMPTS})`,
     );
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status === 'success') {
       // The market is now Open again — clear any per-market attempt count so
-      // the next requestResolution call gets a fresh budget.
+      // the next requestResolution call gets a fresh budget. Also clear the
+      // reset budget since the recovery worked.
       attemptCount.delete(key);
+      resetAttemptCount.delete(resetKey);
     }
     return receipt.status === 'success';
   } catch (err) {
+    resetAttemptCount.set(resetKey, resetAttempts + 1);
     console.error(
       `[relayer]   forceResetMarket(${marketId}) failed:`,
       err.shortMessage ?? err.message,
@@ -346,6 +375,21 @@ async function tryResetStuckGeneration(requestId, alreadySubmitted) {
   const key = marketKey(requestId);
   if (alreadySubmitted.has(key)) return false;
 
+  // v14: same per-request reset cap as tryResetStuckMarket. Generation resets
+  // are advisory (no associated market to unblock for users); if they keep
+  // failing the operator should investigate rather than the relayer retrying.
+  const resetKey = `resetgen:${key}`;
+  const resetAttempts = resetAttemptCount.get(resetKey) ?? 0;
+  if (resetAttempts >= RESET_MAX_ATTEMPTS) {
+    if (VERBOSE) {
+      console.warn(
+        `[relayer] forceResetGeneration(${requestId}) reached max attempts ` +
+          `(${RESET_MAX_ATTEMPTS}); giving up until relayer restart.`,
+      );
+    }
+    return false;
+  }
+
   alreadySubmitted.add(key);
   try {
     const hash = await walletClient.writeContract({
@@ -354,17 +398,21 @@ async function tryResetStuckGeneration(requestId, alreadySubmitted) {
       functionName: 'forceResetGeneration',
       args: [requestId],
     });
+    resetAttemptCount.set(resetKey, resetAttempts + 1);
     console.log(
-      `[relayer]   forceResetGeneration(${requestId}) → ${hash} (recovered stuck generation)`,
+      `[relayer]   forceResetGeneration(${requestId}) → ${hash} (recovered stuck generation, ` +
+        `attempt ${resetAttempts + 1}/${RESET_MAX_ATTEMPTS})`,
     );
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status === 'success') {
       console.warn(
         `[relayer]   note: inference deposit for request ${requestId} was forwarded to the platform at request time and is not refundable.`,
       );
+      resetAttemptCount.delete(resetKey);
     }
     return receipt.status === 'success';
   } catch (err) {
+    resetAttemptCount.set(resetKey, resetAttempts + 1);
     console.error(
       `[relayer]   forceResetGeneration(${requestId}) failed:`,
       err.shortMessage ?? err.message,

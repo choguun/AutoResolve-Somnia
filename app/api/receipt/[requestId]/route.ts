@@ -35,12 +35,17 @@ export async function GET(
       // request than mask a transient outage.
       if (upstream.status === 404) {
         return NextResponse.json(
-          { error: 'Receipt not found', requestId },
+          { error: 'Receipt not found', requestId, upstreamStatus: 404 },
           { status: 404, headers: { 'Cache-Control': 'public, max-age=10' } }
         );
       }
+      // v14: pass the upstream status through so the client can distinguish
+      // "platform is throttling us" (429) from "platform is down" (502/503)
+      // from "our gateway broke" (a real 500). The UI uses this to pick the
+      // right copy ("retrying…" vs "platform appears to be down"), and the
+      // hook uses it to decide whether to back off.
       return NextResponse.json(
-        { error: 'Receipt upstream unavailable', requestId },
+        { error: 'Receipt upstream unavailable', requestId, upstreamStatus: upstream.status },
         { status: 502 }
       );
     }

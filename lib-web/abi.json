@@ -439,6 +439,16 @@
             "name": "resolutionSource",
             "type": "string",
             "internalType": "string"
+          },
+          {
+            "name": "parseRequestedAt",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "inferenceRequestedAt",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -1642,6 +1652,25 @@
       },
       {
         "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DuplicateToolCall",
+    "inputs": [
+      {
+        "name": "requestId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "toolCallCount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

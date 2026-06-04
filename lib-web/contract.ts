@@ -35,6 +35,8 @@ export type Market = {
   parseRequestId: bigint;
   inferenceRequestId: bigint;
   resolvedAt: bigint;
+  parseRequestedAt: bigint;
+  inferenceRequestedAt: bigint;
 };
 
 export type Bet = {

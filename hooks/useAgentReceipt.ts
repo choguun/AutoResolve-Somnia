@@ -9,7 +9,14 @@ import { type AgentReceipt, receiptIsComplete } from '@/lib-web/agents';
 // than expected" UI so the user knows it's not a broken spinner.
 const MAX_POLL_MS = 5 * 60 * 1000;
 
-export function useAgentReceipt(requestId?: string | bigint) {
+// v14: callers identify which pipeline produced the receipt so the UI can
+// pick the right copy when a receipt is slow or missing. Generation receipts
+// are observability-only (the deposit was forwarded and isn't refundable —
+// see [[auto-resolve-v13-stuck-gen-and-cap]]), while resolution receipts gate
+// real on-chain payouts, so the messaging differs.
+export type ReceiptKind = 'resolution' | 'generation';
+
+export function useAgentReceipt(requestId?: string | bigint, kind: ReceiptKind = 'resolution') {
   const id = requestId?.toString();
   const [startedAt] = useState(() => Date.now());
 
@@ -19,7 +26,23 @@ export function useAgentReceipt(requestId?: string | bigint) {
     queryFn: async () => {
       const response = await fetch(`/api/receipt/${id}`);
       if (!response.ok) {
-        throw new Error('Failed to fetch receipt');
+        // v14: pass the upstream status through so the UI can show
+        // "platform is throttling" vs "platform is down" vs "stale link".
+        let upstreamStatus: number | undefined;
+        try {
+          const body = (await response.json()) as { upstreamStatus?: number };
+          upstreamStatus = typeof body?.upstreamStatus === 'number' ? body.upstreamStatus : undefined;
+        } catch {
+          upstreamStatus = undefined;
+        }
+        const err = new Error(
+          response.status === 404
+            ? 'Receipt not found yet'
+            : 'Receipt upstream unavailable'
+        ) as Error & { status?: number; upstreamStatus?: number };
+        err.status = response.status;
+        err.upstreamStatus = upstreamStatus;
+        throw err;
       }
       return response.json();
     },
@@ -62,5 +85,5 @@ export function useAgentReceipt(requestId?: string | bigint) {
     return () => clearTimeout(handle);
   }, [query.data, query.error, startedAt]);
 
-  return { ...query, isLongRunning };
+  return { ...query, isLongRunning, kind };
 }

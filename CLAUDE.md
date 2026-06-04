@@ -14,29 +14,56 @@ hard constraints that are easy to break.
 - **Hackathon**: Built for the Somnia Agentathon. The repo is a single demo product
   with a hardening pass (v4 contract). Future multi-outcome markets, dispute windows,
   and protocol fees are intentionally out of scope (see `README.md` → Known limitations).
-- **Current deployed contract (v13)**:
-  `0x37822751E5ab0688344135797ee8FFCFa76443fB` on Somnia Shannon Testnet
+- **Current deployed contract (v14)**:
+  `0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9` on Somnia Shannon Testnet
   (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
 - **Live app**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
   at `/api/agent-manifest` and `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof**: market #1 on the v2 contract resolved `YES` via parse
   receipt `2400421` and inference receipt `2400485`; winnings claimed on-chain
-  (`claimTx: 0x888327…2380`). The v13 deployment is the current live target.
+  (`claimTx: 0x888327…2380`). The v14 deployment is the current live target.
 - **v7 E2E AI-created→AI-resolved proof**: market #3 on v7
   (`0xd3E946aC…4B69`) was created by the inference agent and resolved YES via
   parse receipt `4254170` and inference receipt `4254291` (tx
-  `0x362daa6f…b5143`). v13 inherits the same prompt + pipeline; the address
-  changed because v13 added the
-  stuck-generation recovery path (forceResetGeneration +
-  scanStuckGenerationRequests + GenerationReset event +
-  lastGenerationRequestId high-water mark — symmetric to the v11
-  stuck-resolution recovery but for the creation pipeline) + the
+  `0x362daa6f…b5143`). v14 inherits the same prompt + pipeline; the address
+  changed because v14 added the
+  NO-outcome parser fix (`_parseYesNo` split into exact 2-byte `NO` and
+  3-byte `YES` — fixes the v9/v13 regression that re-anchored NO to 3 bytes
+  and silently rejected every legitimate NO outcome) + the
+  `AgentMarketContext` timestamp fields (`parseRequestedAt` and
+  `inferenceRequestedAt` exposed externally so agents can detect stuck
+  requests without off-chain timestamp tracking) + the
+  `DuplicateToolCall(uint256 indexed requestId, uint256 toolCallCount)`
+  advisory event (emitted when the inference agent returns >1
+  `createMarket` tool call in a single `inferToolsChat` response — first
+  call is still processed, this is observability only) + the
+  relayer `RESET_MAX_ATTEMPTS = 3` per-reset attempt cap
+  (`tryResetStuckMarket` and `tryResetStuckGeneration` track separate
+  reset-attempt budgets so a permanently underfunded contract doesn't
+  drain the relayer EOA via infinite resubmits — symmetric to the v10
+  per-market retry cap but for the reset path) + the
+  receipt-kind branch in `useAgentReceipt` (resolution receipts point
+  users to the operator recovery path on the proof page; generation
+  receipts honestly note the inference deposit is not refundable) + the
+  status passthrough on the receipt proxy (404 and 502 responses now
+  thread `upstreamStatus` so the UI can distinguish "platform is
+  throttling" vs "platform is down" vs "stale link") + the
+  `agentManifest()` v14 bump with corrected exact-2-byte-NO wording +
+  the `lib-web/contract.ts` `Market` type extension matching the new
+  contract timestamp fields + the doc comment on `_isGenerationStuck`
+  documenting the dual-predicate invariant
+  (`requestStage != None AND elapsed > STALE_REQUEST_TIMEOUT`)
+  on top of
+  the v13 hardening (stuck-generation recovery path
+  (forceResetGeneration + scanStuckGenerationRequests + GenerationReset
+  event + lastGenerationRequestId high-water mark — symmetric to the
+  v11 stuck-resolution recovery but for the creation pipeline) + the
   agent output length cap (MAX_AGENT_OUTPUT_LENGTH = 1024 bytes on
   parse + inference results, with over-long treated as graceful
   ResolutionFailed rather than a revert) + the relayer GenerationFailed
   advisory log step (operators can see creation failure rate without
-  auto-retry, since wrong topic is the proposer's call to fix) on top
-  of the v12 hardening (MarketReset.stuckRequestId field + useAgentReceipt
+  auto-retry, since wrong topic is the proposer's call to fix)) and
+  the v12 hardening (MarketReset.stuckRequestId field + useAgentReceipt
   recovery-flag reset + receipt-proxy 502 cache removed) and the v11
   hardening (stuck-request recovery path: forceResetMarket +
   scanStuckMarkets + STALE_REQUEST_TIMEOUT / relayer getLogs chunking /
@@ -71,7 +98,7 @@ src/                              Solidity sources (Foundry `src`)
     ILLMAgents.sol                LLM Parse Website + LLM Inference agent payload shapes
 
 test/                             Foundry tests (`forge test -vv`)
-  AutonomousPredictionMarket.t.sol 63 unit + fuzz + reentrancy tests with a mocked platform
+  AutonomousPredictionMarket.t.sol 82 unit + fuzz + reentrancy tests with a mocked platform
 
 script/                           Forge deploy scripts (`forge script …`)
   Deploy.s.sol                    Deploys market, prefunds 0.5 STT, seeds 2 demo markets
@@ -319,7 +346,7 @@ Notes:
 ```bash
 # Solidity (Foundry)
 forge build                       # compile
-forge test -vv                    # 79 tests in test/AutonomousPredictionMarket.t.sol
+forge test -vv                    # 82 tests in test/AutonomousPredictionMarket.t.sol
 
 # Frontend
 pnpm lint                         # eslint --max-warnings=0
@@ -333,6 +360,15 @@ seed user bet totals. There's a `ReentrantClaimer` for the
 `IAgentRequester` interface (it is — both have
 `createRequest(uint256,address,bytes4,bytes)` returning `uint256` and
 `getRequestDeposit()` returning `uint256`).
+
+### `_parseYesNo` (v14)
+
+Exact 2-byte `NO` (`'N','O'`) and 3-byte `YES` (`'Y','E','S'`) match —
+anything else reopens the market. v9 introduced the exact-byte match but
+flubbed the NO branch (it anchored at `length == 3`, a copy-paste from
+the YES branch), so the platform's literal 2-byte `"NO"` response was
+silently rejected. v14 splits the two literals and ships regression
+tests for both branches.
 
 ## Deploying
 

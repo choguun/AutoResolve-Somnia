@@ -2,7 +2,8 @@
 
 | Contract | Address | Explorer |
 |---|---|---|
-| **AutonomousPredictionMarket (v13 — current, 5 v12-audit gaps closed: stuck-generation recovery, agent output length cap, relayer GenerationFailed visibility + recovery, non-reverting callbacks on over-long output, `lastGenerationRequestId` high-water mark)** | `0x37822751E5ab0688344135797ee8FFCFa76443fB` | [View](https://shannon-explorer.somnia.network/address/0x37822751E5ab0688344135797ee8FFCFa76443fB) |
+| **AutonomousPredictionMarket (v14 — current, 9 v13-audit gaps closed: NO-outcome parser, AgentMarketContext timestamps, DuplicateToolCall advisory, relayer reset attempt cap, receipt-kind branch, status passthrough, stuck-gen doc comment, manifest v14 bump, exact YES/NO manifest correction)** | `0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9` | [View](https://shannon-explorer.somnia.network/address/0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9) |
+| AutonomousPredictionMarket (v13 — 5 v12-audit gaps closed: stuck-generation recovery, agent output length cap, relayer GenerationFailed visibility + recovery, non-reverting callbacks on over-long output, `lastGenerationRequestId` high-water mark) | `0x37822751E5ab0688344135797ee8FFCFa76443fB` | [View](https://shannon-explorer.somnia.network/address/0x37822751E5ab0688344135797ee8FFCFa76443fB) |
 | AutonomousPredictionMarket (v12 — 3 v11-audit gaps closed: `MarketReset.stuckRequestId`, `useAgentReceipt` recovery flag reset, 502 cache removed) | `0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5` | [View](https://shannon-explorer.somnia.network/address/0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5) |
 | AutonomousPredictionMarket (v11 — 5 v10-audit gaps closed: stuck-request recovery, relayer getLogs chunking, refetch on error, attemptCount clear on success, 404 cache) | `0x58df0efc0cF6B1322e8d998257d750b18bb10ee7` | [View](https://shannon-explorer.somnia.network/address/0x58df0efc0cF6B1322e8d998257d750b18bb10ee7) |
 | AutonomousPredictionMarket (v10 — 12 audit gaps closed: relayer dedup + retry cap + per-tick topUp read, inference Pending guard, honest rollback stage, fresh manifest, receipt polling timeout, client-side URL validation) | `0x6c94AA83e2C8D1d8f22B1E17537D8736E3d7fB65` | [View](https://shannon-explorer.somnia.network/address/0x6c94AA83e2C8D1d8f22B1E17537D8736E3d7fB65) |
@@ -16,12 +17,102 @@
 | AutonomousPredictionMarket (v2) | `0x1631303A748076648a0AbbE077a657Ad7812834F` | [View](https://shannon-explorer.somnia.network/address/0x1631303A748076648a0AbbE077a657Ad7812834F) |
 | AgentSmokeTest | `0x6e1dfB44AEc5c52dE3b12753726ea57207862F65` | [View](https://shannon-explorer.somnia.network/address/0x6e1dfB44AEc5c52dE3b12753726ea57207862F65) |
 
-## Latest deployment (v13 — 5 audit gaps closed) — completed
+## Latest deployment (v14 — 9 audit gaps closed) — completed
 
-v13 is the current live contract. It closes the 5 issues surfaced by a fresh
-audit of the v12 deployment (1 HIGH + 2 MEDIUM + 2 LOW). All change-types are
-additive — the resolution pipeline, the generation pipeline, the relayer
-invocation, and the receipt proxy URL shape are unchanged.
+v14 is the current live contract. It closes the 9 issues surfaced by a fresh
+audit of the v13 deployment (2 HIGH + 4 MEDIUM + 3 LOW). The most important
+fix is **H1**: v13's `_parseYesNo` had a 3-byte `NO` branch that silently
+rejected every legitimate NO outcome (the v9 hardening regression). v14
+makes NO exactly 2 bytes and ships regression tests for both branches. All
+other fixes are additive.
+
+**Contract (5 fixes)**
+- **H1 — `_parseYesNo` requires exact 2-byte `NO` and 3-byte `YES` (NOT a
+  starting-with-`N` check).** The v9 hardening pass tightened YES/NO to
+  exact-byte match, but a copy-paste in the implementation re-anchored NO
+  to `length == 3`, so an agent returning the literal 2-byte `"NO"` (the
+  platform's documented shape) was rejected and the market silently
+  re-opened. v14 splits the two literals — `YES` must be 3 bytes
+  (`'Y','E','S'`), `NO` must be 2 bytes (`'N','O'`). Backed by
+  `testInferenceCallbackResolvesNoOutcome` (regression) and
+  `testInferenceCallbackRejectsNooLiteral` (defensive).
+- **M-context — `AgentMarketContext` gains `parseRequestedAt` and
+  `inferenceRequestedAt`.** These mirror the v11 fields that already
+  power `scanStuckMarkets` / `_isStuckRequest` internally, but were not
+  exposed to external agents. External observers can now compute
+  "is this market stuck?" without an off-chain timestamp tracking the
+  parse/inference request. Updated the doc comment on
+  `_isGenerationStuck` to make the dual-predicate invariant
+  (`requestStage != None AND elapsed > STALE_REQUEST_TIMEOUT`) explicit.
+- **M4 — `DuplicateToolCall(uint256 indexed requestId, uint256 toolCallCount)`
+  advisory event.** If the LLM returns more than one `createMarket` call
+  in `pendingToolCalls`, v14 still processes the *first* one (so a
+  well-formed market is always created), but emits the event so external
+  watchers can see the misbehavior. This is observability only — the
+  wrong-selector and create-reverted paths remain in `GenerationFailed`
+  with their v13 reason codes.
+- **L3 — agent manifest text corrected to "exact 2-byte `NO` / 3-byte
+  `YES`".** The v9 manifest text read "exactly 3-byte `YES` or `NO`"
+  (it was a typo carried forward from the v9 hardening; the v9 code
+  only matched `length == 3` for both). v14 fixes the wording to match
+  the actual (now-correct) parser contract. Bumps to v14.
+- **L1 — receipt proxy passes `upstreamStatus` through on both 404 and
+  502 responses.** The previous proxy only sent a body error; v14
+  threads the upstream status so the client can distinguish
+  "throttled" / "platform down" / "stale link". 404 and 502 responses
+  now both include `upstreamStatus` as a top-level field.
+
+**Relayer (1 fix)**
+- **M3 — `RESET_MAX_ATTEMPTS = 3` per-reset cap.** `tryResetStuckMarket`
+  and `tryResetStuckGeneration` now track attempts in a separate
+  `resetAttemptCount` Map (keyed `reset:<id>` and `resetgen:<id>` to
+  avoid collision with the existing `tryResolveMarket` budget). After
+  3 attempts the relayer logs a "needs operator intervention" warning
+  and stops trying that id. Clears on success. Closes the same gas-DoS
+  vector the v10 per-market retry cap closed for the resolution path,
+  but for the reset path. New log line: `[relayer] starting (v14)`.
+
+**Frontend (2 fixes)**
+- **M2 — `useAgentReceipt(requestId, kind)` and `AgentReceiptViewer`
+  branch on `kind`.** Resolution receipts gate real on-chain payouts (a
+  stuck receipt means a market is stuck in `Resolving`), so the
+  long-running copy points users to the operator recovery path on the
+  proof page. Generation receipts are advisory — the inference deposit
+  was forwarded at request time and is not refundable — so the
+  long-running copy honestly notes that. The same
+  `upstreamStatus`-driven branching is applied to the error message
+  ("platform is throttling" vs "platform appears to be down" vs "stale
+  link").
+- **L3 — `lib-web/contract.ts` `Market` type extended with
+  `parseRequestedAt` and `inferenceRequestedAt` (matching the new
+  contract fields).** Required for `AgentCommandCenter`'s recovery
+  panel to read them through `getAgentMarketContext`.
+
+**On-chain surface summary** (additive only):
+- `AgentMarketContext` struct gains two `uint256` timestamp fields.
+- New event: `DuplicateToolCall(uint256 indexed requestId, uint256 toolCallCount)`.
+- `agentManifest()` body bumps to v14.
+
+**Test coverage:** 82/82 Foundry (was 79/79 on v13). New tests:
+- `testInferenceCallbackResolvesNoOutcome` — regression for H1.
+- `testInferenceCallbackRejectsNooLiteral` — defensive for H1.
+- `testAgentContextAndScanExposeResolvableMarkets` extended — asserts
+  the two new `AgentMarketContext` timestamp fields across three
+  states (initial, after `requestResolution`, after parse callback).
+- `testRequestMarketGenerationEmitsDuplicateToolCallAdvisory` —
+  sends 3 `createMarket` tool calls, asserts `nextMarketId == 2` and
+  the `DuplicateToolCall` event reports `toolCallCount = 3`.
+- `testAgentManifestAdvertisesV14` (renamed from v13) — v14 manifest
+  asserts: 2-byte NO wording, `DuplicateToolCall` event in the
+  enumeration, and the `AgentMarketContext` timestamp fields.
+
+## Previous deployment (v13 — 5 audit gaps closed) — historical
+
+v13 closed the 5 issues surfaced by a fresh audit of the v12 deployment
+(1 HIGH + 2 MEDIUM + 2 LOW). All change-types were additive — the
+resolution pipeline, the generation pipeline, the relayer invocation,
+and the receipt proxy URL shape are unchanged. **Caveat:** v13 contained
+the H1 NO-outcome parser regression noted above; v14 fixes it.
 
 **Contract (4 fixes)**
 - **Stuck-generation recovery (symmetric to v11's stuck-resolution recovery).**
@@ -463,7 +554,26 @@ This proof is from the v2 contract and remains valid as the canonical end-to-end
 | **Resolved tx** | [0x349fb0…4035](https://shannon-explorer.somnia.network/tx/0x349fb03fa6262befb581347a979fb5fa2706d48df5d818daec749f624fe54035) |
 | **Claim tx** | [0x888327…2380](https://shannon-explorer.somnia.network/tx/0x8883273b0bb83dbb7f2cb489b7a5b54b9a7591afeaee58bd472e7fb5b57c2380) — 0.03 STT winnings to YES bettor |
 
-## On-chain state (current v13)
+## On-chain state (current v14)
+
+- v14 Market **#1**: "Is the capital of France Paris?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v14 Market **#2**: "Did Bitcoin exist before 2010?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
+- v14 Contract balance: `1.0 STT`
+- v14 `nextMarketId`: `3`
+- v14 `AGENT_CREATOR_SENTINEL`: `0x00000000000000000000000000000000000000A1`
+- v14 `MAX_AGENT_OUTPUT_LENGTH`: `1024` (1 KiB cap on agent responses — parse + inference)
+- v14 `STALE_REQUEST_TIMEOUT`: `1800` seconds (30 min, unchanged from v11)
+- v14 `lastGenerationRequestId`: `0` (no generation requests yet)
+- v14 new event: `DuplicateToolCall(uint256 indexed requestId, uint256 toolCallCount)` — advisory only, emitted when an inference agent returns >1 `createMarket` tool call in a single `inferToolsChat` response
+- v14 new event (inherited from v13): `GenerationReset(uint256 indexed requestId, address indexed resetBy)` — emitted by `forceResetGeneration` after clearing the four state mappings
+- v14 `MarketReset` event: same v12 shape — `MarketReset(uint256 indexed marketId, address indexed resetBy, RequestStage stage, uint256 stuckRequestId)`
+- v14 `AgentMarketContext` struct: extended with `uint256 parseRequestedAt` and `uint256 inferenceRequestedAt` (mirror the v11 internal fields that now power external agent stuck-detection)
+- v14 new contract surface: `AgentMarketContext` returns the two new timestamp fields; the rest of the recovery surface (`scanStuckMarkets`, `forceResetMarket`, `scanStuckGenerationRequests`, `forceResetGeneration`) is unchanged from v13
+- v14 `_parseYesNo`: exact 2-byte `NO` / 3-byte `YES` match required — fixes the v9/v13 regression that mis-matched `NO` at 3 bytes
+- v14 `agentManifest()` body bumped to v14 — adds `DUPLICATE-TOOL-CALL ADVISORY` section; wording for the YES/NO constraint is now correct
+- v14 inherits all v13 behavior: stuck-resolution recovery, stuck-generation recovery, output cap, non-reverting callbacks, `lastGenerationRequestId` high-water mark, relayer GenerationFailed advisory log, v12 `MarketReset.stuckRequestId`, useAgentReceipt recovery reset + setTimeout remaining-time fix, 404-only cache on the receipt proxy, relayer getLogs chunking, attemptCount clear-on-success, MIN_BET, URL validation, nonReentrant, case-insensitive URL, paginated relayer, inference-callback Pending guard, honest rollback stage, fresh manifest, receipt polling timeout, client-side URL validation, per-market retry cap, per-tick topUp re-read
+
+## On-chain state (v13 — historical)
 
 - v13 Market **#1**: "Is the capital of France Paris?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
 - v13 Market **#2**: "Did Bitcoin exist before 2010?" — seeded, 5-min demo (Wikipedia source, `creator = 0x119F…5fD6`)
@@ -570,7 +680,7 @@ pnpm dev   # http://localhost:3000
 ```
 
 Set in `.env`:
-- `NEXT_PUBLIC_CONTRACT_ADDRESS=0x37822751E5ab0688344135797ee8FFCFa76443fB`
+- `NEXT_PUBLIC_CONTRACT_ADDRESS=0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9`
 
 ## Auto-retry relayer
 
@@ -581,7 +691,7 @@ request, then re-submits `requestResolution` with the wallet's top-up.
 
 ```bash
 PRIVATE_KEY=0x... \
-  NEXT_PUBLIC_CONTRACT_ADDRESS=0x37822751E5ab0688344135797ee8FFCFa76443fB \
+  NEXT_PUBLIC_CONTRACT_ADDRESS=0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9 \
   node scripts/relayer.mjs
 ```
 
@@ -590,3 +700,4 @@ Optional env:
 - `RELAYER_POLL_MS` (default 30 seconds)
 - `RELAYER_MAX_TOPUP_STT` (default 1 STT — refuses to top up markets needing more; `RELAYER_MAX_BET_GAS` is honored as a deprecated alias)
 - `RELAYER_MAX_ATTEMPTS` (default 5 — per-market resubmit cap before the relayer stops trying; reset by restarting after refilling the contract)
+- `RELAYER_RESET_MAX_ATTEMPTS` (default 3, v14 — per-reset attempt cap for the forceResetMarket / forceResetGeneration paths)

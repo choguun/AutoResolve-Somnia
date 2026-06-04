@@ -127,8 +127,14 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-export function AgentReceiptViewer({ requestId }: { requestId: string }) {
-  const { data: receipt, isLoading, error, isLongRunning, refetch } = useAgentReceipt(requestId);
+export function AgentReceiptViewer({
+  requestId,
+  kind = 'resolution',
+}: {
+  requestId: string;
+  kind?: 'resolution' | 'generation';
+}) {
+  const { data: receipt, isLoading, error, isLongRunning, refetch } = useAgentReceipt(requestId, kind);
   const [compareOpen, setCompareOpen] = useState(false);
 
   const nodes = useMemo(() => receipt?.subcommittee?.nodes || [], [receipt]);
@@ -140,13 +146,39 @@ export function AgentReceiptViewer({ requestId }: { requestId: string }) {
 
   if (isLoading) return <ReceiptSkeleton />;
   if (error || !receipt) {
+    // v14: branch the copy on receipt kind. Resolution receipts gate real
+    // on-chain payouts (a stuck receipt means a market is stuck in
+    // Resolving), so the message points users to the operator recovery
+    // path. Generation receipts are advisory — the deposit was forwarded
+    // and isn't refundable, so the message reflects that.
+    const errWithStatus = error as (Error & { status?: number; upstreamStatus?: number }) | null;
+    const upstreamStatus = errWithStatus?.upstreamStatus;
+    const isPlatform5xx =
+      upstreamStatus !== undefined && upstreamStatus >= 500 && upstreamStatus < 600;
+    const isRateLimited = upstreamStatus === 429;
+    const isNotFound = errWithStatus?.status === 404;
+
+    let message: string;
+    if (isNotFound) {
+      message = 'This request ID isn’t known to the receipt service. The link may be stale.';
+    } else if (isPlatform5xx) {
+      message = 'The Somnia agent platform is currently unavailable. Receipts will resume when it recovers.';
+    } else if (isRateLimited) {
+      message = 'Receipt service is throttling requests — retrying shortly.';
+    } else if (isLongRunning) {
+      message =
+        kind === 'generation'
+          ? 'The generation receipt is taking longer than expected. The inference deposit was forwarded to the platform and is not refundable — the market may simply not be created.'
+          : 'This receipt is taking longer than expected. If the market is stuck in Resolving for more than 30 minutes, the contract surfaces a force-reset path on the proof page.';
+    } else {
+      message =
+        kind === 'generation'
+          ? 'Generation receipt not available yet.'
+          : 'Receipt not available yet.';
+    }
     return (
       <div className="rounded-lg border border-white/10 bg-white/[0.045] p-6">
-        <p className="font-medium text-white">
-          {isLongRunning
-            ? 'This receipt is taking longer than expected.'
-            : 'Receipt not available yet.'}
-        </p>
+        <p className="font-medium text-white">{message}</p>
         <p className="mt-2 text-xs text-zinc-600">Request ID: {requestId}</p>
         <div className="mt-4 flex flex-wrap gap-2">
           <button

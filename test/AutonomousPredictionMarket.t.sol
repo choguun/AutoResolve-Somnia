@@ -356,6 +356,10 @@ contract AutonomousPredictionMarketTest is Test {
         assertEq(context.resolutionSource, "https://en.wikipedia.org/wiki/Paris");
         assertEq(context.totalPool, 0);
         assertEq(context.requiredDeposit, market.getRequiredDeposit());
+        // v14: AgentMarketContext now exposes the in-flight request timestamps so
+        // external operators can compute staleness without re-reading storage.
+        assertEq(context.parseRequestedAt, 0, "no parse request yet");
+        assertEq(context.inferenceRequestedAt, 0, "no inference request yet");
 
         context = market.getAgentMarketContext(activeMarket);
         assertTrue(context.exists);
@@ -365,6 +369,28 @@ contract AutonomousPredictionMarketTest is Test {
         assertEq(ids.length, 1);
         assertEq(ids[0], resolvableMarket);
         assertEq(nextCursor, market.nextMarketId());
+
+        // After requesting resolution, parseRequestedAt should be populated and
+        // inferenceRequestedAt should remain zero until the parse callback fires.
+        uint256 totalDeposit = market.getRequiredDeposit();
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(resolvableMarket);
+
+        context = market.getAgentMarketContext(resolvableMarket);
+        assertEq(context.parseRequestedAt, block.timestamp, "parse request timestamp tracked");
+        assertEq(context.inferenceRequestedAt, 0, "inference not yet started");
+
+        // After the parse callback advances the pipeline, the inference timestamp
+        // should be populated and the parse timestamp should reset to zero.
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(
+            1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest()
+        );
+
+        context = market.getAgentMarketContext(resolvableMarket);
+        assertEq(context.parseRequestedAt, 0, "parse request timestamp cleared");
+        assertEq(context.inferenceRequestedAt, block.timestamp, "inference request timestamp tracked");
     }
 
     function testScanResolvableMarketsRejectsInvalidLimit() public {
@@ -563,6 +589,74 @@ contract AutonomousPredictionMarketTest is Test {
         assertEq(uint256(market.requestStage(2)), uint256(AutonomousPredictionMarket.RequestStage.None));
     }
 
+    function testInferenceCallbackResolvesNoOutcome() public {
+        // Regression test for v13's silent NO bug: _parseYesNo gated the NO branch
+        // on resultBytes.length == 3 and checked resultBytes[2] == "O", matching
+        // "NOO" rather than "NO". Every NO outcome was rejected as invalid and
+        // the market reopened forever. v14 splits the length check (3 for YES,
+        // 2 for NO) and accepts the 2-byte NO that the platform's constrained
+        // classifier actually returns.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(
+            1, _successfulResponse("The capital is Berlin, not Paris."), ResponseStatus.Success, _emptyRequest()
+        );
+
+        uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
+        assertGt(inferenceId, 0, "parse callback created inference request");
+
+        vm.prank(PLATFORM);
+        market.handleInferenceCallback(inferenceId, _successfulResponse("NO"), ResponseStatus.Success, _emptyRequest());
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(
+            uint256(m.status),
+            uint256(AutonomousPredictionMarket.MarketStatus.Resolved),
+            "NO outcome must resolve the market"
+        );
+        assertFalse(m.outcome, "outcome must be NO (false)");
+        assertEq(m.resolutionReason, "NO", "reason must be the raw NO literal");
+        assertGt(m.resolvedAt, 0, "resolvedAt set");
+        assertEq(market.requestToMarket(inferenceId), 0, "requestToMarket cleared");
+        assertEq(
+            uint256(market.requestStage(inferenceId)),
+            uint256(AutonomousPredictionMarket.RequestStage.None),
+            "requestStage cleared"
+        );
+    }
+
+    function testInferenceCallbackRejectsNooLiteral() public {
+        // Defensive: the v13 bug accepted "NOO" as a (false) NO outcome.
+        // v14 must treat "NOO" (length 3, third byte O) as invalid and reopen.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, _successfulResponse("Evidence"), ResponseStatus.Success, _emptyRequest());
+
+        uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
+        vm.prank(PLATFORM);
+        market.handleInferenceCallback(inferenceId, _successfulResponse("NOO"), ResponseStatus.Success, _emptyRequest());
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(
+            uint256(m.status),
+            uint256(AutonomousPredictionMarket.MarketStatus.Open),
+            "NOO must reopen the market"
+        );
+        assertFalse(m.outcome, "outcome stays default false");
+    }
+
     function testInferenceCallbackFailureReopensMarket() public {
         uint256 marketId = _createEndedMarket();
         uint256 totalDeposit = market.getRequiredDeposit();
@@ -712,19 +806,32 @@ contract AutonomousPredictionMarketTest is Test {
         assertTrue(_contains(manifest, "requestResolution"));
     }
 
-    function testAgentManifestAdvertisesV13() public {
+    function testAgentManifestAdvertisesV14() public {
         string memory manifest = market.agentManifest();
-        assertTrue(_contains(manifest, "v13"), "manifest should advertise v13");
+        assertTrue(_contains(manifest, "v14"), "manifest should advertise v14");
         assertTrue(_contains(manifest, "inferToolsChat"), "manifest should mention inferToolsChat");
         assertTrue(_contains(manifest, "SPECIFIC"), "manifest should mention SPECIFIC-URL requirement");
         assertTrue(_contains(manifest, "MIN_BET"), "manifest should mention MIN_BET");
         assertTrue(_contains(manifest, "YES"), "manifest should mention YES/NO output format");
         assertTrue(_contains(manifest, "scanStuckMarkets"), "manifest should advertise stuck-market recovery");
         assertTrue(_contains(manifest, "forceResetMarket"), "manifest should advertise forceResetMarket");
-        // v13 additions
+        // v13 surface still advertised
         assertTrue(_contains(manifest, "scanStuckGenerationRequests"), "manifest should advertise stuck-generation recovery");
         assertTrue(_contains(manifest, "forceResetGeneration"), "manifest should advertise forceResetGeneration");
         assertTrue(_contains(manifest, "MAX_AGENT_OUTPUT_LENGTH"), "manifest should advertise the output cap");
+        // v14 additions
+        assertTrue(
+            _contains(manifest, "YES (3 bytes) or NO (2 bytes)"),
+            "manifest should describe the corrected YES/NO length contract"
+        );
+        assertTrue(
+            _contains(manifest, "DuplicateToolCall"),
+            "manifest should advertise the duplicate-tool-call advisory"
+        );
+        assertTrue(
+            _contains(manifest, "parseRequestedAt"),
+            "manifest should mention the new per-request timestamp fields on AgentMarketContext"
+        );
     }
 
     function testForceResetMarketRevertsWhenNotStuck() public {
@@ -1420,6 +1527,44 @@ contract AutonomousPredictionMarketTest is Test {
         market.handleGenerationCallback(
             requestId, _generationResponses(inferResult), ResponseStatus.Success, _emptyRequest()
         );
+    }
+
+    function testRequestMarketGenerationEmitsDuplicateToolCallAdvisory() public {
+        // v14: when the agent returns multiple createMarket tool calls in one
+        // response we still execute the first call (single market created) and
+        // emit a DuplicateToolCall advisory so operators can spot misbehaving
+        // prompts / models. The market is still created; this is purely an
+        // observability signal, not a failure path.
+        _fundContractForGeneration();
+        bytes[] memory tools = new bytes[](3);
+        tools[0] = _createMarketCall("First?", "https://example.com/first", 600);
+        tools[1] = _createMarketCall("Second?", "https://example.com/second", 600);
+        tools[2] = _createMarketCall("Third?", "https://example.com/third", 600);
+        bytes memory inferResult = _inferToolsResponse("tool_calls", tools);
+
+        vm.recordLogs();
+        uint256 requestId = _primeInferToolsAndCall(inferResult, "Topic with extra tool calls");
+
+        // Only the first call is executed.
+        assertEq(market.nextMarketId(), 2, "exactly one market created");
+        AutonomousPredictionMarket.Market memory m = market.getMarket(1);
+        assertEq(m.question, "First?", "first tool call wins");
+
+        // The DuplicateToolCall advisory should fire with the total count of
+        // matching createMarket selector calls (3).
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 dupSig = keccak256("DuplicateToolCall(uint256,uint256)");
+        bool sawDup;
+        uint256 reportedCount;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == dupSig && uint256(logs[i].topics[1]) == requestId) {
+                sawDup = true;
+                reportedCount = abi.decode(logs[i].data, (uint256));
+                break;
+            }
+        }
+        assertTrue(sawDup, "DuplicateToolCall emitted");
+        assertEq(reportedCount, 3, "advisory reports total tool-call count");
     }
 
     function testRequestMarketGenerationEmitsEvents() public {

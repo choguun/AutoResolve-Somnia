@@ -19,7 +19,7 @@ The important part: the AI output is not just displayed in the UI. It changes on
 | Proof page | [autoresolve-somnia.vercel.app/proof](https://autoresolve-somnia.vercel.app/proof) |
 | Agent manifest | [autoresolve-somnia.vercel.app/api/agent-manifest](https://autoresolve-somnia.vercel.app/api/agent-manifest) |
 | Well-known agent JSON | [/.well-known/autoresolve-agent.json](https://autoresolve-somnia.vercel.app/.well-known/autoresolve-agent.json) |
-| Current contract (v13 — 5 v12-audit gaps closed (stuck-generation recovery + output cap + relayer GenerationFailed visibility + non-reverting callbacks on over-long output + `lastGenerationRequestId` high-water mark)) | [0x3782…43fB](https://shannon-explorer.somnia.network/address/0x37822751E5ab0688344135797ee8FFCFa76443fB) |
+| Current contract (v14 — 9 v13-audit gaps closed (NO-outcome parser + AgentMarketContext timestamps + DuplicateToolCall advisory + relayer reset attempt cap + receipt-kind branch + status passthrough + manifest v14 bump + exact YES/NO manifest correction + stuck-gen doc comment)) | [0x598E…66a9](https://shannon-explorer.somnia.network/address/0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9) |
 | **v7** AI-created market → AI-resolved end-to-end (parse) | [4254170](https://agents.testnet.somnia.network/receipts/4254170) |
 | **v7** AI-created market → AI-resolved end-to-end (inference) | [4254291](https://agents.testnet.somnia.network/receipts/4254291) |
 | v2 historical proof (parse) | [2400421](https://agents.testnet.somnia.network/receipts/2400421) |
@@ -138,8 +138,8 @@ AutoResolve is the first prediction-market primitive that lets a contract ask an
 Current deployment:
 
 ```text
-AutonomousPredictionMarket v13 (fully autonomous — creation + resolution + auto-retry relayer + stuck-request recovery + stuck-generation recovery + output cap + 3 v11-audit + 5 v12-audit gap closures)
-0x37822751E5ab0688344135797ee8FFCFa76443fB
+AutonomousPredictionMarket v14 (fully autonomous — creation + resolution + auto-retry relayer + stuck-request recovery + stuck-generation recovery + output cap + 3 v11-audit + 5 v12-audit + 9 v13-audit gap closures; fixes the v13 NO-outcome parser regression)
+0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9
 ```
 
 Core functions:
@@ -176,16 +176,17 @@ Sentinel + constants:
 
 ## Proof Artifacts
 
-Latest v13 deployment — closes the 5 issues surfaced by a fresh audit of v12 (1 HIGH, 2 MEDIUM, 2 LOW):
+Latest v14 deployment — closes the 9 issues surfaced by a fresh audit of v13 (2 HIGH, 4 MEDIUM, 3 LOW). The most important fix is **H1**: the v13 `_parseYesNo` had a 3-byte `NO` branch that silently rejected every legitimate NO outcome (the platform returns literal 2-byte `"NO"`). v14 splits the two literals — `YES` must be 3 bytes, `NO` must be 2 bytes — and ships regression tests for both branches.
 
-- Contract: [0x37822751E5ab0688344135797ee8FFCFa76443fB](https://shannon-explorer.somnia.network/address/0x37822751E5ab0688344135797ee8FFCFa76443fB)
+- Contract: [0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9](https://shannon-explorer.somnia.network/address/0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9)
 - Prefund: prefilled with enough STT to cover creation and resolution inference deposits.
-- Test coverage: 79/79 Foundry tests pass locally (71 v12 baseline + 8 v13 new tests).
-- New v13 contract surface: `scanStuckGenerationRequests(cursor, limit)` and `forceResetGeneration(requestId)` mirror the v11 stuck-resolution recovery for the symmetric stuck-generation case; `MAX_AGENT_OUTPUT_LENGTH = 1024` cap on agent responses (parse + inference); over-long responses emit `ResolutionFailed` and reopen the market (the contract never reverts in callbacks); `GenerationReset(uint256 indexed requestId, address indexed resetBy)` event; `lastGenerationRequestId` high-water mark tightens the scan's upper bound; `agentManifest()` bumped to v13.
-- New v13 relayer behavior: `scanStuckGenerationRequests` + `tryResetStuckGeneration` tick step (auto-recovers stuck generation requests); `drainGenerationFailureEvents` advisory log step (operators can see generation failure rate without auto-retry — wrong topic is the proposer's call to fix); new log line `[relayer] starting (v13)`.
-- v13 is the new live target; v12 is now historical.
+- Test coverage: 82/82 Foundry tests pass locally (79 v13 baseline + 3 v14 new tests).
+- New v14 contract surface: `AgentMarketContext` gains `parseRequestedAt` and `inferenceRequestedAt` (so external agents can detect stuck requests without off-chain timestamp tracking); new `DuplicateToolCall(uint256 indexed requestId, uint256 toolCallCount)` advisory event (emitted when an inference agent returns >1 `createMarket` tool call — observability only, the first call is still processed); `_parseYesNo` split into exact 2-byte `NO` and 3-byte `YES`; `agentManifest()` body bumped to v14.
+- New v14 relayer behavior: `RESET_MAX_ATTEMPTS = 3` per-reset cap on `tryResetStuckMarket` and `tryResetStuckGeneration` (closes the gas-DoS vector the v10 cap closed for the resolution path, but for the reset path); new log line `[relayer] starting (v14)`.
+- New v14 frontend behavior: `useAgentReceipt(requestId, kind)` branches copy on `kind` (resolution receipts point users to the operator recovery path; generation receipts honestly note the deposit is not refundable); `AgentCommandCenter` Recovery panel now surfaces the full symmetric stuck-state for both pipelines.
+- v14 is the new live target; v13 is now historical.
 
-Previous v12 deployment (now historical) — closed the 3 issues surfaced by a fresh audit of v11: `0x37822751E5ab0688344135797ee8FFCFa76443fB` (71/71 Foundry tests). v13 inherits all v12 behavior; the address changed because v13 added stuck-generation recovery + output cap + relayer GenerationFailed visibility + non-reverting callbacks + `lastGenerationRequestId` on top of the v12 hardening (`MarketReset.stuckRequestId` + `useAgentReceipt` recovery reset + 502 cache removal) and the v11 hardening (stuck-resolution recovery, relayer getLogs chunking, refetch on error, attemptCount clear on success, 404 cache) and the v10 hardening.
+Previous v13 deployment (now historical) — closed the 5 issues surfaced by a fresh audit of v12: `0x37822751E5ab0688344135797ee8FFCFa76443fB` (79/79 Foundry tests). v14 inherits all v13 behavior; the address changed because v14 added the NO-outcome parser fix + AgentMarketContext timestamps + DuplicateToolCall advisory + relayer reset attempt cap + receipt-kind branch + status passthrough + manifest v14 bump + exact YES/NO manifest correction + stuck-gen doc comment on top of the v13 hardening (stuck-generation recovery, output cap, relayer GenerationFailed visibility, non-reverting callbacks, `lastGenerationRequestId` high-water mark) and the v12 hardening (`MarketReset.stuckRequestId` + `useAgentReceipt` recovery reset + 502 cache removal) and the v11 hardening (stuck-resolution recovery, relayer getLogs chunking, refetch on error, attemptCount clear on success, 404 cache) and the v10 hardening.
 
 Previous v11 deployment (now historical) — closed the 5 issues surfaced by a fresh audit of v10: `0x58df0efc0cF6B1322e8d998257d750b18bb10ee7` (70/70 Foundry tests). v12 inherits all v11 behavior; the address changed because v12 added the `stuckRequestId` event field + frontend recovery reset + 502 cache removal on top of the v11 hardening.
 
@@ -263,7 +264,7 @@ cp .env.example .env
 PRIVATE_KEY=your_deployer_private_key
 SHANNON_RPC_URL=https://dream-rpc.somnia.network
 NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=your_walletconnect_project_id
-NEXT_PUBLIC_CONTRACT_ADDRESS=0x37822751E5ab0688344135797ee8FFCFa76443fB
+NEXT_PUBLIC_CONTRACT_ADDRESS=0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9
 ```
 
 ### Run
@@ -322,13 +323,13 @@ Open [autoresolve-somnia.vercel.app](https://autoresolve-somnia.vercel.app). The
 
 ### Step 2 — The contract is on Shannon
 
-Open the deployed v13 contract in Shannon Explorer:
+Open the deployed v14 contract in Shannon Explorer:
 
-- Contract: [`0x37822751E5ab0688344135797ee8FFCFa76443fB`](https://shannon-explorer.somnia.network/address/0x37822751E5ab0688344135797ee8FFCFa76443fB)
+- Contract: [`0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9`](https://shannon-explorer.somnia.network/address/0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9)
 - The "Contract" tab will show the verified source code (see the verification step in `DEPLOYED.md`).
 - The "Transactions" tab will show the deploy tx, the prefund, the two seeded markets, market #3 (AI-created), the resolution pipeline txs, and the `MarketResolved` event.
 
-### Step 3 — The agents actually ran (prior v7 proof, inherited by v13)
+### Step 3 — The agents actually ran (prior v7 proof, inherited by v14)
 
 The v7 contract ran an end-to-end proof where the **AI agent created the market and the AI agents resolved it**. The current v13 contract inherits the same prompt and pipeline, so the v7 receipts still demonstrate the loop. Market #3 is the artifact — `creator = 0x0000…A1` (the `AGENT_CREATOR_SENTINEL`):
 
@@ -369,33 +370,33 @@ External autonomous agents do not need the frontend. The contract itself answers
 
 ```bash
 # Resolution side
-cast call 0x37822751E5ab0688344135797ee8FFCFa76443fB \
+cast call 0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9 \
   "scanResolvableMarkets(uint256,uint256)" 0 10 \
   --rpc-url https://dream-rpc.somnia.network
 
-cast call 0x37822751E5ab0688344135797ee8FFCFa76443fB \
+cast call 0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9 \
   "getAgentMarketContext(uint256)" 3 \
   --rpc-url https://dream-rpc.somnia.network
 
-cast call 0x37822751E5ab0688344135797ee8FFCFa76443fB \
+cast call 0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9 \
   "getResolutionFundingStatus()" \
   --rpc-url https://dream-rpc.somnia.network
 
 # Stuck-market recovery (v11+)
-cast call 0x37822751E5ab0688344135797ee8FFCFa76443fB \
+cast call 0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9 \
   "scanStuckMarkets(uint256,uint256)" 0 10 \
   --rpc-url https://dream-rpc.somnia.network
 
 # Creation side
-cast call 0x37822751E5ab0688344135797ee8FFCFa76443fB \
+cast call 0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9 \
   "scanAgentCreatedMarkets(uint256,uint256)" 0 10 \
   --rpc-url https://dream-rpc.somnia.network
 
-cast call 0x37822751E5ab0688344135797ee8FFCFa76443fB \
+cast call 0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9 \
   "getGenerationFundingStatus()" \
   --rpc-url https://dream-rpc.somnia.network
 
-cast call 0x37822751E5ab0688344135797ee8FFCFa76443fB \
+cast call 0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9 \
   "agentManifest()" \
   --rpc-url https://dream-rpc.somnia.network
 ```

@@ -35,6 +35,8 @@ type AgentMarketContext = {
   topUpNeeded: bigint;
   question: string;
   resolutionSource: string;
+  parseRequestedAt: bigint;
+  inferenceRequestedAt: bigint;
 };
 
 type AgentState = {
@@ -53,6 +55,11 @@ type GenerationState = {
   topUpNeeded: bigint;
   agentCreatedIds: bigint[];
   topics: string[];
+};
+
+type RecoveryState = {
+  stuckMarketIds: bigint[];
+  stuckGenerationIds: bigint[];
 };
 
 const INSPECT_FALLBACK_IDS = [6n, 5n, 4n, 3n, 2n, 1n];
@@ -80,7 +87,7 @@ export function AgentCommandCenter() {
   const { isConnected } = useAccount();
   const { writeContract, data: hash, isPending, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
-  const [activePipeline, setActivePipeline] = useState<'resolve' | 'generate'>('resolve');
+  const [activePipeline, setActivePipeline] = useState<'resolve' | 'generate' | 'recover'>('resolve');
   const [topic, setTopic] = useState('');
 
   const {
@@ -174,6 +181,38 @@ export function AgentCommandCenter() {
     },
   });
 
+  const {
+    data: recoveryData,
+    refetch: refetchRecovery,
+    isFetching: isRecoveryFetching,
+  } = useQuery({
+    queryKey: ['agent-command-center-recovery'],
+    refetchInterval: 15_000,
+    queryFn: async (): Promise<RecoveryState> => {
+      // v14: surface the contract's stuck-request recovery interface so any
+      // operator (not just the relayer) can force-reset markets and
+      // generation requests whose callbacks were dropped by the platform.
+      const [stuckMarkets, stuckGen] = await Promise.all([
+        proofPublicClient.readContract({
+          address: CONTRACT_ADDRESS,
+          abi: CONTRACT_ABI,
+          functionName: 'scanStuckMarkets',
+          args: [1n, 50n],
+        }) as Promise<readonly [readonly bigint[], bigint]>,
+        proofPublicClient.readContract({
+          address: CONTRACT_ADDRESS,
+          abi: CONTRACT_ABI,
+          functionName: 'scanStuckGenerationRequests',
+          args: [1n, 50n],
+        }) as Promise<readonly [readonly bigint[], bigint]>,
+      ]);
+      return {
+        stuckMarketIds: [...stuckMarkets[0]],
+        stuckGenerationIds: [...stuckGen[0]],
+      };
+    },
+  });
+
   const requestResolution = (context: AgentMarketContext) => {
     reset();
     setActivePipeline('resolve');
@@ -229,14 +268,61 @@ export function AgentCommandCenter() {
     );
   };
 
+  const forceResetMarket = (marketId: bigint) => {
+    reset();
+    setActivePipeline('recover');
+    writeContract(
+      {
+        address: CONTRACT_ADDRESS,
+        abi: CONTRACT_ABI,
+        functionName: 'forceResetMarket',
+        args: [marketId],
+      },
+      {
+        onSuccess: (txHash) =>
+          showSubmittedTransactionToast(
+            txHash,
+            `Force-resetting market #${marketId.toString()}...`,
+            'agent-recovery'
+          ),
+        onError: (err) => toast.error(err.message.slice(0, 140)),
+      }
+    );
+  };
+
+  const forceResetGeneration = (requestId: bigint) => {
+    reset();
+    setActivePipeline('recover');
+    writeContract(
+      {
+        address: CONTRACT_ADDRESS,
+        abi: CONTRACT_ABI,
+        functionName: 'forceResetGeneration',
+        args: [requestId],
+      },
+      {
+        onSuccess: (txHash) =>
+          showSubmittedTransactionToast(
+            txHash,
+            `Force-resetting generation request #${requestId.toString()}...`,
+            'agent-recovery'
+          ),
+        onError: (err) => toast.error(err.message.slice(0, 140)),
+      }
+    );
+  };
+
   useEffect(() => {
     if (!isSuccess || !hash) return;
     if (activePipeline === 'resolve') {
       showConfirmedTransactionToast(hash, 'Resolver invoked - agents are working', 'agent-resolver');
-    } else {
+    } else if (activePipeline === 'generate') {
       showConfirmedTransactionToast(hash, 'Generation request submitted - agent is thinking', 'agent-generator');
+    } else {
+      showConfirmedTransactionToast(hash, 'Stuck request reset - pipeline is unblocked', 'agent-recovery');
+      refetchRecovery();
     }
-  }, [hash, isSuccess, activePipeline]);
+  }, [hash, isSuccess, activePipeline, refetchRecovery]);
 
   const resolveSteps = [
     {
@@ -309,11 +395,12 @@ export function AgentCommandCenter() {
             onClick={() => {
               refetch();
               refetchGen();
+              refetchRecovery();
             }}
-            disabled={isFetching || isGenFetching}
+            disabled={isFetching || isGenFetching || isRecoveryFetching}
             className="w-full rounded-xl bg-gradient-to-r from-white to-cyan-100 px-5 py-2.5 text-sm font-bold text-zinc-950 transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_15px_rgba(255,255,255,0.3)] disabled:cursor-not-allowed disabled:opacity-60 sm:w-fit"
           >
-            {isFetching || isGenFetching ? 'Scanning...' : 'Run Agent Scan'}
+            {isFetching || isGenFetching || isRecoveryFetching ? 'Scanning...' : 'Run Agent Scan'}
           </button>
         </div>
       </div>
@@ -455,6 +542,132 @@ export function AgentCommandCenter() {
         <TransactionStatus
           hash={activePipeline === 'resolve' ? hash : undefined}
           isConfirming={activePipeline === 'resolve' && isConfirming}
+        />
+      </div>
+
+      <div className="border-t border-white/10 p-5 sm:p-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Stuck-Request Recovery</h3>
+            <p className="mt-1 max-w-2xl text-xs text-zinc-400">
+              Live view of the contract&apos;s symmetric recovery surface (
+              <code className="rounded bg-black/40 px-1">scanStuckMarkets</code> +
+              <code className="rounded bg-black/40 px-1">forceResetMarket</code> /
+              <code className="rounded bg-black/40 px-1">scanStuckGenerationRequests</code> +
+              <code className="rounded bg-black/40 px-1">forceResetGeneration</code>). A request is
+              considered stuck after <strong className="text-white">30 minutes</strong> with no
+              platform callback. Anyone can call these — no admin keys, no upgrade path.
+            </p>
+          </div>
+          {recoveryData && (
+            <div className="text-xs text-zinc-400">
+              {recoveryData.stuckMarketIds.length + recoveryData.stuckGenerationIds.length === 0 ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-emerald-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.8)]" />
+                  All requests healthy
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-amber-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.8)]" />
+                  {recoveryData.stuckMarketIds.length + recoveryData.stuckGenerationIds.length} stuck
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          <div className="rounded-xl border border-white/5 bg-black/40 p-4 shadow-inner">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                Stuck Markets
+              </span>
+              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-zinc-400">
+                resolve pipeline
+              </span>
+            </div>
+            {recoveryData?.stuckMarketIds.length ? (
+              <ul className="space-y-2">
+                {recoveryData.stuckMarketIds.map((marketId) => (
+                  <li
+                    key={marketId.toString()}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2"
+                  >
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <Link
+                        href={`/market/${marketId.toString()}`}
+                        className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 font-semibold text-amber-200 hover:bg-amber-400/20"
+                      >
+                        Market #{marketId.toString()}
+                      </Link>
+                      <span className="text-zinc-500">callback dropped &gt;30m ago</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => forceResetMarket(marketId)}
+                      disabled={!isConnected || isPending || isConfirming}
+                      className="rounded-lg bg-gradient-to-r from-amber-300 to-orange-200 px-3 py-1.5 text-xs font-bold text-zinc-950 transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100"
+                    >
+                      {isConnected ? 'Force Reset' : 'Connect Wallet'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-5 text-center text-xs text-zinc-500">
+                No stuck markets — the resolve pipeline is healthy.
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-white/5 bg-black/40 p-4 shadow-inner">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                Stuck Generation Requests
+              </span>
+              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-zinc-400">
+                create pipeline
+              </span>
+            </div>
+            {recoveryData?.stuckGenerationIds.length ? (
+              <ul className="space-y-2">
+                {recoveryData.stuckGenerationIds.map((requestId) => (
+                  <li
+                    key={requestId.toString()}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-violet-400/20 bg-violet-400/5 px-3 py-2"
+                  >
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <Link
+                        href={`/receipt/${requestId.toString()}`}
+                        className="rounded-full border border-violet-400/30 bg-violet-400/10 px-2.5 py-1 font-semibold text-violet-200 hover:bg-violet-400/20"
+                      >
+                        Request #{requestId.toString()}
+                      </Link>
+                      <span className="text-zinc-500">
+                        deposit forwarded — not refundable
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => forceResetGeneration(requestId)}
+                      disabled={!isConnected || isPending || isConfirming}
+                      className="rounded-lg bg-gradient-to-r from-violet-300 to-cyan-200 px-3 py-1.5 text-xs font-bold text-zinc-950 transition hover:scale-[1.02] disabled:opacity-50 disabled:hover:scale-100"
+                    >
+                      {isConnected ? 'Force Reset' : 'Connect Wallet'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-5 text-center text-xs text-zinc-500">
+                No stuck generation requests — the create pipeline is healthy.
+              </div>
+            )}
+          </div>
+        </div>
+        <TransactionStatus
+          hash={activePipeline === 'recover' ? hash : undefined}
+          isConfirming={activePipeline === 'recover' && isConfirming}
         />
       </div>
     </section>

@@ -82,7 +82,7 @@ export function GenerateMarketForm() {
     }
   }, [isSuccess, receipt]);
 
-  const { data: agentReceipt } = useAgentReceipt(requestId ?? undefined);
+  const { data: agentReceipt } = useAgentReceipt(requestId ?? undefined, 'generation');
 
   useEffect(() => {
     if (!agentReceipt || !hash) return;
