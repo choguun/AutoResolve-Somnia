@@ -1283,6 +1283,125 @@ contract AutonomousPredictionMarketTest is Test {
         assertTrue(found, "ResolutionFailed(stage=Inference) emitted");
     }
 
+    function testInferenceCallbackOverlongPathClearsParseRequestedAt() public {
+        // v15 H1 regression: the over-long-output branch in handleInferenceCallback
+        // must clear parseRequestedAt along with the other Resolving state. Before
+        // v15, this branch only cleared parseRequestId / inferenceRequestId and
+        // their timestamps, leaving parseRequestedAt set to the original parse
+        // timestamp. getAgentMarketContext readers then saw an Open market with
+        // parseRequestedAt != 0, which was indistinguishable from a market
+        // mid-parse.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, _successfulResponse("Evidence"), ResponseStatus.Success, _emptyRequest());
+        uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
+
+        bytes memory tooLong = new bytes(market.MAX_AGENT_OUTPUT_LENGTH() + 1);
+        for (uint256 i = 0; i < tooLong.length; i++) tooLong[i] = "x";
+        vm.prank(PLATFORM);
+        market.handleInferenceCallback(inferenceId, _successfulResponse(string(tooLong)), ResponseStatus.Success, _emptyRequest());
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "market reopens");
+        assertEq(m.parseRequestId, 0, "parse request cleared");
+        assertEq(m.parseRequestedAt, 0, "parse request timestamp cleared (v15 H1 fix)");
+        assertEq(m.inferenceRequestId, 0, "inference request cleared");
+        assertEq(m.inferenceRequestedAt, 0, "inference request timestamp cleared");
+    }
+
+    function testInferenceCallbackInvalidOutputPathClearsParseRequestedAt() public {
+        // v15 H1 regression: the invalid-output branch (non-YES/NO result) in
+        // handleInferenceCallback must also clear parseRequestedAt. Same bug
+        // shape as the over-long branch — the failure path opened the market
+        // back to Open but left the parse timestamp dangling.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, _successfulResponse("Evidence"), ResponseStatus.Success, _emptyRequest());
+        uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
+
+        vm.prank(PLATFORM);
+        market.handleInferenceCallback(inferenceId, _successfulResponse("MAYBE"), ResponseStatus.Success, _emptyRequest());
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "market reopens");
+        assertEq(m.parseRequestId, 0, "parse request cleared");
+        assertEq(m.parseRequestedAt, 0, "parse request timestamp cleared (v15 H1 fix)");
+        assertEq(m.inferenceRequestId, 0, "inference request cleared");
+        assertEq(m.inferenceRequestedAt, 0, "inference request timestamp cleared");
+    }
+
+    function testInferenceCallbackFailedStatusPathClearsParseRequestedAt() public {
+        // v15 H1 regression: the non-success-status branch in
+        // handleInferenceCallback must also clear parseRequestedAt. The bug
+        // shape is the same as the other two rollback branches — opening the
+        // market back to Open without cleaning up the parse timestamp left
+        // getAgentMarketContext readers thinking the market was mid-parse.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, _successfulResponse("Evidence"), ResponseStatus.Success, _emptyRequest());
+        uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
+
+        Response[] memory responses = new Response[](0);
+        vm.prank(PLATFORM);
+        market.handleInferenceCallback(inferenceId, responses, ResponseStatus.Failed, _emptyRequest());
+
+        AutonomousPredictionMarket.Market memory m = market.getMarket(marketId);
+        assertEq(uint256(m.status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "market reopens");
+        assertEq(m.parseRequestId, 0, "parse request cleared");
+        assertEq(m.parseRequestedAt, 0, "parse request timestamp cleared (v15 H1 fix)");
+        assertEq(m.inferenceRequestId, 0, "inference request cleared");
+        assertEq(m.inferenceRequestedAt, 0, "inference request timestamp cleared");
+    }
+
+    function testGenerationPromptTemplateGetterReturnsContractConstants() public {
+        // v15 L1: external agents need a stable on-chain source for the exact
+        // prompt prefix + suffix the contract sends to the LLM Inference
+        // agent's inferToolsChat. They previously had to decompile the source
+        // (or scrape this repo) to predict the agent's tool-call output.
+        (string memory prefix, string memory suffix) = market.getGenerationPromptTemplate();
+
+        assertEq(prefix, market.GENERATION_PROMPT_PREFIX(), "prefix matches the constant");
+        assertEq(suffix, market.GENERATION_PROMPT_SUFFIX(), "suffix matches the constant");
+        assertTrue(
+            _contains(prefix, "Design a binary YES/NO prediction market"),
+            "prefix explains the design task"
+        );
+        assertTrue(_contains(suffix, "createMarket(question, source, durationSeconds)"), "suffix names the tool");
+        assertTrue(_contains(suffix, "SPECIFIC"), "suffix enforces the SPECIFIC-URL rule");
+        assertTrue(_contains(suffix, "[300, 600]"), "suffix enforces the [300, 600] duration range");
+    }
+
+    function testAgentManifestAdvertisesV15() public {
+        // v15 additions: the parseRequestedAt-rollback fix, the prompt-template
+        // getter, and the version bump itself.
+        string memory manifest = market.agentManifest();
+        assertTrue(_contains(manifest, "v15"), "manifest advertises v15");
+        assertTrue(_contains(manifest, "getGenerationPromptTemplate"), "manifest mentions the prompt-template getter");
+        assertTrue(
+            _contains(manifest, "parseRequestedAt") &&
+                _contains(manifest, "inference-rollback"),
+            "manifest documents the parseRequestedAt rollback fix"
+        );
+    }
+
     function _contains(string memory haystack, string memory needle) internal pure returns (bool) {
         bytes memory h = bytes(haystack);
         bytes memory n = bytes(needle);

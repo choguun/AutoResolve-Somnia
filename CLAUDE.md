@@ -14,55 +14,55 @@ hard constraints that are easy to break.
 - **Hackathon**: Built for the Somnia Agentathon. The repo is a single demo product
   with a hardening pass (v4 contract). Future multi-outcome markets, dispute windows,
   and protocol fees are intentionally out of scope (see `README.md` → Known limitations).
-- **Current deployed contract (v14)**:
-  `0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9` on Somnia Shannon Testnet
+- **Current deployed contract (v15)**:
+  `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` on Somnia Shannon Testnet
   (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
 - **Live app**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
   at `/api/agent-manifest` and `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof**: market #1 on the v2 contract resolved `YES` via parse
   receipt `2400421` and inference receipt `2400485`; winnings claimed on-chain
-  (`claimTx: 0x888327…2380`). The v14 deployment is the current live target.
+  (`claimTx: 0x888327…2380`). The v15 deployment is the current live target.
 - **v7 E2E AI-created→AI-resolved proof**: market #3 on v7
   (`0xd3E946aC…4B69`) was created by the inference agent and resolved YES via
   parse receipt `4254170` and inference receipt `4254291` (tx
-  `0x362daa6f…b5143`). v14 inherits the same prompt + pipeline; the address
-  changed because v14 added the
-  NO-outcome parser fix (`_parseYesNo` split into exact 2-byte `NO` and
-  3-byte `YES` — fixes the v9/v13 regression that re-anchored NO to 3 bytes
-  and silently rejected every legitimate NO outcome) + the
-  `AgentMarketContext` timestamp fields (`parseRequestedAt` and
-  `inferenceRequestedAt` exposed externally so agents can detect stuck
-  requests without off-chain timestamp tracking) + the
-  `DuplicateToolCall(uint256 indexed requestId, uint256 toolCallCount)`
-  advisory event (emitted when the inference agent returns >1
-  `createMarket` tool call in a single `inferToolsChat` response — first
-  call is still processed, this is observability only) + the
-  relayer `RESET_MAX_ATTEMPTS = 3` per-reset attempt cap
-  (`tryResetStuckMarket` and `tryResetStuckGeneration` track separate
-  reset-attempt budgets so a permanently underfunded contract doesn't
-  drain the relayer EOA via infinite resubmits — symmetric to the v10
-  per-market retry cap but for the reset path) + the
-  receipt-kind branch in `useAgentReceipt` (resolution receipts point
-  users to the operator recovery path on the proof page; generation
-  receipts honestly note the inference deposit is not refundable) + the
-  status passthrough on the receipt proxy (404 and 502 responses now
-  thread `upstreamStatus` so the UI can distinguish "platform is
-  throttling" vs "platform is down" vs "stale link") + the
-  `agentManifest()` v14 bump with corrected exact-2-byte-NO wording +
-  the `lib-web/contract.ts` `Market` type extension matching the new
-  contract timestamp fields + the doc comment on `_isGenerationStuck`
-  documenting the dual-predicate invariant
-  (`requestStage != None AND elapsed > STALE_REQUEST_TIMEOUT`)
+  `0x362daa6f…b5143`). v15 inherits the same prompt + pipeline; the address
+  changed because v15 added the
+  `parseRequestedAt` rollback cleanup (all three `handleInferenceCallback`
+  failure branches now clear the parse timestamp — v14 left it set,
+  misleading `getAgentMarketContext` readers into thinking an Open market
+  was still mid-parse) + the
+  `getGenerationPromptTemplate()` view (returns the prompt prefix +
+  suffix constants as `(string, string)` so external agents can read
+  the exact prompt without decompiling) + the
+  relayer parse-failure URL LRU (skips re-submission for URLs whose
+  parse callback already failed within the last hour; same URL won't
+  parse any better on the next attempt) + the
+  relayer exponential backoff (`nextRetryAt: Map` gates retries with
+  `BASE_BACKOFF_MS * 2^attempts` capped at 30 minutes, closing the
+  silent retry-storm vector) + the
+  `AgentCommandCenter` recovery panel query invalidation
+  (`queryClient.invalidateQueries({ queryKey: ['market', id] })` after
+  a successful force-reset so `/market/[id]` on other tabs refreshes) +
+  the receipt proxy fallback host (5xx from `receipts.testnet.agents.somnia.host`
+  retries on `agents.testnet.somnia.network`) + the
+  new `app/api/receipt/by-tx/[hash]/route.ts` endpoint (decodes
+  `ResolutionRequested` / `GenerationRequested` event topics from a tx
+  receipt so `GenerateMarketForm` can navigate from a confirmed tx to
+  the matching receipt page) + the
+  `lib-web/somnia-chain.ts` extraction (server-safe chain definition
+  so route handlers can import `somniaTestnet` without dragging in
+  client-only `getDefaultConfig`) + the
+  relayer SPOF doc + verbose gate (M1+M7) + the
+  `agentManifest()` v15 bump with the parseRequestedAt-rollback +
+  prompt-template-getter documentation
   on top of
-  the v13 hardening (stuck-generation recovery path
-  (forceResetGeneration + scanStuckGenerationRequests + GenerationReset
-  event + lastGenerationRequestId high-water mark — symmetric to the
-  v11 stuck-resolution recovery but for the creation pipeline) + the
-  agent output length cap (MAX_AGENT_OUTPUT_LENGTH = 1024 bytes on
-  parse + inference results, with over-long treated as graceful
-  ResolutionFailed rather than a revert) + the relayer GenerationFailed
-  advisory log step (operators can see creation failure rate without
-  auto-retry, since wrong topic is the proposer's call to fix)) and
+  the v14 hardening (NO-outcome parser fix + AgentMarketContext
+  timestamp fields + DuplicateToolCall advisory event + relayer
+  RESET_MAX_ATTEMPTS=3 per-reset cap + receipt-kind branch +
+  upstreamStatus passthrough + manifest v14 bump) and
+  the v13 hardening (stuck-generation recovery + agent output length
+  cap + relayer GenerationFailed advisory log + non-reverting callbacks
+  on over-long output + lastGenerationRequestId high-water mark) and
   the v12 hardening (MarketReset.stuckRequestId field + useAgentReceipt
   recovery-flag reset + receipt-proxy 502 cache removed) and the v11
   hardening (stuck-request recovery path: forceResetMarket +
@@ -346,7 +346,7 @@ Notes:
 ```bash
 # Solidity (Foundry)
 forge build                       # compile
-forge test -vv                    # 82 tests in test/AutonomousPredictionMarket.t.sol
+forge test -vv                    # 87 tests in test/AutonomousPredictionMarket.t.sol
 
 # Frontend
 pnpm lint                         # eslint --max-warnings=0

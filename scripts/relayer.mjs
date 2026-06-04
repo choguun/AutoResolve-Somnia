@@ -20,6 +20,17 @@
 //                           Reset by restarting the relayer after refilling the contract.
 //   RELAYER_VERBOSE         1 to log every market scanned, 0 to log only retries (default 1)
 //
+// SPOF NOTE (v15): this relayer is a single point of failure for the "fully
+// autonomous" claim. If the EOA runs out of gas, the key is lost, or the host
+// crashes, the on-chain surface (forceResetMarket / forceResetGeneration) is
+// still callable by anyone, but no one will retry stuck markets or auto-reset
+// them. To get a second watchdog without cross-instance coordination, run a
+// second relayer with a SECOND PRIVATE_KEY pointed at the same contract. The
+// per-market `alreadySubmitted` set is per-process, so two instances will
+// occasionally double-submit, but the contract reverts MarketNotOpen on the
+// second submission and the relayer logs and moves on. A more elaborate fix
+// (e.g. on-chain idempotency via a nonce map) is out of scope for v15.
+//
 // Requires `pnpm install` to have produced lib-web/abi.json (via `pnpm export-abi`).
 
 import { readFile } from 'node:fs/promises';
@@ -28,6 +39,7 @@ import { dirname, join } from 'node:path';
 import {
   createPublicClient,
   createWalletClient,
+  decodeAbiParameters,
   http,
   keccak256,
   toBytes,
@@ -50,6 +62,20 @@ const MAX_ATTEMPTS_PER_MARKET = Number(process.env.RELAYER_MAX_ATTEMPTS ?? 5);
 // windows and only advance the cursor on a fully-successful drain — otherwise the
 // relayer would wedge on every subsequent tick re-trying the same oversized range.
 const LOG_CHUNK_SIZE = 1000n;
+// v15: exponential backoff between failed resolution attempts within the same
+// relayer lifetime. v10's RELAYER_MAX_ATTEMPTS cap (default 5) closed the
+// gas-DoS vector but allowed 5 attempts in 2.5 minutes. v15 schedules each
+// retry at 30s * 2^(attempts-1) — 30s, 60s, 120s, 240s, 480s, capped at
+// MAX_BACKOFF_MS. The attempt count is reset on success.
+const BASE_BACKOFF_MS = POLL_MS;
+const MAX_BACKOFF_MS = 30 * 60 * 1000;
+// v15: parse-failure LRU cache. A market whose parse callback fails
+// (ResolutionFailed with stage=ParseWebsite) won't resolve on the next retry
+// either — the same bad URL will fail the same way. The LRU keys on a
+// normalized URL hash and skips re-submission for PARSE_FAILURE_TTL_MS. Cleared
+// when the relayer restarts, same as the attempt counters.
+const PARSE_FAILURE_TTL_MS = 60 * 60 * 1000;
+const PARSE_FAILURE_CACHE_LIMIT = 256;
 
 if (!process.env.PRIVATE_KEY) {
   console.error('Error: PRIVATE_KEY is not set. Copy .env.example to .env and add your key.');
@@ -97,7 +123,7 @@ const GENERATION_FAILED_TOPIC = keccak256(
   toBytes('GenerationFailed(uint256,uint8,string)'),
 );
 
-console.log('[relayer] starting (v14)');
+console.log('[relayer] starting (v15)');
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
@@ -122,6 +148,14 @@ const attemptCount = new Map();
 // resolution budget for the same market id.
 const RESET_MAX_ATTEMPTS = 3;
 const resetAttemptCount = new Map();
+// v15: exponential backoff for resolution retries. nextRetryAt.get(key) is
+// the wall-clock ms timestamp at which the next attempt is allowed. Cleared
+// on success.
+const nextRetryAt = new Map();
+// v15: parse-failure LRU. Map<urlHash, expiresAtMs>. getAgentMarketContext is
+// called for every market in the resolvable list, and the URL hash check is
+// O(1). The LRU is bounded by PARSE_FAILURE_CACHE_LIMIT — eviction is FIFO.
+const parseFailureCache = new Map();
 const maxWei = parseEther(MAX_TOPUP_STT);
 
 function marketKey(marketId) {
@@ -129,6 +163,40 @@ function marketKey(marketId) {
   // scan (bigint) hits the same Set entry. Topics are 32-byte ABI-encoded
   // uint256, so BigInt() decodes both shapes the same way.
   return BigInt(marketId).toString();
+}
+
+function urlKey(url) {
+  // Normalize the URL for the LRU key: trim + lowercase the scheme + host so
+  // "https://Example.com/path" and "https://example.com/path" share an entry.
+  // The path is case-sensitive in the LLM parsing sense, so we leave the path
+  // alone. Cheap hash (djb2) — no crypto needed, just to spread LRU entries.
+  const normalized = url.trim().toLowerCase().split('/').slice(0, 3).join('/');
+  let hash = 5381;
+  for (let i = 0; i < normalized.length; i++) {
+    hash = ((hash << 5) + hash + normalized.charCodeAt(i)) | 0;
+  }
+  return hash.toString();
+}
+
+function cacheParseFailure(url) {
+  if (parseFailureCache.size >= PARSE_FAILURE_CACHE_LIMIT) {
+    // FIFO evict the oldest entry. Map iteration is insertion-order, so the
+    // first key is the oldest.
+    const oldest = parseFailureCache.keys().next().value;
+    parseFailureCache.delete(oldest);
+  }
+  parseFailureCache.set(urlKey(url), Date.now() + PARSE_FAILURE_TTL_MS);
+}
+
+function isUrlInParseFailureCache(url) {
+  const k = urlKey(url);
+  const expiresAt = parseFailureCache.get(k);
+  if (expiresAt === undefined) return false;
+  if (expiresAt < Date.now()) {
+    parseFailureCache.delete(k);
+    return false;
+  }
+  return true;
 }
 
 async function getLogsChunked(address, fromBlock, toBlock) {
@@ -160,11 +228,47 @@ async function readTopUp() {
   return status[2]; // topUpNeeded
 }
 
+async function fetchContextForMarket(marketId) {
+  try {
+    return await publicClient.readContract({
+      address: CONTRACT,
+      abi: ABI,
+      functionName: 'getAgentMarketContext',
+      args: [marketId],
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function tryResolveMarket(marketId, alreadySubmitted) {
   const key = marketKey(marketId);
   if (alreadySubmitted.has(key)) {
     if (VERBOSE) console.log(`[relayer]   skipping market ${marketId} (already queued this tick)`);
     return false;
+  }
+  // v15: exponential backoff gate. If a previous attempt is still in its
+  // backoff window, skip silently. The market will be picked up on a later
+  // tick once the window expires.
+  const retryAt = nextRetryAt.get(key);
+  if (retryAt !== undefined && retryAt > Date.now()) {
+    if (VERBOSE) {
+      console.log(`[relayer]   skipping market ${marketId} (backoff until ${new Date(retryAt).toISOString()})`);
+    }
+    return false;
+  }
+  // v15: parse-failure LRU check. Fetch the context to read resolutionSource,
+  // skip the market if its URL is in the cache. The context read is cheap
+  // (single view call) but we only do it for markets that have actually been
+  // seen before (attemptCount > 0) — fresh markets don't need the LRU check.
+  if (attemptCount.has(key)) {
+    const context = await fetchContextForMarket(marketId);
+    if (context && isUrlInParseFailureCache(context.resolutionSource)) {
+      if (VERBOSE) {
+        console.log(`[relayer]   skipping market ${marketId} (URL in parse-failure cache)`);
+      }
+      return false;
+    }
   }
   const attempts = attemptCount.get(key) ?? 0;
   if (attempts >= MAX_ATTEMPTS_PER_MARKET) {
@@ -198,25 +302,39 @@ async function tryResolveMarket(marketId, alreadySubmitted) {
       value: topUp,
     });
     attemptCount.set(key, attempts + 1);
-    console.log(
-      `[relayer]   submitted requestResolution(${marketId}) → ${hash} ` +
-        `(attempt ${attempts + 1}/${MAX_ATTEMPTS_PER_MARKET})`,
-    );
+    // v15: schedule the next retry attempt at BASE_BACKOFF_MS * 2^attempts
+    // (capped at MAX_BACKOFF_MS). This gates same-instance retries on the
+    // relayer's tick loop, so a transient RPC failure doesn't get retried
+    // on every 30s tick for the full MAX_ATTEMPTS_PER_MARKET budget.
+    const backoff = Math.min(BASE_BACKOFF_MS * 2 ** attempts, MAX_BACKOFF_MS);
+    nextRetryAt.set(key, Date.now() + backoff);
+    if (VERBOSE) {
+      console.log(
+        `[relayer]   submitted requestResolution(${marketId}) → ${hash} ` +
+          `(attempt ${attempts + 1}/${MAX_ATTEMPTS_PER_MARKET}, next retry in ${Math.round(backoff / 1000)}s)`,
+      );
+    }
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
-    console.log(`[relayer]   confirmed in block ${receipt.blockNumber} (status ${receipt.status})`);
+    if (VERBOSE) {
+      console.log(`[relayer]   confirmed in block ${receipt.blockNumber} (status ${receipt.status})`);
+    }
     if (receipt.status === 'success') {
       // The market either moved to Resolving (in-flight resolution) or rolled
       // back to Open on inner failure. Either way the previous attempt budget
       // is no longer meaningful — clear it so a future stuck-then-reset market
-      // gets a fresh budget.
+      // gets a fresh budget. Also clear the backoff gate.
       attemptCount.delete(key);
+      nextRetryAt.delete(key);
     }
     return receipt.status === 'success';
   } catch (err) {
     attemptCount.set(key, attempts + 1);
+    const backoff = Math.min(BASE_BACKOFF_MS * 2 ** (attempts + 1), MAX_BACKOFF_MS);
+    nextRetryAt.set(key, Date.now() + backoff);
     console.error(
       `[relayer]   requestResolution(${marketId}) failed:`,
       err.shortMessage ?? err.message,
+      `(next retry in ${Math.round(backoff / 1000)}s)`,
     );
     return false;
   }
@@ -291,8 +409,30 @@ async function drainFailureEvents(alreadySubmitted) {
     const marketId = log.topics[1];
     const requestId = log.topics[2];
     if (alreadySubmitted.has(marketKey(marketId))) continue;
+    // Decode the non-indexed (stage, status) tuple to detect ParseWebsite
+    // failures specifically — those are the ones we want to cache, because
+    // the same URL won't parse any better on the next attempt.
+    let stage = 0;
+    try {
+      const decoded = decodeAbiParameters(
+        [{ type: 'uint8' }, { type: 'uint8' }],
+        log.data,
+      );
+      stage = Number(decoded[0]);
+    } catch {
+      // If we can't decode, fall back to retrying normally.
+    }
+    if (stage === 1 /* ParseWebsite */) {
+      const context = await fetchContextForMarket(marketId).catch(() => null);
+      if (context?.resolutionSource) {
+        cacheParseFailure(context.resolutionSource);
+        console.log(
+          `[relayer] caching parse-failure URL for market ${marketId}: ${context.resolutionSource}`,
+        );
+      }
+    }
     console.log(
-      `[relayer] re-resolving market ${marketId} after failure (requestId ${requestId})`,
+      `[relayer] re-resolving market ${marketId} after failure (requestId ${requestId}, stage=${stage})`,
     );
     await tryResolveMarket(marketId, alreadySubmitted);
   }

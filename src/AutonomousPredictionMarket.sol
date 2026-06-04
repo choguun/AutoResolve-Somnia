@@ -79,6 +79,20 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     /// callback (e.g. platform outage, validator stall) leaving a market stuck
     /// in a limbo state that scanResolvableMarkets cannot pick up.
     uint256 public constant STALE_REQUEST_TIMEOUT = 30 minutes;
+    /// @dev Prompt template for the LLM Inference agent's inferToolsChat call
+    /// (used by requestMarketGeneration). Exposed via a getter so external
+    /// agents can read the exact format the contract expects without having to
+    /// decompile the source. The agent is given a single user message:
+    ///   "<prefix><topic><suffix>"
+    /// where prefix and suffix enforce the market shape (binary YES/NO,
+    /// 500-char question, http(s) source URL pointing at a SPECIFIC article
+    /// not a homepage, [300, 600] second duration).
+    string public constant GENERATION_PROMPT_PREFIX =
+        "Design a binary YES/NO prediction market on this topic. ";
+    string public constant GENERATION_PROMPT_SUFFIX =
+        " You MUST call createMarket(question, source, durationSeconds) exactly once. "
+        "question <= 500 chars. The source URL MUST be a SPECIFIC article or page that directly states the answer to the YES/NO question (e.g. https://en.wikipedia.org/wiki/Paris NOT https://en.wikipedia.org/). "
+        "Prefer a SHORT duration in [300, 600] seconds so the market can resolve quickly.";
 
     uint256 public nextMarketId;
 
@@ -366,13 +380,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         string[] memory roles = new string[](1);
         roles[0] = "user";
         string[] memory messages = new string[](1);
-        messages[0] = string.concat(
-            "Design a binary YES/NO prediction market on this topic. ",
-            topic,
-            " You MUST call createMarket(question, source, durationSeconds) exactly once. ",
-            "question <= 500 chars. The source URL MUST be a SPECIFIC article or page that directly states the answer to the YES/NO question (e.g. https://en.wikipedia.org/wiki/Paris NOT https://en.wikipedia.org/). ",
-            "Prefer a SHORT duration in [300, 600] seconds so the market can resolve quickly."
-        );
+        messages[0] = string.concat(GENERATION_PROMPT_PREFIX, topic, GENERATION_PROMPT_SUFFIX);
         string[] memory mcpServerUrls = new string[](0);
 
         OnchainTool[] memory onchainTools = new OnchainTool[](1);
@@ -530,9 +538,14 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
                 // Over-long agent output — same as a non-YES/NO result,
                 // reopen the market and let the relayer retry. We never
                 // revert in callbacks: a revert would leave the market
-                // stuck in Resolving for STALE_REQUEST_TIMEOUT.
+                // stuck in Resolving for STALE_REQUEST_TIMEOUT. v15: also
+                // clear parseRequestedAt — the parse already succeeded, so
+                // there is no parse request in flight, and leaving the old
+                // timestamp would mislead getAgentMarketContext readers
+                // (they would see parseRequestedAt != 0 for an Open market).
                 market.status = MarketStatus.Open;
                 market.parseRequestId = 0;
+                market.parseRequestedAt = 0;
                 market.inferenceRequestId = 0;
                 market.inferenceRequestedAt = 0;
                 emit ResolutionFailed(marketId, requestId, RequestStage.Inference, ResponseStatus.Failed);
@@ -543,8 +556,10 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             (bool valid, bool outcome) = _parseYesNo(result);
 
             if (!valid) {
+                // Same parseRequestedAt cleanup as the over-long branch above.
                 market.status = MarketStatus.Open;
                 market.parseRequestId = 0;
+                market.parseRequestedAt = 0;
                 market.inferenceRequestId = 0;
                 market.inferenceRequestedAt = 0;
                 emit ResolutionFailed(marketId, requestId, RequestStage.Inference, status);
@@ -561,8 +576,11 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
             emit MarketResolved(marketId, outcome, result, block.timestamp);
         } else {
+            // Non-success path (status was Failed, etc.). Same parseRequestedAt
+            // cleanup as the success-but-invalid branches above.
             market.status = MarketStatus.Open;
             market.parseRequestId = 0;
+            market.parseRequestedAt = 0;
             market.inferenceRequestId = 0;
             market.inferenceRequestedAt = 0;
             emit ResolutionFailed(marketId, requestId, RequestStage.Inference, status);
@@ -733,6 +751,15 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         return getParseDeposit() + getInferenceDeposit();
     }
 
+    /// @dev v15: external agents can read the exact prompt template the
+    /// contract sends to the LLM Inference agent's inferToolsChat, so they
+    /// can predict the agent's tool-call output without having to decompile
+    /// the source. Returns (prefix, suffix) — the contract concatenates
+    /// "<prefix><topic><suffix>" as the single user message.
+    function getGenerationPromptTemplate() external pure returns (string memory prefix, string memory suffix) {
+        return (GENERATION_PROMPT_PREFIX, GENERATION_PROMPT_SUFFIX);
+    }
+
     function getTotalPool(uint256 marketId) external view returns (uint256) {
         Market storage market = markets[marketId];
         return market.yesTotal + market.noTotal;
@@ -837,19 +864,20 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
     function agentManifest() external pure returns (string memory) {
         return string.concat(
-            "AutoResolve agent interface v14. ",
+            "AutoResolve agent interface v15. ",
             "RESOLUTION PIPELINE: scanResolvableMarkets(cursor, limit) to discover expired open markets (returns (uint256[] ids, uint256 nextCursor), max limit 50). ",
-            "getAgentMarketContext(marketId) for question, source, funding, request IDs, and per-request timestamps (parseRequestedAt, inferenceRequestedAt). ",
+            "getAgentMarketContext(marketId) for question, source, funding, request IDs, and per-request timestamps (parseRequestedAt, inferenceRequestedAt - both 0 when no request is in flight, including for Open markets in the inference-rollback window). ",
             "requestResolution(marketId) payable returns (uint256 requestId); the call is gated on market.status==Open, endTime passed, parseRequestId==0; requires topUpNeeded STT. ",
             "On success the parse request is created; the platform calls back asynchronously. ",
             "If parse succeeds but the contract is underfunded for the inference call, the market rolls back to Open and emits ResolutionFailed(stage=Inference) so the relayer retries once the contract is refilled. ",
-            "Inference output must be exactly YES (3 bytes) or NO (2 bytes); anything else (YEAH, NOPE, MAYBE, whitespace) reopens the market. v13 had a parser bug that silently rejected every NO outcome by matching NOO instead of NO; v14 fixes it. ",
+            "Inference output must be exactly YES (3 bytes) or NO (2 bytes); anything else (YEAH, NOPE, MAYBE, whitespace) reopens the market. v13 had a parser bug that silently rejected every NO outcome by matching NOO instead of NO; v14 fixes it. v15 fixes a separate state-cleanup bug where the inference-rollback branches left parseRequestedAt set to the original parse timestamp, misleading getAgentMarketContext readers. ",
             "STUCK-MARKET RECOVERY: scanStuckMarkets(cursor, limit) lists markets stuck in Resolving whose parse or inference request is older than STALE_REQUEST_TIMEOUT (30 minutes); forceResetMarket(marketId) reverts such a market back to Open so the relayer can re-trigger resolution. ",
             "forceResetMarket emits MarketReset(uint256 indexed marketId, address indexed resetBy, RequestStage stage, uint256 stuckRequestId) so external agents tracking platform request ids can correlate the reset with their own bookkeeping; the bundled relayer keys its own retry state by marketId and does not consume stuckRequestId. ",
             "STUCK-GENERATION RECOVERY: scanStuckGenerationRequests(cursor, limit) lists in-flight generation requests older than STALE_REQUEST_TIMEOUT (30 minutes); forceResetGeneration(requestId) clears the requestToTopic, generationProposer, and requestStage mappings so the user's inference deposit is the only lost value (the deposit was forwarded to the platform at request time and is not refundable). ",
             "forceResetGeneration emits GenerationReset(uint256 indexed requestId, address indexed resetBy). ",
             "CREATION PIPELINE: requestMarketGeneration(string topic) payable returns (uint256 requestId); triggers LLM Inference inferToolsChat that yields createMarket(question, source, durationSeconds) calldata. ",
             "getGenerationFundingStatus() returns the inference deposit and topUpNeeded. ",
+            "getGenerationPromptTemplate() returns (string prefix, string suffix); the contract concatenates prefix + topic + suffix as the single user message - external agents can read this to predict the agent's tool-call output without decompiling. ",
             "scanAgentCreatedMarkets(cursor, limit) lists markets whose creator == AGENT_CREATOR_SENTINEL (0xA1). ",
             "If the agent returns multiple createMarket tool calls in one response, the contract executes the first and emits DuplicateToolCall(requestId, count) as a non-fatal advisory; the rest are discarded. ",
             "OUTPUT CAPS: agent responses (parse result, inference result) are capped at MAX_AGENT_OUTPUT_LENGTH (1024 bytes). Over-long responses are treated as a parse/inference failure - the market reopens and ResolutionFailed is emitted. The contract never reverts in callbacks. ",

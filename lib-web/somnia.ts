@@ -1,32 +1,12 @@
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
 import { http } from 'wagmi';
-import { defineChain } from 'viem';
 
-export const somniaTestnet = defineChain({
-  id: 50312,
-  name: 'Somnia Shannon Testnet',
-  nativeCurrency: {
-    name: 'Somnia Test Token',
-    symbol: 'STT',
-    decimals: 18,
-  },
-  rpcUrls: {
-    default: {
-      http: ['https://dream-rpc.somnia.network'],
-      webSocket: ['wss://dream-rpc.somnia.network/ws'],
-    },
-    public: {
-      http: ['https://dream-rpc.somnia.network'],
-    },
-  },
-  blockExplorers: {
-    default: {
-      name: 'Somnia Shannon Explorer',
-      url: 'https://shannon-explorer.somnia.network',
-    },
-  },
-  testnet: true,
-});
+// Re-export the server-safe chain definition so existing imports of
+// `somniaTestnet` from this file still work. The actual definition now lives
+// in `somnia-chain.ts` because `getDefaultConfig` is client-only and would
+// poison server bundles if imported from a route handler.
+export { somniaTestnet } from './somnia-chain';
+import { somniaTestnet } from './somnia-chain';
 
 export const config = getDefaultConfig({
   appName: 'AutoResolve',

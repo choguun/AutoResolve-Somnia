@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPublicClient, http } from 'viem';
 import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
 import { toast } from 'sonner';
@@ -87,8 +87,14 @@ export function AgentCommandCenter() {
   const { isConnected } = useAccount();
   const { writeContract, data: hash, isPending, reset } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+  const queryClient = useQueryClient();
   const [activePipeline, setActivePipeline] = useState<'resolve' | 'generate' | 'recover'>('resolve');
   const [topic, setTopic] = useState('');
+  // v15: track which market the active recovery reset targets so the success
+  // callback can invalidate the corresponding `/market/[id]` query in any
+  // other open tab — otherwise the recovery panel "fixes" a stuck market and
+  // the user navigates to it on another tab only to see stale data.
+  const [recoveredMarketId, setRecoveredMarketId] = useState<bigint | null>(null);
 
   const {
     data,
@@ -271,6 +277,7 @@ export function AgentCommandCenter() {
   const forceResetMarket = (marketId: bigint) => {
     reset();
     setActivePipeline('recover');
+    setRecoveredMarketId(marketId);
     writeContract(
       {
         address: CONTRACT_ADDRESS,
@@ -293,6 +300,7 @@ export function AgentCommandCenter() {
   const forceResetGeneration = (requestId: bigint) => {
     reset();
     setActivePipeline('recover');
+    setRecoveredMarketId(null);
     writeContract(
       {
         address: CONTRACT_ADDRESS,
@@ -321,8 +329,15 @@ export function AgentCommandCenter() {
     } else {
       showConfirmedTransactionToast(hash, 'Stuck request reset - pipeline is unblocked', 'agent-recovery');
       refetchRecovery();
+      // v15: invalidate the recovered market's query so `/market/[id]` in any
+      // other open tab refetches and shows the freshly-reset state instead of
+      // the stale Resolving view.
+      if (recoveredMarketId != null) {
+        queryClient.invalidateQueries({ queryKey: ['market', recoveredMarketId.toString()] });
+      }
+      setRecoveredMarketId(null);
     }
-  }, [hash, isSuccess, activePipeline, refetchRecovery]);
+  }, [hash, isSuccess, activePipeline, refetchRecovery, queryClient, recoveredMarketId]);
 
   const resolveSteps = [
     {

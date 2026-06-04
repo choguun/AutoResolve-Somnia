@@ -2,7 +2,8 @@
 
 | Contract | Address | Explorer |
 |---|---|---|
-| **AutonomousPredictionMarket (v14 — current, 9 v13-audit gaps closed: NO-outcome parser, AgentMarketContext timestamps, DuplicateToolCall advisory, relayer reset attempt cap, receipt-kind branch, status passthrough, stuck-gen doc comment, manifest v14 bump, exact YES/NO manifest correction)** | `0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9` | [View](https://shannon-explorer.somnia.network/address/0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9) |
+| **AutonomousPredictionMarket (v15 — current, 1 v14-audit HIGH + 6 MEDIUM + 1 LOW closed: parseRequestedAt rollback cleanup in all 3 handleInferenceCallback branches, relayer parse-failure URL LRU + exponential backoff, recovery panel invalidates market queries, receipt proxy fallback host, receipt by-tx endpoint, generation prompt template getter, SPOF doc + verbose gate)** | `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` | [View](https://shannon-explorer.somnia.network/address/0x764Dc86246D242382c7619Fc715d0E3A64B2022b) |
+| AutonomousPredictionMarket (v14 — 9 v13-audit gaps closed: NO-outcome parser, AgentMarketContext timestamps, DuplicateToolCall advisory, relayer reset attempt cap, receipt-kind branch, status passthrough, stuck-gen doc comment, manifest v14 bump, exact YES/NO manifest correction) | `0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9` | [View](https://shannon-explorer.somnia.network/address/0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9) |
 | AutonomousPredictionMarket (v13 — 5 v12-audit gaps closed: stuck-generation recovery, agent output length cap, relayer GenerationFailed visibility + recovery, non-reverting callbacks on over-long output, `lastGenerationRequestId` high-water mark) | `0x37822751E5ab0688344135797ee8FFCFa76443fB` | [View](https://shannon-explorer.somnia.network/address/0x37822751E5ab0688344135797ee8FFCFa76443fB) |
 | AutonomousPredictionMarket (v12 — 3 v11-audit gaps closed: `MarketReset.stuckRequestId`, `useAgentReceipt` recovery flag reset, 502 cache removed) | `0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5` | [View](https://shannon-explorer.somnia.network/address/0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5) |
 | AutonomousPredictionMarket (v11 — 5 v10-audit gaps closed: stuck-request recovery, relayer getLogs chunking, refetch on error, attemptCount clear on success, 404 cache) | `0x58df0efc0cF6B1322e8d998257d750b18bb10ee7` | [View](https://shannon-explorer.somnia.network/address/0x58df0efc0cF6B1322e8d998257d750b18bb10ee7) |
@@ -17,14 +18,148 @@
 | AutonomousPredictionMarket (v2) | `0x1631303A748076648a0AbbE077a657Ad7812834F` | [View](https://shannon-explorer.somnia.network/address/0x1631303A748076648a0AbbE077a657Ad7812834F) |
 | AgentSmokeTest | `0x6e1dfB44AEc5c52dE3b12753726ea57207862F65` | [View](https://shannon-explorer.somnia.network/address/0x6e1dfB44AEc5c52dE3b12753726ea57207862F65) |
 
-## Latest deployment (v14 — 9 audit gaps closed) — completed
+## Latest deployment (v15 — 1 HIGH + 6 MEDIUM + 1 LOW audit gaps closed) — completed
 
-v14 is the current live contract. It closes the 9 issues surfaced by a fresh
-audit of the v13 deployment (2 HIGH + 4 MEDIUM + 3 LOW). The most important
-fix is **H1**: v13's `_parseYesNo` had a 3-byte `NO` branch that silently
-rejected every legitimate NO outcome (the v9 hardening regression). v14
-makes NO exactly 2 bytes and ships regression tests for both branches. All
-other fixes are additive.
+v15 is the current live contract at `0x764Dc86246D242382c7619Fc715d0E3A64B2022b`.
+It closes the 8 issues surfaced by a fresh audit of the v14 deployment (1
+HIGH + 6 MEDIUM + 1 LOW). The most important fix is **H1**: v14 left
+`parseRequestedAt` set to the original parse timestamp in all three
+`handleInferenceCallback` rollback paths (over-long output, invalid YES/NO,
+non-success status), which misled `getAgentMarketContext` readers — they
+saw an Open market with `parseRequestedAt != 0`, indistinguishable from a
+market mid-parse. v15 adds `market.parseRequestedAt = 0` to all three
+rollback branches and ships regression tests for each.
+
+**Contract (2 fixes)**
+- **H1 — `handleInferenceCallback` clears `parseRequestedAt` in all three
+  rollback paths.** Before v15, the over-long, invalid-YES/NO, and
+  non-success branches reopened the market but left the parse timestamp
+  dangling. After a v15 success path (a market that resolves cleanly), the
+  invariant is: `status == Resolved ⇒ parseRequestedAt == 0 && inferenceRequestedAt == 0`.
+  After a v15 rollback, the invariant is: `status == Open ⇒
+  parseRequestedAt == 0 && inferenceRequestedAt == 0`. Previously
+  `getAgentMarketContext` could see `parseRequestedAt == T1` for a market
+  in `Open` status, which made the stuck-detection (v11+) harder to
+  reason about externally. Backed by three regression tests:
+  `testInferenceCallbackOverlongPathClearsParseRequestedAt`,
+  `testInferenceCallbackInvalidOutputPathClearsParseRequestedAt`, and
+  `testInferenceCallbackFailedStatusPathClearsParseRequestedAt`.
+- **L1 — `getGenerationPromptTemplate()` getter returns
+  `(string prefix, string suffix)`.** External agents can now read the
+  exact prompt template the contract sends to the LLM Inference agent's
+  `inferToolsChat` without decompiling the source. The two constants
+  (`GENERATION_PROMPT_PREFIX` / `GENERATION_PROMPT_SUFFIX`) are also
+  exposed as `external constant` for direct read. The manifest advertises
+  the getter so agent builders can find it. Backed by
+  `testGenerationPromptTemplateGetterReturnsContractConstants`.
+
+**Relayer (4 fixes)**
+- **M1 — SPOF header note.** Added a top-of-file doc comment that calls out
+  the relayer as a single point of failure for the "fully autonomous"
+  claim. Recommends running a second relayer with a second PRIVATE_KEY
+  pointed at the same contract. The on-chain recovery surface
+  (`forceResetMarket` / `forceResetGeneration`) is still callable by anyone,
+  so a missing relayer only blocks auto-retry, not stuck-market recovery.
+- **M2 — parse-failure URL LRU.** A market whose parse callback fails
+  (`ResolutionFailed` with stage=1 = ParseWebsite) is now recorded in a
+  per-URL LRU cache (`urlKey → expiresAtMs`, TTL 1h, max 256 entries).
+  The relayer's `tryResolveMarket` reads the cache via
+  `isUrlInParseFailureCache(url)` and skips re-submission for cached
+  URLs — the same URL won't parse any better on the next attempt. The
+  cache is populated by `drainResolutionFailureEvents` when a parse-stage
+  failure is observed. URL keying normalizes scheme + host to lowercase
+  (a `https://Example.com/` and `HTTPS://example.com/` map to the same
+  entry) and uses a djb2 hash for the key (compact, fast).
+- **M3 — exponential backoff on retries.** New `nextRetryAt: Map` gates
+  same-instance retries: after a failed `requestResolution`, the relayer
+  sets `nextRetryAt[key] = Date.now() + BASE_BACKOFF_MS * 2^attempts`
+  (capped at 30 minutes). On a successful resolution the entry is
+  cleared. Closes the silent retry-storm vector — without backoff, a
+  transient RPC failure could trigger a `requestResolution` on every 30s
+  tick for the full `MAX_ATTEMPTS_PER_MARKET` budget. New log line:
+  `[relayer] starting (v15)`.
+- **M7 — verbose gate.** The "submitted" and "confirmed" log lines in
+  `tryResolveMarket` are now wrapped in `if (VERBOSE)`. The default log
+  output is now just the [relayer] tick headers and the resolution /
+  generation success / failure lines — the per-tx noise is opt-in. No
+  behavior change for operators who set `VERBOSE=1`.
+
+**Frontend (2 fixes)**
+- **M4 — `AgentCommandCenter` recovery panel invalidates `['market', id]`
+  on force-reset success.** Previously, force-resetting a stuck market
+  refetched the recovery panel (good) but left any open `/market/[id]`
+  tabs on stale data. v15 adds
+  `queryClient.invalidateQueries({ queryKey: ['market', recoveredMarketId.toString()] })`
+  inside the success callback, so a judge deep-link to the stuck market
+  on another tab updates immediately after the reset confirms.
+- **L1 (frontend mirror) — `lib-web/contract.ts` does NOT need a new field
+  this cycle.** The v15 contract changes (`parseRequestedAt` cleanup +
+  prompt template getter) are exposed through the existing
+  `AgentMarketContext` and a new view method, so the TS type surface is
+  unchanged. The recovery panel picks up the new getter through
+  `CONTRACT_ABI` automatically.
+
+**Receipt API (2 fixes)**
+- **M5 — fallback host on 5xx.** `app/api/receipt/[requestId]/route.ts`
+  now retries the `agent-receipts` query on the alternate host
+  (`agents.testnet.somnia.network`) when the canonical
+  (`receipts.testnet.agents.somnia.host`) returns 5xx. The two hosts run
+  on different infra, so a single-host outage no longer breaks the
+  receipt page. A successful fallback response includes
+  `_source: 'fallback'` so the UI can mark the row as "served from
+  alternate host" if needed. 4xx responses (stale link, 429 throttling)
+  are not retried — the cause is client-side, not infra.
+- **M6 — new `app/api/receipt/by-tx/[hash]/route.ts` endpoint.** The
+  GenerateMarketForm previously couldn't navigate the user from a
+  confirmed `requestMarketGeneration` tx to the matching receipt
+  page (it only had the tx hash, not the platform's `requestId`). The
+  new endpoint reads the tx receipt, filters logs by the AutoResolve
+  contract address, and decodes the `ResolutionRequested` /
+  `GenerationRequested` event topics to return the `requestId` (or
+  requestIds, for batched txs). `primaryRequestId` and `primaryKind`
+  are convenience fields for the typical single-call tx.
+- **M-friend — `lib-web/somnia-chain.ts` split out.** The chain
+  definition now lives in a server-safe `somnia-chain.ts` so route
+  handlers can import `somniaTestnet` without dragging in
+  `getDefaultConfig` (which is client-only and poisoned the server
+  bundle). `lib-web/somnia.ts` re-exports the chain for backward
+  compatibility with existing imports.
+
+**On-chain surface summary** (additive only):
+- `handleInferenceCallback` clears `parseRequestedAt` in all 3 rollback
+  branches.
+- New view: `getGenerationPromptTemplate() returns (string prefix, string suffix)`.
+- Two new `external constant string`s: `GENERATION_PROMPT_PREFIX` /
+  `GENERATION_PROMPT_SUFFIX` (read by the getter).
+- `agentManifest()` body bumps to v15 — documents the parseRequestedAt
+  rollback fix and the prompt-template getter.
+
+**Test coverage:** 87/87 Foundry (was 82/82 on v14). Five new tests:
+- `testInferenceCallbackOverlongPathClearsParseRequestedAt` — H1 regression.
+- `testInferenceCallbackInvalidOutputPathClearsParseRequestedAt` — H1
+  regression for the invalid-YES/NO branch.
+- `testInferenceCallbackFailedStatusPathClearsParseRequestedAt` — H1
+  regression for the non-success-status branch.
+- `testGenerationPromptTemplateGetterReturnsContractConstants` — L1
+  getter test.
+- `testAgentManifestAdvertisesV15` — manifest v15 assertion set:
+  `v15` string, `getGenerationPromptTemplate` mention, and the
+  parseRequestedAt + inference-rollback mention.
+
+The relayer changes (M1+M2+M3+M7), the receipt proxy changes (M5+M6),
+and the recovery-panel query invalidation (M4) have no automated test
+coverage — the repo has no JS test framework for the relayer (single-file
+`node` script) and no Next.js test framework. They are defended by the
+code change itself, the matching hook changes, and manual review.
+
+## Previous deployment (v14 — 9 audit gaps closed) — historical
+
+v14 closed the 9 issues surfaced by a fresh audit of the v13 deployment
+(2 HIGH + 4 MEDIUM + 3 LOW). All change-types were additive — the
+resolution pipeline, the generation pipeline, the relayer invocation,
+and the receipt proxy URL shape are unchanged. **Caveat:** v14 contained
+the H1 parseRequestedAt-rollback bug noted in the v15 section above;
+v15 fixes it.
 
 **Contract (5 fixes)**
 - **H1 — `_parseYesNo` requires exact 2-byte `NO` and 3-byte `YES` (NOT a

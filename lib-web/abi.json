@@ -23,6 +23,32 @@
   },
   {
     "type": "function",
+    "name": "GENERATION_PROMPT_PREFIX",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "GENERATION_PROMPT_SUFFIX",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "LLM_INFERENCE_AGENT_ID",
     "inputs": [],
     "outputs": [
@@ -477,6 +503,24 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getGenerationPromptTemplate",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "prefix",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "suffix",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "pure"
   },
   {
     "type": "function",
