@@ -12,6 +12,7 @@ import {
   CONTRACT_ABI,
   CONTRACT_ADDRESS,
   MarketStatus,
+  endTimeMs,
   formatStt,
   oddsPercent,
   type Market,
@@ -19,7 +20,12 @@ import {
 
 export function BetPanel({ marketId, market }: { marketId: bigint; market: Market }) {
   const [amount, setAmount] = useState('0.01');
-  const disabled = market.status !== MarketStatus.Open || Date.now() >= Number(market.endTime) * 1000;
+  // v22 (H2): use the shared endTimeMs helper. v19 (L2) added the uint32
+  // clamping inline in formatCountdown but missed this callsite; see the
+  // matching comment in useResolutionStatus. The contract caps
+  // MAX_DURATION to 1 day, so the comparison is safe for any reasonable
+  // endTime, but the helper is the right single source of truth.
+  const disabled = market.status !== MarketStatus.Open || Date.now() >= endTimeMs(market.endTime);
 
   const { writeContract, data: hash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });

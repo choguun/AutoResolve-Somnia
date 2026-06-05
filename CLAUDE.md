@@ -19,7 +19,7 @@ hard constraints that are easy to break.
   has been built and tested (104/104 Foundry) and is ready for `./scripts/deploy.sh`
   to ship a fresh contract address on Somnia Shannon Testnet
   (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
-- **Live app (v18)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
+- **Live app (v22)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
   at `/api/agent-manifest` and `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof**: market #1 on the v2 contract resolved `YES` via parse
   receipt `2400421` and inference receipt `2400485`; winnings claimed on-chain
@@ -138,6 +138,32 @@ hard constraints that are easy to break.
   contract, update the `Current deployed contract` line above
   with the new address and flip the `Live app` line's
   parenthetical from `(v15)` to `(v19)`.
+  on top of
+  the v22 hardening (formatStt restores the pre-v19 0.001-STT
+  exponential threshold — v19 L2 widened it to 1 STT, regressing
+  every sub-1-STT UI amount to scientific notation. The 0.3 STT
+  inference deposit, 0.66 STT resolution deposit, and 0.01 STT
+  demo bet all showed as "3.00e-1 STT" / "6.60e-1 STT" /
+  "1.00e-2 STT". v22 (H1) tightens the threshold to < 0.001 STT
+  (10^15 wei) so sub-milliSTT values keep the exponential form
+  (they'd otherwise round to "0 STT") while the [0.001, 1) STT
+  range uses decimal notation like pre-v19 + endTimeMs bigint
+  helper consolidated out of formatCountdown so every
+  `Date.now() >= ... * 1000` call site uses the same uint32
+  clamping. v19 (L2) added the masking inline in
+  formatCountdown but missed two callsites — useResolutionStatus
+  and BetPanel — that still used the unsafe `Number(endTime) * 1000`
+  pattern. v22 (H2) factors the helper into `lib-web/contract.ts`
+  and refactors all three call sites. Current 2026 timestamps
+  are safe either way (< 2^53 ms), but the v19 invariant was
+  incomplete + e2e-onchain.sh step labels updated from `/6` to
+  `/7` for the four pre-generation steps (the script was extended
+  from 6 to 7 steps when generation was added but the existing
+  labels weren't updated). v22 is frontend-only — no contract
+  change. Once the v19 contract + v22 frontend are deployed
+  (the deploy script deploys the contract; the frontend is
+  pushed to Vercel separately), flip the `Live app` line's
+  parenthetical from `(v18)` to `(v22)`.
   on top of
   the v14 hardening (NO-outcome parser fix + AgentMarketContext
   timestamp fields + DuplicateToolCall advisory event + relayer
