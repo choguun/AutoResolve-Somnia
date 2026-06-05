@@ -1272,6 +1272,112 @@ contract AutonomousPredictionMarketTest is Test {
         assertEq(bytes(market.marketParseResult(marketId)).length, 0, "marketParseResult cleared on overlong parse");
     }
 
+    // v19 (H1): handleInferenceCallback's overlong-output and invalid-output
+    // branches `return` before reaching the v16 M1 `delete marketParseResult`
+    // at the bottom of the function. The same symmetric-cleanup invariant
+    // that v18 M1 enforced for handleAgentResponse must hold here too —
+    // otherwise a future retryInferenceFromCache on a reopened market would
+    // hit a guaranteed InferenceNotCached revert. We pre-populate the cache
+    // via vm.store at the known storage slot (marketParseResult is the
+    // 13th declared state variable → slot 12; mapping value for marketId is
+    // keccak256(abi.encode(marketId, 12))), then run the overlong callback
+    // and assert the cache is empty.
+    function testInferenceOverlongBranchClearsParseResultCache() public {
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest());
+        uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
+        assertGt(inferenceId, 0, "inference request created");
+
+        // Pre-populate the parse-result cache at the mapping's storage slot.
+        // marketParseResult sits at slot 12 in the contract's storage layout
+        // (the _status uint256 from ReentrancyGuard takes slot 0; 12 vars
+        // come before marketParseResult in the contract's declaration order).
+        bytes32 slot = keccak256(abi.encode(marketId, uint256(12)));
+        // Encode "x" (length 1) inline: last byte = 1 * 2 = 0x02, byte 1 = 'x' = 0x78.
+        bytes32 stored = bytes32(uint256(0x7800000000000000000000000000000000000000000000000000000000000002));
+        vm.store(address(market), slot, stored);
+        assertEq(bytes(market.marketParseResult(marketId)).length, 1, "cache pre-populated");
+
+        bytes memory tooLong = new bytes(market.MAX_AGENT_OUTPUT_LENGTH() + 1);
+        for (uint256 i = 0; i < tooLong.length; i++) tooLong[i] = "x";
+
+        vm.prank(PLATFORM);
+        market.handleInferenceCallback(inferenceId, _successfulResponse(string(tooLong)), ResponseStatus.Success, _emptyRequest());
+
+        // v19 invariant: the overlong branch in handleInferenceCallback must
+        // clear the cache. The pre-v19 code returned at line 717 before the
+        // bottom-of-function delete at line 756, so a non-empty cache would
+        // have survived.
+        assertEq(bytes(market.marketParseResult(marketId)).length, 0, "marketParseResult cleared on overlong inference");
+    }
+
+    // v19 (H1): invalid-output branch (non-YES/NO result) in
+    // handleInferenceCallback must also clear the cache. Same bug shape as
+    // the overlong branch — both `return` before reaching the v16 M1
+    // bottom-of-function delete.
+    function testInferenceInvalidBranchClearsParseResultCache() public {
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest());
+        uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
+
+        // Pre-populate the cache.
+        bytes32 slot = keccak256(abi.encode(marketId, uint256(12)));
+        bytes32 stored = bytes32(uint256(0x7800000000000000000000000000000000000000000000000000000000000002));
+        vm.store(address(market), slot, stored);
+        assertEq(bytes(market.marketParseResult(marketId)).length, 1, "cache pre-populated");
+
+        // "MAYBE" is not YES/NO — triggers the invalid-output branch.
+        vm.prank(PLATFORM);
+        market.handleInferenceCallback(inferenceId, _successfulResponse("MAYBE"), ResponseStatus.Success, _emptyRequest());
+
+        assertEq(bytes(market.marketParseResult(marketId)).length, 0, "marketParseResult cleared on invalid inference");
+    }
+
+    // v19 (H1): Failed-status branch in handleInferenceCallback must also
+    // clear the cache. Pre-v19, the v16 M1 bottom-of-function delete covered
+    // this path, but the v19 hoist makes the invariant unconditional across
+    // all four exit branches (success+YES, success+overlong, success+invalid,
+    // non-success). Pinning the non-success path closes the loop on the
+    // symmetric-cleanup test matrix.
+    function testInferenceFailedStatusBranchClearsParseResultCache() public {
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest());
+        uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
+
+        // Pre-populate the cache.
+        bytes32 slot = keccak256(abi.encode(marketId, uint256(12)));
+        bytes32 stored = bytes32(uint256(0x7800000000000000000000000000000000000000000000000000000000000002));
+        vm.store(address(market), slot, stored);
+        assertEq(bytes(market.marketParseResult(marketId)).length, 1, "cache pre-populated");
+
+        Response[] memory responses = new Response[](0);
+        vm.prank(PLATFORM);
+        market.handleInferenceCallback(inferenceId, responses, ResponseStatus.Failed, _emptyRequest());
+
+        assertEq(bytes(market.marketParseResult(marketId)).length, 0, "marketParseResult cleared on failed inference");
+    }
+
     function testInferenceCallbackReopensMarketOnOverlongOutput() public {
         // Same shape as the parse-overlong test but on the inference callback.
         // An over-long inference result must also be treated as a failure, not
@@ -1551,6 +1657,17 @@ contract AutonomousPredictionMarketTest is Test {
         assertTrue(
             _contains(manifest, "parseResultCached") || _contains(manifest, "marketParseResult"),
             "manifest mentions the v17 cache invariant"
+        );
+    }
+
+    function testAgentManifestAdvertisesV19() public {
+        // v19 surfaces: hoisted marketParseResult cleanup in handleInferenceCallback
+        // (the v19 H1 fix), and the version bump itself.
+        string memory manifest = market.agentManifest();
+        assertTrue(_contains(manifest, "v19"), "manifest advertises v19");
+        assertTrue(
+            _contains(manifest, "handleInferenceCallback"),
+            "manifest documents the v19 H1 cleanup site"
         );
     }
 

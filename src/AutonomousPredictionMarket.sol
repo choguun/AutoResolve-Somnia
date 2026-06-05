@@ -695,6 +695,16 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
         Market storage market = markets[marketId];
 
+        // v19 (H1): symmetric-cleanup invariant from v15/v16/v17/v18 extended
+        // to every exit of handleInferenceCallback. The v16 M1 fix put
+        // `delete marketParseResult[marketId]` at the bottom of the function,
+        // but the overlong + invalid branches `return` before reaching it.
+        // A future retryInferenceFromCache would then skip the re-parse and
+        // hit a guaranteed InferenceNotCached revert. Hoisting the delete
+        // here makes the invariant unconditional — any future branch added
+        // to this callback inherits it for free.
+        delete marketParseResult[marketId];
+
         if (status == ResponseStatus.Success && responses.length > 0) {
             string memory result = abi.decode(responses[0].result, (string));
             if (bytes(result).length > MAX_AGENT_OUTPUT_LENGTH) {
@@ -749,11 +759,12 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             emit ResolutionFailed(marketId, requestId, RequestStage.Inference, status);
         }
 
-        // v16 (M1): clear the parse-result cache. Either the inference succeeded
-        // (so the cache is spent) or the market rolled back to Open (in which
-        // case the cache is stale — the next requestResolution will re-parse
-        // and either re-cache on a new underfunded inference or never need it).
-        delete marketParseResult[marketId];
+        // v16 (M1): clear the request-id book-keeping on the success path.
+        // The marketParseResult cleanup above is unconditional (v19 H1); the
+        // requestToMarket / requestStage cleanup was already at the bottom
+        // in v16 and remains so for the success branch. The overlong + invalid
+        // branches `return` before reaching this line, having done their own
+        // delete above.
         delete requestToMarket[requestId];
         delete requestStage[requestId];
     }
@@ -1048,14 +1059,14 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
     function agentManifest() external pure returns (string memory) {
         return string.concat(
-            "AutoResolve agent interface v18. ",
+            "AutoResolve agent interface v19. ",
             "RESOLUTION PIPELINE: scanResolvableMarkets(cursor, limit) to discover expired open markets (returns (uint256[] ids, uint256 nextCursor), max limit 50). ",
             "getAgentMarketContext(marketId) for question, source, funding, request IDs, and per-request timestamps (parseRequestedAt, inferenceRequestedAt - both 0 when no request is in flight, including for Open markets in the inference-rollback window). ",
             "requestResolution(marketId) payable returns (uint256 requestId); the call is gated on market.status==Open, endTime passed, parseRequestId==0; requires topUpNeeded STT. ",
             "On success the parse request is created; the platform calls back asynchronously. ",
             "If parse succeeds but the contract is underfunded for the inference call, the market rolls back to Open, the parse result is cached in marketParseResult[marketId], and InferenceUnderfunded(uint256 indexed marketId, uint256 indexed parseRequestId, string parseResult) is emitted. The relayer watches this event and calls retryInferenceFromCache(marketId) payable to skip the re-parse. ",
             "retryInferenceFromCache requires market.status==Open, endTime passed, no parse/inference request in flight, non-empty cache, and balance >= getInferenceDeposit(); the cache is consumed on success. ",
-            "Inference output must be exactly YES (3 bytes) or NO (2 bytes); anything else (YEAH, NOPE, MAYBE, whitespace) reopens the market. v13 had a parser bug that silently rejected every NO outcome by matching NOO instead of NO; v14 fixes it. v15 fixes a separate state-cleanup bug where the inference-rollback branches left parseRequestedAt set to the original parse timestamp, misleading getAgentMarketContext readers. ",
+            "Inference output must be exactly YES (3 bytes) or NO (2 bytes); anything else (YEAH, NOPE, MAYBE, whitespace) reopens the market. v13 had a parser bug that silently rejected every NO outcome by matching NOO instead of NO; v14 fixes it. v15 fixes a separate state-cleanup bug where the inference-rollback branches left parseRequestedAt set to the original parse timestamp, misleading getAgentMarketContext readers. v19 (H1) extends the v15/v16/v17/v18 symmetric-cleanup invariant to ALL four exit branches of handleInferenceCallback (overlong, invalid, non-success, success+YES) by hoisting the delete marketParseResult[marketId] to the top of the function. The pre-v19 code returned from the overlong + invalid branches before reaching the v16 M1 bottom-of-function delete, so a future retryInferenceFromCache on a reopened market could have hit InferenceNotCached with a stale cache string. ",
             "STUCK-MARKET RECOVERY: scanStuckMarkets(cursor, limit) lists markets stuck in Resolving whose parse or inference request is older than STALE_REQUEST_TIMEOUT (30 minutes); forceResetMarket(marketId) reverts such a market back to Open so the relayer can re-trigger resolution. ",
             "forceResetMarket emits MarketReset(uint256 indexed marketId, address indexed resetBy, RequestStage stage, uint256 stuckRequestId) so external agents tracking platform request ids can correlate the reset with their own bookkeeping; the bundled relayer keys its own retry state by marketId and does not consume stuckRequestId. ",
             "STUCK-GENERATION RECOVERY: scanStuckGenerationRequests(cursor, limit) lists in-flight generation requests older than STALE_REQUEST_TIMEOUT (30 minutes); forceResetGeneration(requestId) clears the requestToTopic, generationProposer, requestStage, and generationRequestedAt mappings so the user's inference deposit is the only lost value (the deposit was forwarded to the platform at request time and is not refundable). v16 also clears generationRequestedAt on every successful handleGenerationCallback exit, matching the v15 parseRequestedAt cleanup invariant. ",
@@ -1067,7 +1078,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             "If the agent returns multiple createMarket tool calls in one response, the contract executes the first and emits DuplicateToolCall(requestId, count) as a non-fatal advisory; the rest are discarded. ",
             "OUTPUT CAPS: agent responses (parse result, inference result) are capped at MAX_AGENT_OUTPUT_LENGTH (1024 bytes). Over-long responses are treated as a parse/inference failure - the market reopens and ResolutionFailed is emitted. The contract never reverts in callbacks. ",
             "CONSTRAINTS: question <= 500 chars, source is an http(s) URL (case-insensitive scheme, leading whitespace allowed) pointing at a SPECIFIC article or page (not a site homepage), duration in [300, 86400] seconds (MAX_DURATION upper bound added in v16 - v1-v15 only enforced the lower bound), bet >= MIN_BET (0.001 STT), topic <= 200 chars. ",
-            "CACHE INVARIANT (v17): marketParseResult[marketId] is cleared on every requestResolution entry (preventing stale-cache races on underfunded-then-re-requested markets), on every forceResetMarket, on the parse-failure branch of handleAgentResponse, and (v18 M1) on the overlong-output branch. The public getter marketParseResult(uint256 marketId) returns the full cached string for agents that want the raw scrape without going through the context struct; the empty string means no cache. getAgentMarketContext exposes a parseResultCached bool so external agents can decide whether to call retryInferenceFromCache from a single read. ",
+            "CACHE INVARIANT (v17): marketParseResult[marketId] is cleared on every requestResolution entry (preventing stale-cache races on underfunded-then-re-requested markets), on every forceResetMarket, on the parse-failure branch of handleAgentResponse, on the overlong-output branch of handleAgentResponse (v18 M1), and (v19 H1) unconditionally on every handleInferenceCallback exit (hoisted to the top of the function). The public getter marketParseResult(uint256 marketId) returns the full cached string for agents that want the raw scrape without going through the context struct; the empty string means no cache. getAgentMarketContext exposes a parseResultCached bool so external agents can decide whether to call retryInferenceFromCache from a single read. ",
             "Agent receipts: https://agents.testnet.somnia.network/receipts/<requestId>."
         );
     }

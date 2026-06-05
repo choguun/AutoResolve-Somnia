@@ -14,9 +14,9 @@ hard constraints that are easy to break.
 - **Hackathon**: Built for the Somnia Agentathon. The repo is a single demo product
   with a hardening pass (v4 contract). Future multi-outcome markets, dispute windows,
   and protocol fees are intentionally out of scope (see `README.md` → Known limitations).
-- **Current deployed contract (v18 — pending deploy; v17/v16/v15 still live)**:
-  `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` is the **v15** address. v18
-  has been built and tested (100/100 Foundry) and is ready for `./scripts/deploy.sh`
+- **Current deployed contract (v19 — pending deploy; v18/v17/v16/v15 still live)**:
+  `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` is the **v15** address. v19
+  has been built and tested (104/104 Foundry) and is ready for `./scripts/deploy.sh`
   to ship a fresh contract address on Somnia Shannon Testnet
   (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
 - **Live app (v18)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
@@ -101,6 +101,43 @@ hard constraints that are easy to break.
   ships the v17 contract, update the `Current deployed contract` line
   above with the new address and flip the `Live app` line's parenthetical
   from `(v15)` to `(v17)`.
+  on top of
+  the v19 hardening (handleInferenceCallback hoists
+  `delete marketParseResult[marketId]` to the top of the function so
+  ALL four exit branches — overlong, invalid, non-success, and the
+  v15 happy-path success — clear the cache symmetrically. v18 M1
+  fixed the same shape in handleAgentResponse; v19 closes the
+  symmetric gap in handleInferenceCallback where the overlong +
+  invalid branches `return` before reaching the v16 M1
+  bottom-of-function delete. Without this hoist, a future
+  retryInferenceFromCache on a reopened market could have hit a
+  guaranteed InferenceNotCached revert with a stale cache string
+  + PayoutClaim invalidates the userBets query on claim success
+  so the "Claim Winnings" button hides within the 10s refetch
+  window instead of letting a double-click submit a guaranteed
+  NoWinningBets revert + relayer tryResetStuckMarket clears
+  nextRetryAt on success (mirroring tryResolveMarket and
+  tryRetryInferenceFromCache) so a force-reset doesn't leave
+  the next requestResolution gated by a stale up-to-30-minute
+  backoff window + receipt proxy wraps normalizeMinimalReceipt
+  in try/catch so a malformed 200 body falls through to a 502
+  with upstreamStatus:200 instead of a bare 500 + receipt proxy
+  adds Cache-Control: public, max-age=10 to the 5xx 502 path
+  so a downstream CDN can't latch onto a stale error + the
+  ResolutionPanel client-side log decode now filters by event
+  signature (topic[0] === RESOLUTION_REQUESTED_TOPIC) so a
+  future event with a marketId at topic[1] can't be matched
+  by accident + AgentCommandCenter local AgentMarketContext
+  type now includes the v17 parseResultCached field that the
+  contract has been returning all along + formatStt splits
+  the integer and fractional parts via bigint division so
+  1.5 STT doesn't round-trip through a lossy Number() and
+  formatCountdown clamps to a uint32 range to keep the ms
+  multiplication exact + manifest v19 bump documenting the
+  hoisted cleanup). Once `./scripts/deploy.sh` ships the v19
+  contract, update the `Current deployed contract` line above
+  with the new address and flip the `Live app` line's
+  parenthetical from `(v15)` to `(v19)`.
   on top of
   the v14 hardening (NO-outcome parser fix + AgentMarketContext
   timestamp fields + DuplicateToolCall advisory event + relayer

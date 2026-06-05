@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt, useBalance } from 'wagmi';
+import { keccak256, toHex } from 'viem';
 import { toast } from 'sonner';
 import { Bot, Info, Activity, ExternalLink } from 'lucide-react';
 import { Tooltip } from '@/components/shared/Tooltip';
@@ -9,6 +10,18 @@ import { CONTRACT_ABI, CONTRACT_ADDRESS, formatStt } from '@/lib-web/contract';
 import { useResolutionDeposit } from '@/hooks/useMarkets';
 import { showConfirmedTransactionToast, showSubmittedTransactionToast } from '@/lib-web/transactionToast';
 import { TransactionStatus } from '@/components/shared/TransactionStatus';
+
+// v19 (L1): filter the receipt logs by the ResolutionRequested event
+// signature, not just by topic[1] === marketId. v15 added a second indexed
+// arg (`stage` as uint8) to the event, but the original decode at lines
+// 33-46 of the pre-v19 file ignored topic[0] entirely. A future event
+// that puts `marketId` at topic[1] (e.g. an agent-created market variant
+// that mirrors the schema) would be matched by accident and surface a
+// wrong requestId. Same constant is computed in app/api/receipt/by-tx;
+// keeping it in sync is a one-line copy.
+const RESOLUTION_REQUESTED_TOPIC = keccak256(
+  toHex('ResolutionRequested(uint256,uint256,uint8)'),
+);
 
 export function ResolutionPanel({
   marketId,
@@ -37,7 +50,10 @@ export function ResolutionPanel({
     for (const log of receipt.logs) {
       if (!log.topics[0] || !log.topics[1] || !log.topics[2]) continue;
       if (log.address.toLowerCase() !== CONTRACT_ADDRESS.toLowerCase()) continue;
-      // marketId is topic[1], requestId is topic[2]
+      // v19 (L1): require the topic[0] to be ResolutionRequested — a future
+      // event from the contract that also has a marketId at topic[1] would
+      // otherwise be matched and surface a wrong requestId.
+      if (log.topics[0].toLowerCase() !== RESOLUTION_REQUESTED_TOPIC.toLowerCase()) continue;
       const loggedMarketId = BigInt(log.topics[1]);
       if (loggedMarketId !== marketId) continue;
       setParseRequestId(BigInt(log.topics[2]));

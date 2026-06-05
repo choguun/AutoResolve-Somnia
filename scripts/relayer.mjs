@@ -796,9 +796,15 @@ async function tryResetStuckMarket(marketId, alreadySubmitted) {
     if (receipt.status === 'success') {
       // The market is now Open again — clear any per-market attempt count so
       // the next requestResolution call gets a fresh budget. Also clear the
-      // reset budget since the recovery worked.
+      // reset budget since the recovery worked. v19 (H3): also clear
+      // nextRetryAt — without this, a previous failed resolution attempt's
+      // backoff window (up to 30 min) gates the next requestResolution call
+      // even though the market is now freshly Open. tryResolveMarket and
+      // tryRetryInferenceFromCache both clear nextRetryAt on success; this
+      // was the only path that didn't.
       attemptCount.delete(key);
       resetAttemptCount.delete(resetKey);
+      nextRetryAt.delete(key);
     }
     return receipt.status === 'success';
   } catch (err) {

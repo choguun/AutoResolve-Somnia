@@ -105,9 +105,20 @@ export async function GET(
     }
 
     if (primary && primary.ok) {
-      const data = (await primary.json()) as RawMinimalReceiptResponse;
-      const receipt = normalizeMinimalReceipt(data);
-      return NextResponse.json(receipt);
+      // v19 (M1): wrap normalizeMinimalReceipt in a try/catch so a malformed
+      // body (e.g. data.receipts[0] is undefined, or fields are missing)
+      // doesn't fall through to the generic 500 with no upstreamStatus.
+      // The throw surfaces as a 502 with upstreamStatus:200, which is the
+      // honest signal — the platform returned 200, but the body wasn't
+      // usable. The hook's status-code logic still routes correctly.
+      try {
+        const data = (await primary.json()) as RawMinimalReceiptResponse;
+        const receipt = normalizeMinimalReceipt(data);
+        return NextResponse.json(receipt);
+      } catch {
+        primaryStatus = 200;
+        // fall through to the 502 branch below
+      }
     }
 
     if (primary && primaryStatus === 404) {
@@ -122,7 +133,9 @@ export async function GET(
     // both hosts, so a single-host outage shouldn't break the receipt page.
     // v17 (L2): 599 (sentinel for fetch-threw) falls into this branch so the
     // alternate host still gets a chance on a network error.
-    if (primaryStatus >= 500) {
+    // v19 (M1): also fall through here when normalizeMinimalReceipt threw —
+    // the alternate host may serve a well-formed body for the same request.
+    if (primaryStatus >= 500 || (primary?.ok && primaryStatus === 200)) {
       try {
         const fallback = await fetchUpstream(
           alternateReceiptServiceUrl(requestId, 'minimal', contractAddress),
@@ -144,9 +157,13 @@ export async function GET(
     // from "our gateway broke" (a real 500). The UI uses this to pick the
     // right copy ("retrying…" vs "platform appears to be down"), and the
     // hook uses it to decide whether to back off.
+    // v19 (L3): add Cache-Control on the 502 path. A downstream CDN or
+    // browser cache that latches onto a 502 can keep returning it after the
+    // platform recovers. A 10s max-age caps the staleness while still
+    // absorbing judge deep-link bursts.
     return NextResponse.json(
       { error: 'Receipt upstream unavailable', requestId, upstreamStatus: primaryStatus },
-      { status: 502 }
+      { status: 502, headers: { 'Cache-Control': 'public, max-age=10' } }
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to fetch receipt';

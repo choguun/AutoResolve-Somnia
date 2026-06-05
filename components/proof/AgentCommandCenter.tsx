@@ -37,6 +37,15 @@ type AgentMarketContext = {
   resolutionSource: string;
   parseRequestedAt: bigint;
   inferenceRequestedAt: bigint;
+  // v19 (M2): v17 added this bool to the contract's getAgentMarketContext
+  // return tuple so external agents can decide whether to call
+  // retryInferenceFromCache from a single read. The local type was never
+  // updated, so a context read silently dropped the field — the proof
+  // page never told operators when a relayer-routable cache was sitting
+  // on-chain. The ABI in lib-web/abi.json includes it (auto-generated from
+  // the contract), so the runtime value was always present; the type
+  // shadow just hid it.
+  parseResultCached: boolean;
 };
 
 type AgentState = {

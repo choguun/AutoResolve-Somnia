@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { CheckCircle2, XCircle, Wallet } from 'lucide-react';
 import { CONTRACT_ABI, CONTRACT_ADDRESS, type Market } from '@/lib-web/contract';
@@ -33,6 +34,7 @@ export function OutcomeDisplay({ market }: { market: Market }) {
 
 export function PayoutClaim({ marketId, market }: { marketId: bigint; market: Market }) {
   const { address } = useAccount();
+  const queryClient = useQueryClient();
   const { data: userBets } = useUserBets(marketId, address);
   const { writeContract, data: hash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
@@ -41,10 +43,22 @@ export function PayoutClaim({ marketId, market }: { marketId: bigint; market: Ma
   const hasWinningBets = winningBets !== undefined && winningBets > 0n;
 
   useEffect(() => {
-    if (isSuccess) {
-      showConfirmedTransactionToast(hash, 'Winnings claimed!', 'claim-winnings');
+    if (!isSuccess) return;
+    // v19 (H2): invalidate the userBets query on claim success. The contract
+    // zeroes userYesBets/userNoBets on a successful claim, so the cached
+    // winningBets value above is now stale. Without this invalidate, the
+    // button stays clickable for the full 10s refetch window, and a second
+    // submission reverts NoWinningBets on-chain (wasted gas + a confusing
+    // error toast). The v15 recovery-panel pattern is the same shape:
+    // queryClient.invalidateQueries on tx success so other tabs / the same
+    // tab see fresh data.
+    if (address) {
+      queryClient.invalidateQueries({
+        queryKey: ['userBets', marketId.toString(), address],
+      });
     }
-  }, [hash, isSuccess]);
+    showConfirmedTransactionToast(hash, 'Winnings claimed!', 'claim-winnings');
+  }, [hash, isSuccess, queryClient, marketId, address]);
 
   const claim = () => {
     writeContract(
