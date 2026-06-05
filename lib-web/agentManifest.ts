@@ -14,7 +14,16 @@ const SHANNON_RPC_URL = 'https://dream-rpc.somnia.network';
 export function getAutoResolveAgentManifest() {
   return {
     name: 'AutoResolve',
-    version: 'v19',
+    // v25 (H1): bumped from v22 → v24 to match the live frontend. The manifest
+    // is served by the frontend, so the version label tracks the frontend. The
+    // on-chain `agentManifest()` still returns "AutoResolve agent interface
+    // v19." and is the authoritative source for the contract-side surface.
+    // External agents should call both: the JSON manifest for the
+    // frontend/UX version, and the on-chain view for the contract version.
+    // The proof page reads this field as the single source of truth for its
+    // "Frontend vN" pill (v24 H2 split the Frontend/Contract labels).
+    // Track the live frontend version in lockstep with CLAUDE.md "Live app".
+    version: 'v24',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
@@ -74,6 +83,14 @@ export function getAutoResolveAgentManifest() {
             'Create a binary YES/NO market. question <= 200 chars, source is http(s) URL, durationSeconds in [300, 86400]. Returns the new marketId.',
         },
       ],
+      // v25 (L3): the prompt template is no longer hardcoded. The route
+      // handlers (/api/agent-manifest, /.well-known/autoresolve-agent.json)
+      // merge `getGenerationPromptTemplate()` into this object at response
+      // time, so the manifest reflects the on-chain source-of-truth. If the
+      // contract is unreachable the field is omitted rather than guessed.
+      // The static `system`/`userPrefix` strings are kept as a fallback for
+      // the proof page (which renders a static description) — see
+      // CLAUDE.md note: these are documentation, not the live prompt.
       promptTemplate: {
         system:
           'You design binary YES/NO prediction markets. Call createMarket(question,source,durationSeconds) exactly once.',

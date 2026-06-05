@@ -14,187 +14,119 @@ hard constraints that are easy to break.
 - **Hackathon**: Built for the Somnia Agentathon. The repo is a single demo product
   with a hardening pass (v4 contract). Future multi-outcome markets, dispute windows,
   and protocol fees are intentionally out of scope (see `README.md` → Known limitations).
-- **Current deployed contract (v19 — pending deploy; v18/v17/v16/v15 still live)**:
-  `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` is the **v15** address. v19
-  has been built and tested (104/104 Foundry) and is ready for `./scripts/deploy.sh`
-  to ship a fresh contract address on Somnia Shannon Testnet
-  (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
-- **Live app (v22)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`, agent manifest
-  at `/api/agent-manifest` and `/.well-known/autoresolve-agent.json`.
-- **Historical E2E proof**: market #1 on the v2 contract resolved `YES` via parse
-  receipt `2400421` and inference receipt `2400485`; winnings claimed on-chain
-  (`claimTx: 0x888327…2380`). The v15 deployment is the current live target until v16 deploys.
+- **Current contract (v19 — pending deploy; v15/v16/v17/v18 still live)**:
+  `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` is the **v15** address (also
+  represents v16/v17/v18 — all four contracts share the same v15 address
+  family because none have been deployed; only the v19 contract is
+  build-ready). v19 is fully tested (104/104 Foundry) and ready for
+  `./scripts/deploy.sh` to ship a fresh contract address on Somnia Shannon
+  Testnet (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
+- **Live app (v24)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
+  agent manifest at `/api/agent-manifest` and
+  `/.well-known/autoresolve-agent.json`.
+- **Historical E2E proof (v2)**: market #1 on the v2 contract resolved `YES`
+  via parse receipt `2400421` and inference receipt `2400485`; winnings
+  claimed on-chain (`claimTx: 0x888327…2380`).
 - **v7 E2E AI-created→AI-resolved proof**: market #3 on v7
-  (`0xd3E946aC…4B69`) was created by the inference agent and resolved YES via
-  parse receipt `4254170` and inference receipt `4254291` (tx
-  `0x362daa6f…b5143`). v15 inherits the same prompt + pipeline; the address
-  changed because v15 added the
-  `parseRequestedAt` rollback cleanup (all three `handleInferenceCallback`
-  failure branches now clear the parse timestamp — v14 left it set,
-  misleading `getAgentMarketContext` readers into thinking an Open market
-  was still mid-parse) + the
-  `getGenerationPromptTemplate()` view (returns the prompt prefix +
-  suffix constants as `(string, string)` so external agents can read
-  the exact prompt without decompiling) + the
-  relayer parse-failure URL LRU (skips re-submission for URLs whose
-  parse callback already failed within the last hour; same URL won't
-  parse any better on the next attempt) + the
-  relayer exponential backoff (`nextRetryAt: Map` gates retries with
-  `BASE_BACKOFF_MS * 2^attempts` capped at 30 minutes, closing the
-  silent retry-storm vector) + the
-  `AgentCommandCenter` recovery panel query invalidation
-  (`queryClient.invalidateQueries({ queryKey: ['market', id] })` after
-  a successful force-reset so `/market/[id]` on other tabs refreshes) +
-  the receipt proxy fallback host (5xx from `receipts.testnet.agents.somnia.host`
-  retries on `agents.testnet.somnia.network`) + the
-  new `app/api/receipt/by-tx/[hash]/route.ts` endpoint (decodes
-  `ResolutionRequested` / `GenerationRequested` event topics from a tx
-  receipt so `GenerateMarketForm` can navigate from a confirmed tx to
-  the matching receipt page) + the
-  `lib-web/somnia-chain.ts` extraction (server-safe chain definition
-  so route handlers can import `somniaTestnet` without dragging in
-  client-only `getDefaultConfig`) + the
-  relayer SPOF doc + verbose gate (M1+M7) + the
-  `agentManifest()` v15 bump with the parseRequestedAt-rollback +
-  prompt-template-getter documentation
-  on top of
-  the v16 hardening (MAX_DURATION=86400 upper bound on createMarket +
-  deploy.sh prefund 1→2 STT + persistent parse-failure URL LRU
-  in `state/parse-failure-cache.json` + drop the v15 attemptCount>0
-  LRU gate + retryInferenceFromCache payable function + marketParseResult
-  cache + InferenceUnderfunded event + handleGenerationCallback clears
-  generationRequestedAt on every exit + GenerateMarketForm wires the
-  /api/receipt/by-tx endpoint + receipt proxy retries the primary host
-  once on 5xx before the alternate-host fallback + AgentReceiptViewer
-  keyed on requestId for fresh startedAt + manifest v16 bump).
-  Once `./scripts/deploy.sh` ships the v17 contract, update the
-  `Current deployed contract` line above with the new address and
-  flip the `Live app` line's parenthetical from `(v15)` to `(v17)`.
-  on top of
-  the v17 hardening (requestResolution clears marketParseResult
-  up-front to close the stale-cache race + symmetric defensive cleanups
-  in forceResetMarket and the parse-failure branch + AgentMarketContext
-  adds parseResultCached bool so external agents can decide whether
-  to call retryInferenceFromCache from a single read + receipt proxy
-  reads process.env.NEXT_PUBLIC_CONTRACT_ADDRESS instead of hardcoding
-  the platform address + receipt proxy M4 retry loop catches fetch
-  network errors and treats them as 599 so the alternate-host fallback
-  still runs + relayer per-instance parse-failure cache file keyed by
-  the relayer EOA + mkdirSync state/ on relayer startup + relayer
-  pre-checks marketParseResult(marketId) before retryInferenceFromCache
-  to skip the guaranteed InferenceNotCached revert + manifest v17 bump).
-  Once `./scripts/deploy.sh` ships the v16 contract, update the
-  `Current deployed contract` line above with the new address and
-  flip the `Live app` line's parenthetical from `(v15)` to `(v16)`.
-  on top of
-  the v18 hardening (relayer string-length pre-check for
-  marketParseResult since viem decodes the `string` return as a plain
-  JS string not hex-encoded bytes + _describeCreateRevert decodes
-  DurationTooLong for the most likely over-budget generation path +
-  handleAgentResponse overlong-output branch clears marketParseResult
-  to close the symmetric-cleanup invariant gap + dead AgentOutputTooLong
-  custom error removed + AgentReceiptViewer surfaces the `_source: 'fallback'`
-  field set by the receipt proxy alternate-host fallback + CREATE_MARKET_SELECTOR
-  constant extracted from the per-callback keccak256 + manifest v18 bump
-  documenting the overlong-branch cleanup and the public
-  marketParseResult(uint256 marketId) getter). Once `./scripts/deploy.sh`
-  ships the v17 contract, update the `Current deployed contract` line
-  above with the new address and flip the `Live app` line's parenthetical
-  from `(v15)` to `(v17)`.
-  on top of
-  the v19 hardening (handleInferenceCallback hoists
-  `delete marketParseResult[marketId]` to the top of the function so
-  ALL four exit branches — overlong, invalid, non-success, and the
-  v15 happy-path success — clear the cache symmetrically. v18 M1
-  fixed the same shape in handleAgentResponse; v19 closes the
-  symmetric gap in handleInferenceCallback where the overlong +
-  invalid branches `return` before reaching the v16 M1
-  bottom-of-function delete. Without this hoist, a future
-  retryInferenceFromCache on a reopened market could have hit a
-  guaranteed InferenceNotCached revert with a stale cache string
-  + PayoutClaim invalidates the userBets query on claim success
-  so the "Claim Winnings" button hides within the 10s refetch
-  window instead of letting a double-click submit a guaranteed
-  NoWinningBets revert + relayer tryResetStuckMarket clears
-  nextRetryAt on success (mirroring tryResolveMarket and
-  tryRetryInferenceFromCache) so a force-reset doesn't leave
-  the next requestResolution gated by a stale up-to-30-minute
-  backoff window + receipt proxy wraps normalizeMinimalReceipt
-  in try/catch so a malformed 200 body falls through to a 502
-  with upstreamStatus:200 instead of a bare 500 + receipt proxy
-  adds Cache-Control: public, max-age=10 to the 5xx 502 path
-  so a downstream CDN can't latch onto a stale error + the
-  ResolutionPanel client-side log decode now filters by event
-  signature (topic[0] === RESOLUTION_REQUESTED_TOPIC) so a
-  future event with a marketId at topic[1] can't be matched
-  by accident + AgentCommandCenter local AgentMarketContext
-  type now includes the v17 parseResultCached field that the
-  contract has been returning all along + formatStt splits
-  the integer and fractional parts via bigint division so
-  1.5 STT doesn't round-trip through a lossy Number() and
-  formatCountdown clamps to a uint32 range to keep the ms
-  multiplication exact + manifest v19 bump documenting the
-  hoisted cleanup). Once `./scripts/deploy.sh` ships the v19
-  contract, update the `Current deployed contract` line above
-  with the new address and flip the `Live app` line's
-  parenthetical from `(v15)` to `(v19)`.
-  on top of
-  the v22 hardening (formatStt restores the pre-v19 0.001-STT
-  exponential threshold — v19 L2 widened it to 1 STT, regressing
-  every sub-1-STT UI amount to scientific notation. The 0.3 STT
-  inference deposit, 0.66 STT resolution deposit, and 0.01 STT
-  demo bet all showed as "3.00e-1 STT" / "6.60e-1 STT" /
-  "1.00e-2 STT". v22 (H1) tightens the threshold to < 0.001 STT
-  (10^15 wei) so sub-milliSTT values keep the exponential form
-  (they'd otherwise round to "0 STT") while the [0.001, 1) STT
-  range uses decimal notation like pre-v19 + endTimeMs bigint
-  helper consolidated out of formatCountdown so every
-  `Date.now() >= ... * 1000` call site uses the same uint32
-  clamping. v19 (L2) added the masking inline in
-  formatCountdown but missed two callsites — useResolutionStatus
-  and BetPanel — that still used the unsafe `Number(endTime) * 1000`
-  pattern. v22 (H2) factors the helper into `lib-web/contract.ts`
-  and refactors all three call sites. Current 2026 timestamps
-  are safe either way (< 2^53 ms), but the v19 invariant was
-  incomplete + e2e-onchain.sh step labels updated from `/6` to
-  `/7` for the four pre-generation steps (the script was extended
-  from 6 to 7 steps when generation was added but the existing
-  labels weren't updated). v22 is frontend-only — no contract
-  change. Once the v19 contract + v22 frontend are deployed
-  (the deploy script deploys the contract; the frontend is
-  pushed to Vercel separately), flip the `Live app` line's
-  parenthetical from `(v18)` to `(v22)`.
-  on top of
-  the v14 hardening (NO-outcome parser fix + AgentMarketContext
-  timestamp fields + DuplicateToolCall advisory event + relayer
-  RESET_MAX_ATTEMPTS=3 per-reset cap + receipt-kind branch +
-  upstreamStatus passthrough + manifest v14 bump) and
-  the v13 hardening (stuck-generation recovery + agent output length
-  cap + relayer GenerationFailed advisory log + non-reverting callbacks
-  on over-long output + lastGenerationRequestId high-water mark) and
-  the v12 hardening (MarketReset.stuckRequestId field + useAgentReceipt
-  recovery-flag reset + receipt-proxy 502 cache removed) and the v11
-  hardening (stuck-request recovery path: forceResetMarket +
-  scanStuckMarkets + STALE_REQUEST_TIMEOUT / relayer getLogs chunking /
-  useAgentReceipt refetch-on-error gate / attemptCount clear-on-success /
-  404 cache on the receipt proxy) and the v10 hardening
-  (inference-callback Pending/None guard / honest rollback stage / fresh
-  manifest / receipt polling timeout / client-side URL validation /
-  relayer dedup fix + retry cap + per-tick topUp re-read) and the v9
-  hardening (stuck-market balance check / exact YES/NO parsing /
-  case-insensitive URL validation / paginated relayer) and the v8
-  hardening (MIN_BET / URL validation / nonReentrant / return `requestId` /
-  inner-revert decoder).
-  STALE_REQUEST_TIMEOUT / relayer getLogs chunking / useAgentReceipt
-  refetch-on-error gate / attemptCount clear-on-success / 404 cache on
-  the receipt proxy) and the v10 hardening
-  (inference-callback Pending/None guard / honest rollback stage / fresh
-  manifest / receipt polling timeout / client-side URL validation /
-  relayer dedup fix + retry cap + per-tick topUp re-read) and the v9
-  hardening (stuck-market balance check / exact YES/NO parsing /
-  case-insensitive URL validation / paginated relayer) and the v8
-  hardening (MIN_BET / URL validation / nonReentrant / return `requestId` /
-  inner-revert decoder).
+  (`0xd3E946aC…4B69`) was created by the inference agent (via
+  `requestMarketGeneration` → `inferToolsChat` → `createMarket` calldata) and
+  resolved YES via parse receipt `4254170` and inference receipt `4254291`
+  (tx `0x362daa6f…b5143`).
+
+### Version history
+
+The contract has been hardened through v8–v19 (Foundry) and the frontend /
+relayer through v22–v24. Each version's full diff lives in the
+`auto-resolve-v*-hardening` memory files in
+`~/.claude/projects/-Users-choguun-Documents-workspaces-hackathon-AutoResolve-Somnia/memory/`.
+Memory pointer list at the bottom of this file (`[[...]]`).
+
+Quick reference for "what shipped when":
+
+- **v19 contract (pending deploy)** — final Foundry-tested contract. Adds
+  `getGenerationPromptTemplate()` view, hoists `marketParseResult` cleanup
+  to top of `handleInferenceCallback` (symmetric with v18 M1's
+  `handleAgentResponse` fix), `PayoutClaim` invalidates `userBets` on
+  success, relayer `tryResetStuckMarket` clears `nextRetryAt`, receipt proxy
+  wraps `normalizeMinimalReceipt` in try/catch + `Cache-Control` on 5xx,
+  `ResolutionPanel` filters by event signature, `formatStt` /
+  `formatCountdown` precision safety.
+- **v22 frontend** — `formatStt` restores pre-v19 0.001-STT exponential
+  threshold (v19 L2 regressed sub-1-STT amounts to scientific notation);
+  `endTimeMs` helper consolidated out of `formatCountdown` so all three
+  callers (`useResolutionStatus`, `BetPanel`, `formatCountdown`) use the
+  same uint32 clamping. Frontend-only — no contract change.
+- **v23 frontend/relayer** — `?kind=generation` query param threaded
+  through `GenerateMarketForm` + `AgentCommandCenter` → `AgentReceiptViewer`
+  (closes "View live inference receipt" landing on resolution copy);
+  `/proof` "Live version" label reads from
+  `getAutoResolveAgentManifest().version` (was hardcoded "v3 contract");
+  `useMyBets` triggers `fetchNextPage()` on tab switch (closes silent gap
+  for late-id markets); relayer `drainGenerationFailureEvents` uses
+  module-level FIFO Set for persistent dedup.
+- **v24 frontend/relayer** — `extractGenerationToolCall`
+  decodes the `createMarket(string,string,uint256)` calldata from
+  generation receipts and surfaces Question/Source/Duration in
+  `AgentReceiptViewer` (was previously showing the model's narration or
+  raw hex); `/proof` "Latest Agent-Discoverable Deployment" now shows two
+  pill badges (`Frontend v24` / `Contract v19 (pending deploy)`) plus a
+  tooltip explaining the split; relayer `drainGenerationFailureEvents`
+  decodes the `(uint8 status, string reason)` data from `GenerationFailed`
+  events via `decodeAbiParameters` and logs the reason inline (was
+  swallowing the most useful debug signal); `useGenerationFailures` hook
+  reads the last 5000 blocks of `GenerationFailed` events and
+  `AgentCommandCenter` surfaces them in a new recovery card with a
+  "Re-run with different topic" shortcut to `GenerateMarketForm`;
+  `formatCountdown` returns `'Ended'` (not `'>99y'`) for
+  `endTime > 0xFFFFFFFFn` to match `endTimeMs`'s "already ended" semantic.
+- **v25 frontend/relayer** — `agentManifest.version` bumped v22 → v24
+  (proof page's `Frontend vN` pill is wired to this field as the
+  single source of truth); `MarketContextCard` now renders the
+  `parseResultCached` field as a 5th `MiniMetric` so operators can
+  see when a relayer-routable cache is on-chain (v19 M2 added the
+  type field but never wired the render); `useMyBetsMarkets` query
+  key swaps the `id,id,id,...` join for `markets.length` to stop
+  every new market from invalidating the position cache and
+  triggering an O(2N) re-read; relayer startup log bumped
+  `(v16)` → `(v24)`; receipt viewer's Refresh button now disables
+  during refetch (was vulnerable to double-click concurrent
+  refetches); My Bets tab shows a claimable-count chip
+  (Resolved + winning side = claimable) so users with many
+  positions can find unclaimed winnings; both manifest route
+  handlers merge the on-chain `getGenerationPromptTemplate()`
+  view over the static fallback so the JSON manifest reflects
+  the live prompt the contract sends to the inference agent.
+- **v26 frontend/server** — new `lib-web/agentManifestServer.ts`
+  wraps `getGenerationPromptTemplate()` in `unstable_cache` (5 min
+  revalidate) and uses a module-level publicClient, collapsing
+  v25 L3's per-request RPC round-trips into a single cached read;
+  receipt proxy imports `SOMNIA_PLATFORM_ADDRESS` from
+  `lib-web/agents.ts` instead of redeclaring the platform address
+  locally; receipt proxy 404/502 `Cache-Control` max-age tightened
+  from 10s to 2s so a 5s polling client never sees a stale 404 for
+  a full polling cycle; `AgentCommandCenter` surfaces the
+  `useGenerationFailures` hook's `isError` state as an amber
+  "RPC unavailable" chip + dimmed card border + alternate
+  empty-state copy so operators can tell "no failures" apart
+  from "hook failed to fetch."
+- **v27 frontend** (this audit cycle) — `useAgentReceipt.refetchInterval`
+  drops the 5-min `MAX_POLL_MS` cap so a healthy-but-slow pipeline
+  (slow LLM, queued validator, brief platform hiccup) can still
+  surface its result; the constant is retained as a UI threshold
+  and `AgentReceiptViewer`'s success path now renders an amber
+  "this is taking longer than expected" banner (with Refresh
+  button) when `isLongRunning && !receiptIsComplete(receipt)`,
+  branching on receipt kind — generation receipts point to the
+  unrecoverable inference deposit, resolution receipts point to
+  the on-chain force-reset path after 30 min; `useGenerationFailures`
+  drops a dead `events: {} as never` no-op from its `getLogs` call
+  (was silencing viem's type check on an empty events object —
+  semantically identical to omitting the field).
+- **v15–v18 contract (all share the v15 address — none deployed)** — the
+  Foundry-tested sequence that adds the relayer + recovery pipeline
+  (`forceResetMarket`, `scanStuckMarkets`, `STALE_REQUEST_TIMEOUT`,
+  parse-failure URL LRU, exponential backoff, etc.) on top of v14's
+  exact-byte YES/NO parser fix.
 
 ## Repo layout
 
@@ -207,14 +139,14 @@ src/                              Solidity sources (Foundry `src`)
     ILLMAgents.sol                LLM Parse Website + LLM Inference agent payload shapes
 
 test/                             Foundry tests (`forge test -vv`)
-  AutonomousPredictionMarket.t.sol 82 unit + fuzz + reentrancy tests with a mocked platform
+  AutonomousPredictionMarket.t.sol 104 unit + fuzz + reentrancy tests with a mocked platform
 
 script/                           Forge deploy scripts (`forge script …`)
   Deploy.s.sol                    Deploys market, prefunds 0.5 STT, seeds 2 demo markets
   AgentSmokeTest.s.sol            Deploys the smoke test caller
 
 scripts/                          Shell + Node scripts (run with bash / node)
-  deploy.sh                       Deploy via `forge create`, prefund 1 STT, seed markets, write NEXT_PUBLIC_CONTRACT_ADDRESS to .env, verify on explorer
+  deploy.sh                       Deploy via `forge create`, prefund 2 STT, seed markets, write NEXT_PUBLIC_CONTRACT_ADDRESS to .env, verify on explorer
   export-abi.mjs                  Copies `out/AutonomousPredictionMarket.json` ABI → `lib-web/abi.json` (runs automatically as `postinstall`)
   e2e-onchain.sh                  Cast-based end-to-end demo (prefund, create, bet, wait 5 min, requestResolution)
   seed-mock-markets.sh            Seeds four extra demo markets + small bets via cast
@@ -227,6 +159,7 @@ app/                              Next.js App Router
   receipt/[requestId]/page.tsx    Validator receipt viewer + resolution timeline
   api/agent-manifest/route.ts     Machine-readable agent manifest (JSON)
   api/receipt/[requestId]/route.ts Server-side proxy + normalizer for Somnia agent receipts
+  api/receipt/by-tx/[hash]/route.ts Decode GenerationRequested/ResolutionRequested event from a tx hash
   .well-known/autoresolve-agent.json/route.ts  Well-known discovery endpoint
 
 components/                       UI components (grouped by feature)
@@ -241,12 +174,14 @@ hooks/                            React Query data hooks
   useMarkets.ts                   nextMarketId, getMarket, infinite market list (paged 9 at a time), marketBets, user positions
   useResolutionStatus.ts          Derives canResolve/isResolving/isResolved from a market
   useAgentReceipt.ts              Polls `/api/receipt/[id]` until complete
+  useGenerationFailures.ts        Polls the last 5000 blocks of GenerationFailed events for the recovery panel
   useRpcHealth.ts                 Polls block number; ok / slow / down classification
 
 lib-web/                          Frontend-agnostic chain + contract glue
   contract.ts                     CONTRACT_ADDRESS, CONTRACT_ABI, Market/Bet types, formatting helpers
-  somnia.ts                       Somnia testnet chain definition + wagmi/rainbowkit config
-  agents.ts                       Somnia agent IDs, receipt URLs, receipt normalization (Validator subcommittee, steps, consensus)
+  somnia.ts                       Somnia testnet chain definition + wagmi/rainbowkit config (client)
+  somnia-chain.ts                 Server-safe chain definition for route handlers
+  agents.ts                       Somnia agent IDs, receipt URLs, receipt normalization, createMarket calldata decoder
   agentManifest.ts                Builds the JSON manifest served at /api/agent-manifest and /.well-known/autoresolve-agent.json
   transactionToast.ts             Sonner helpers that deep-link to the Shannon explorer
   abi.json                        Generated by `pnpm export-abi` (do not hand-edit)
@@ -290,7 +225,8 @@ File: `src/AutonomousPredictionMarket.sol` (single contract, ~485 lines).
   the question string is non-empty.
 - `MarketStatus`: `Open` → `Resolving` → `Resolved`. Reverting from `Resolving` to
   `Open` is the only valid backward edge (agent failure path).
-- `MIN_DURATION = 300` seconds. Questions ≤ 500 chars, sources ≤ 300 chars.
+- `MIN_DURATION = 300` seconds; `MAX_DURATION = 86400` (24h). Questions ≤ 500
+  chars, sources ≤ 300 chars.
 - Bets update `yesTotal` / `noTotal` and per-user tallies
   (`userYesBets[user][id]`, `userNoBets[user][id]`). Winners are paid out
   proportionally: `payout = userWinningBets * totalPool / winningPool`.
@@ -344,6 +280,12 @@ All agent callbacks use `nonReentrant`. The funding math and the
 - `getResolutionFundingStatus()` returns `(requiredDeposit, contractBalance, topUpNeeded)`.
 - `getGenerationFundingStatus()` returns the inference deposit and top-up needed
   for `requestMarketGeneration`.
+- `getGenerationPromptTemplate()` returns the prompt `(prefix, suffix)`
+  constants so external agents can read the exact prompt without decompiling.
+- `marketParseResult(uint256 marketId)` returns the cached parse string
+  written by the v16 `marketParseResult` cache; `parseResultCached` is in
+  the `AgentMarketContext` struct so external agents can decide whether to
+  call `retryInferenceFromCache` from a single read.
 
 `MAX_AGENT_SCAN_LIMIT = 50`; all `scan*` functions revert `InvalidLimit` on 0 or oversize.
 
@@ -455,7 +397,7 @@ Notes:
 ```bash
 # Solidity (Foundry)
 forge build                       # compile
-forge test -vv                    # 87 tests in test/AutonomousPredictionMarket.t.sol
+forge test -vv                    # 104 tests in test/AutonomousPredictionMarket.t.sol
 
 # Frontend
 pnpm lint                         # eslint --max-warnings=0
@@ -487,7 +429,7 @@ tests for both branches.
 #   forge build
 #   forge create src/AutonomousPredictionMarket.sol:AutonomousPredictionMarket \
 #     --rpc-url "$SHANNON_RPC_URL" --private-key "$PRIVATE_KEY" --broadcast --legacy
-#   cast send <contract> --value 1ether --rpc-url … --private-key … --legacy
+#   cast send <contract> --value 2ether --rpc-url … --private-key … --legacy
 #   cast send <contract> "createMarket(string,string,uint256)" "<q>" "<url>" 300 --rpc-url … --private-key … --legacy
 ```
 
@@ -495,8 +437,8 @@ tests for both branches.
 
 1. Run `forge build`.
 2. Deploy via `forge create` (broadcast + legacy tx).
-3. Prefund the contract with `1 STT` (this covers the 0.66 STT total deposit for
-   parse + inference, and the small refund slippage).
+3. Prefund the contract with `2 STT` (covers the 0.66 STT total deposit for
+   parse + inference per market, with headroom for a few sequential resolutions).
 4. Seed two 5-minute demo markets: "Is the capital of France Paris?" and "Did
    Bitcoin exist before 2010?".
 5. Update `NEXT_PUBLIC_CONTRACT_ADDRESS` in `.env` to the new address.

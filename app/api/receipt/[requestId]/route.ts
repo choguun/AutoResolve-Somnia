@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import {
   AGENTS_EXPLORER,
+  SOMNIA_PLATFORM_ADDRESS,
   normalizeMinimalReceipt,
   receiptServiceUrl,
   type RawMinimalReceiptResponse,
@@ -45,13 +46,14 @@ export async function GET(
   // for those requests are filed under that address. Falling back to
   // the platform address keeps the function callable in dev/test where
   // the env var isn't set, but the production path uses the deployed
-  // contract address. This matches `app/api/receipt/by-tx/[hash]/route.ts`
-  // which also reads NEXT_PUBLIC_CONTRACT_ADDRESS.
-  const SOMNIA_PLATFORM_FALLBACK = '0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776';
+  // contract address. v26 (M2): import the platform address from
+  // `lib-web/agents.ts` instead of redeclaring the constant locally —
+  // SOMNIA_PLATFORM_ADDRESS is the canonical export and re-declaring
+  // risks drift if the platform ever moves.
   const contractAddress =
     (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS && process.env.NEXT_PUBLIC_CONTRACT_ADDRESS !== '0x0000000000000000000000000000000000000000')
       ? process.env.NEXT_PUBLIC_CONTRACT_ADDRESS
-      : SOMNIA_PLATFORM_FALLBACK;
+      : SOMNIA_PLATFORM_ADDRESS;
 
   const fetchUpstream = (url: string) =>
     fetch(url, {
@@ -124,7 +126,13 @@ export async function GET(
     if (primary && primaryStatus === 404) {
       return NextResponse.json(
         { error: 'Receipt not found', requestId, upstreamStatus: 404 },
-        { status: 404, headers: { 'Cache-Control': 'public, max-age=10' } }
+        // v26 (L1): tightened from max-age=10. The TanStack Query poll
+        // interval in useAgentReceipt is 5s, so a 10s cache meant a user
+        // who polled once at the 404 boundary would see the stale "not
+        // found" for a second poll after the receipt was actually
+        // available. 2s is well below the 5s poll so the user always
+        // sees the live state on the next refresh.
+        { status: 404, headers: { 'Cache-Control': 'public, max-age=2' } }
       );
     }
 
@@ -163,7 +171,10 @@ export async function GET(
     // absorbing judge deep-link bursts.
     return NextResponse.json(
       { error: 'Receipt upstream unavailable', requestId, upstreamStatus: primaryStatus },
-      { status: 502, headers: { 'Cache-Control': 'public, max-age=10' } }
+      // v26 (L1): tightened from max-age=10 to match the 404 path. The 5s
+      // client poll cadence means a 10s cache can hide a recovered
+      // platform for one full polling cycle.
+      { status: 502, headers: { 'Cache-Control': 'public, max-age=2' } }
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to fetch receipt';

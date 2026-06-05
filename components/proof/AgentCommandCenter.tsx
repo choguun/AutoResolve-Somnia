@@ -8,6 +8,8 @@ import { useAccount, useWaitForTransactionReceipt, useWriteContract } from 'wagm
 import { toast } from 'sonner';
 import { showConfirmedTransactionToast, showSubmittedTransactionToast } from '@/lib-web/transactionToast';
 import { TransactionStatus } from '@/components/shared/TransactionStatus';
+import { useGenerationFailures } from '@/hooks/useGenerationFailures';
+import { Tooltip } from '@/components/shared/Tooltip';
 import {
   CONTRACT_ABI,
   CONTRACT_ADDRESS,
@@ -227,6 +229,16 @@ export function AgentCommandCenter() {
       };
     },
   });
+
+  // v24 (M3): the stuck-recovery panel above only surfaces requests where
+  // the platform NEVER responded (30+ min timeout). It missed failures where
+  // the platform DID respond but with a non-success status — those surface
+  // as GenerationFailed events with a descriptive reason ("no-tool-calls",
+  // "wrong-selector", "QuestionTooLong", etc.). The hook reads the last
+  // ~50 min of logs and decodes the (uint8 status, string reason) data so
+  // the panel can tell the user *why* the agent failed and let them
+  // re-submit with an adjusted topic.
+  const { data: generationFailures, isError: generationFailuresError } = useGenerationFailures();
 
   const requestResolution = (context: AgentMarketContext) => {
     reset();
@@ -496,6 +508,7 @@ export function AgentCommandCenter() {
             </p>
             <div className="mt-3 flex flex-col gap-2 sm:flex-row">
               <input
+                id="agent-command-center-generate-input"
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
                 placeholder="Custom topic (or pick below)"
@@ -662,7 +675,11 @@ export function AgentCommandCenter() {
                   >
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       <Link
-                        href={`/receipt/${requestId.toString()}`}
+                        // v23 (H1): generation receiptId — the viewer branches
+                        // its long-running copy on kind, and the generation
+                        // copy correctly tells the user the deposit is
+                        // non-refundable.
+                        href={`/receipt/${requestId.toString()}?kind=generation`}
                         className="rounded-full border border-violet-400/30 bg-violet-400/10 px-2.5 py-1 font-semibold text-violet-200 hover:bg-violet-400/20"
                       >
                         Request #{requestId.toString()}
@@ -689,6 +706,93 @@ export function AgentCommandCenter() {
             )}
           </div>
         </div>
+
+        {/* v24 (M3): recent GenerationFailed events surface here with the
+            contract's decoded reason. A "wrong-selector" / "no-tool-calls"
+            failure means the topic needs to be re-thought; a "QuestionTooLong"
+            / "DurationTooLong" failure means the agent mis-hit the contract's
+            own limits. The relayer logs the reason (M1) but operators and
+            judges don't watch stdout — this is the in-app view. The "Re-run
+            with same topic" button prefills the topic in the generation
+            input above; the receipt link lets the user inspect the agent's
+            response. Cap at 20 rows; polling is 15s.
+            v26 (L2): when the hook's underlying RPC is failing, the empty
+            state ("no failures") was misleading — the user couldn't tell
+            whether there were no failures or whether the hook couldn't
+            reach the chain. Surface `isError` as a small amber chip in the
+            card header and dim the card border so the operator knows the
+            data is stale. The relayer (which logs the same failures via
+            drainGenerationFailureEvents) is the authoritative source in
+            that case — operators can `tail -f relayer.log` to confirm. */}
+        <div
+          className={`mt-3 rounded-xl border bg-black/40 p-4 shadow-inner ${
+            generationFailuresError
+              ? 'border-amber-500/30'
+              : 'border-white/5'
+          }`}
+        >
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+              Recent Generation Failures
+            </span>
+            <div className="flex items-center gap-2">
+              {generationFailuresError && (
+                <Tooltip content="RPC unavailable — the in-app view may be stale. Check the relayer log (drainGenerationFailureEvents) for the authoritative failure stream.">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-300" aria-hidden="true" />
+                    RPC unavailable
+                  </span>
+                </Tooltip>
+              )}
+              <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-zinc-400">
+                last ~50 min · create pipeline
+              </span>
+            </div>
+          </div>
+          {generationFailures && generationFailures.length > 0 ? (
+            <ul className="space-y-2">
+              {generationFailures.map((failure) => (
+                <li
+                  key={`${failure.txHash}-${failure.requestId.toString()}`}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-400/20 bg-rose-500/5 px-3 py-2"
+                >
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <Link
+                      href={`/receipt/${failure.requestId.toString()}?kind=generation`}
+                      className="rounded-full border border-rose-400/30 bg-rose-500/10 px-2.5 py-1 font-semibold text-rose-200 hover:bg-rose-500/20"
+                    >
+                      Request #{failure.requestId.toString()}
+                    </Link>
+                    <code className="rounded bg-black/40 px-1.5 py-0.5 font-mono text-rose-200/90">
+                      {failure.reason}
+                    </code>
+                    <span className="text-zinc-500">block {failure.blockNumber.toString()}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActivePipeline('generate');
+                      setTopic('');
+                      document
+                        .getElementById('agent-command-center-generate-input')
+                        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }}
+                    className="rounded-lg border border-rose-300/30 bg-rose-500/10 px-3 py-1.5 text-xs font-bold text-rose-200 transition hover:scale-[1.02] hover:border-rose-300/60 hover:bg-rose-500/20"
+                  >
+                    Re-run with different topic
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-5 text-center text-xs text-zinc-500">
+              {generationFailuresError
+                ? 'Could not load recent generation failures — the upstream RPC is unavailable. Check the relayer log for the authoritative stream.'
+                : 'No recent generation failures — the agent has returned valid createMarket calls for every request in the last ~50 minutes.'}
+            </div>
+          )}
+        </div>
+
         <TransactionStatus
           hash={activePipeline === 'recover' ? hash : undefined}
           isConfirming={activePipeline === 'recover' && isConfirming}
@@ -806,21 +910,39 @@ function MarketContextCard({
         </button>
       </div>
 
-      <div className="mt-4 grid gap-2 text-xs sm:grid-cols-4">
+      <div className="mt-4 grid gap-2 text-xs sm:grid-cols-5">
         <MiniMetric label="Closes" value={formatCountdown(context.endTime)} />
         <MiniMetric label="Pool" value={formatStt(context.totalPool)} />
         <MiniMetric label="Top-Up" value={formatStt(context.topUpNeeded)} />
         <MiniMetric label="Requests" value={hasRequests ? `${context.parseRequestId}/${context.inferenceRequestId}` : 'none'} />
+        {/* v25 (H2): surface the on-chain parse-result cache. When the parse
+            callback succeeded but the inference deposit couldn't be paid
+            (InferenceUnderfunded path, v16 M1), the contract caches the
+            parse result so a future retryInferenceFromCache call can skip
+            the re-parse. The local type already has parseResultCached
+            (v19 M2) but the card wasn't rendering it — operators couldn't
+            tell which markets were relayer-routable via the cheap path. */}
+        <MiniMetric
+          label="Cache"
+          value={context.parseResultCached ? 'cached ✓' : '—'}
+          tone={context.parseResultCached ? 'good' : 'neutral'}
+        />
       </div>
     </div>
   );
 }
 
-function MiniMetric({ label, value }: { label: string; value: string }) {
+function MiniMetric({ label, value, tone }: { label: string; value: string; tone?: 'good' | 'neutral' }) {
   return (
     <div className="rounded-xl border border-white/5 bg-black/40 p-3 shadow-inner">
       <div className="text-xs font-medium text-zinc-500 uppercase tracking-wider">{label}</div>
-      <div className="mt-1.5 truncate font-bold text-zinc-200">{value}</div>
+      <div
+        className={`mt-1.5 truncate font-bold ${
+          tone === 'good' ? 'text-emerald-200' : 'text-zinc-200'
+        }`}
+      >
+        {value}
+      </div>
     </div>
   );
 }

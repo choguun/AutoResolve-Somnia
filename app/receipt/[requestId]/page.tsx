@@ -1,8 +1,10 @@
 'use client';
 
 import { use } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { AgentReceiptViewer } from '@/components/receipts/AgentReceiptViewer';
+import type { ReceiptKind } from '@/hooks/useAgentReceipt';
 
 export default function ReceiptPage({
   params,
@@ -10,6 +12,18 @@ export default function ReceiptPage({
   params: Promise<{ requestId: string }>;
 }) {
   const { requestId } = use(params);
+  // v23 (H1): the AgentReceiptViewer branches its long-running / error copy
+  // on whether the receiptId came from the resolution pipeline or the
+  // generation pipeline. The two pipelines have different recovery stories
+  // (resolution has forceResetMarket; generation has no on-chain reset — the
+  // inference deposit was forwarded to the platform and is not refundable),
+  // so the messaging matters. Callers (GenerateMarketForm, AgentCommandCenter
+  // generation pipeline) pass `?kind=generation` in the URL; resolution
+  // callers leave it unset. The viewer defaults to 'resolution' when absent
+  // so existing /receipt/<resolutionReqId> links keep their old copy.
+  const searchParams = useSearchParams();
+  const kind: ReceiptKind =
+    searchParams.get('kind') === 'generation' ? 'generation' : 'resolution';
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -22,7 +36,7 @@ export default function ReceiptPage({
           Verifiable proof of decentralized validator consensus on Somnia
         </p>
       </div>
-      <AgentReceiptViewer key={requestId} requestId={requestId} />
+      <AgentReceiptViewer key={requestId} requestId={requestId} kind={kind} />
     </div>
   );
 }

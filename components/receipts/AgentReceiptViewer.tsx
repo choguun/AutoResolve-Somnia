@@ -3,9 +3,11 @@
 import Link from 'next/link';
 import { useState, useMemo } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { ExternalLink, Wand2 } from 'lucide-react';
 import { useAgentReceipt } from '@/hooks/useAgentReceipt';
 import {
   receiptExplorerUrl,
+  receiptIsComplete,
   txExplorerUrl,
 } from '@/lib-web/agents';
 import { Tooltip } from '@/components/shared/Tooltip';
@@ -134,7 +136,7 @@ export function AgentReceiptViewer({
   requestId: string;
   kind?: 'resolution' | 'generation';
 }) {
-  const { data: receipt, isLoading, error, isLongRunning, refetch } = useAgentReceipt(requestId, kind);
+  const { data: receipt, isLoading, error, isLongRunning, refetch, isFetching } = useAgentReceipt(requestId, kind);
   const [compareOpen, setCompareOpen] = useState(false);
 
   const nodes = useMemo(() => receipt?.subcommittee?.nodes || [], [receipt]);
@@ -184,9 +186,10 @@ export function AgentReceiptViewer({
           <button
             type="button"
             onClick={() => refetch()}
-            className="inline-flex rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm text-cyan-200 transition hover:bg-cyan-400/15"
+            disabled={isFetching}
+            className="inline-flex rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm text-cyan-200 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Refresh
+            {isFetching ? 'Refreshing…' : 'Refresh'}
           </button>
           <Link
             href={receiptExplorerUrl(requestId)}
@@ -276,6 +279,39 @@ export function AgentReceiptViewer({
           </div>
         )}
       </div>
+
+      {/* v27 (H1): the polling cap in useAgentReceipt used to silently stop
+          at 5 min, leaving the user on a partial-data success path with no
+          "polling paused" cue and no Refresh button (the error path was
+          the only place that surfaced one). The cap is gone — polling
+          continues — but we still surface a hint once the elapsed time
+          crosses the threshold, so the user knows the pipeline is slow
+          and can manually re-engage if they don't want to wait. The copy
+          branches on receipt kind: generation receipts carry an
+          unrecoverable inference deposit, while resolution receipts point
+          to the on-chain force-reset path after 30 min. */}
+      {isLongRunning && !receiptIsComplete(receipt) && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 shadow-inner backdrop-blur-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1 text-sm leading-6 text-amber-100">
+              <p className="font-semibold text-amber-200">This receipt is taking longer than expected.</p>
+              <p className="mt-1 text-amber-100/80">
+                {kind === 'generation'
+                  ? 'The inference deposit was forwarded to the platform and is not refundable — the market may simply not be created. We are still polling; click Refresh to manually re-check.'
+                  : 'We are still polling the receipt service. If the market stays in Resolving for more than 30 minutes, the contract surfaces a force-reset path on the proof page.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="inline-flex shrink-0 rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm text-amber-200 transition hover:bg-amber-400/15 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isFetching ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {steps.length > 0 && (
         <div>
@@ -440,6 +476,69 @@ export function AgentReceiptViewer({
           <pre className="overflow-x-auto rounded-xl border border-white/5 bg-black/40 p-4 text-xs text-zinc-300 shadow-inner backdrop-blur-sm">
             {JSON.stringify(receipt.payload, null, 2)}
           </pre>
+        </div>
+      )}
+
+      {/* v24 (H1): for a generation receipt, surface the agent's
+          createMarket call (decoded from the response_encoded step's
+          pendingToolCalls). This is the actual deliverable — without
+          this panel the viewer only shows the model narration or the
+          raw hex blob, and a judge can't verify the question/source/
+          duration the agent designed. The panel only renders for
+          generation receipts that actually contained a createMarket
+          call (i.e. finishReason === 'tool_calls' and the first
+          matching call decoded successfully). */}
+      {kind === 'generation' && receipt.generationToolCall && (
+        <div className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 to-violet-500/5 p-5 shadow-inner backdrop-blur-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h4 className="flex items-center gap-2 text-lg font-semibold text-cyan-100">
+              <Wand2 className="h-4 w-4" />
+              Agent Designed Market
+            </h4>
+            <Tooltip content="Decoded from the agent's createMarket calldata in pendingToolCalls. The contract executes the first matching call; any duplicates emit a DuplicateToolCall advisory.">
+              <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-200">
+                decoded from receipt
+              </span>
+            </Tooltip>
+          </div>
+          <dl className="grid gap-3 text-sm sm:grid-cols-3">
+            <div className="rounded-xl border border-white/5 bg-black/40 p-4 shadow-inner">
+              <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Question</dt>
+              <dd className="mt-1.5 font-semibold text-white break-words">
+                {receipt.generationToolCall.question}
+              </dd>
+            </div>
+            <div className="rounded-xl border border-white/5 bg-black/40 p-4 shadow-inner">
+              <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Source</dt>
+              <dd className="mt-1.5 break-all">
+                <a
+                  href={receipt.generationToolCall.source}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 font-semibold text-cyan-300 transition hover:text-cyan-100"
+                >
+                  {receipt.generationToolCall.source}
+                  <ExternalLink className="h-3 w-3 opacity-70" />
+                </a>
+              </dd>
+            </div>
+            <div className="rounded-xl border border-white/5 bg-black/40 p-4 shadow-inner">
+              <dt className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Duration</dt>
+              <dd className="mt-1.5 font-semibold text-white">
+                {Number(receipt.generationToolCall.durationSeconds)}s
+                {Number(receipt.generationToolCall.durationSeconds) === 300
+                  ? ' (5 min, demo default)'
+                  : null}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-3 text-xs text-zinc-500">
+            Raw createMarket calldata:{' '}
+            <code className="break-all rounded bg-black/40 px-1.5 py-0.5 font-mono text-cyan-200/80">
+              {receipt.generationToolCall.rawCalldata.slice(0, 10)}…
+            </code>
+            <CopyButton value={receipt.generationToolCall.rawCalldata} label="Copy raw calldata" />
+          </p>
         </div>
       )}
 

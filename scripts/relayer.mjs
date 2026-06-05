@@ -145,7 +145,7 @@ const INFERENCE_UNDERFUNDED_TOPIC = keccak256(
   toBytes('InferenceUnderfunded(uint256,uint256,string)'),
 );
 
-console.log('[relayer] starting (v16)');
+console.log('[relayer] starting (v24)');
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
@@ -178,6 +178,17 @@ const nextRetryAt = new Map();
 // called for every market in the resolvable list, and the URL hash check is
 // O(1). The LRU is bounded by PARSE_FAILURE_CACHE_LIMIT — eviction is FIFO.
 const parseFailureCache = new Map();
+// v23 (L1): module-level dedup Set for GenerationFailed events. The per-tick
+// alreadySubmitted Set passed into drainGenerationFailureEvents is created
+// fresh on every loop iteration, so a failure that stays in the last 50
+// blocks (≈50s of chain history) gets logged on every 30s tick. The 50-block
+// window is the only practical scan range for advisory events (no forward
+// cursor advance on a log we don't act on), so the dedup has to persist
+// across ticks. FIFO-capped so a long-running relayer with many distinct
+// failed requests doesn't grow unbounded — 1000 entries covers weeks of
+// failed requests at typical demo cadence.
+const seenGenerationFailures = new Set();
+const SEEN_GEN_FAILURE_LIMIT = 1000;
 const maxWei = parseEther(MAX_TOPUP_STT);
 
 function marketKey(marketId) {
@@ -898,7 +909,7 @@ async function scanStuckGenerationRequests(alreadySubmitted) {
   }
 }
 
-async function drainGenerationFailureEvents(alreadySubmitted) {
+async function drainGenerationFailureEvents() {
   // GenerationFailed is *not* auto-retried: a "wrong-selector" or
   // "no-tool-calls" failure means the proposer's topic was unsolvable by the
   // agent, which is the proposer's call to fix (and re-submit with a
@@ -908,7 +919,23 @@ async function drainGenerationFailureEvents(alreadySubmitted) {
   // Use a small backward window (like logResolvedMarkets) rather than the
   // shared lastScannedBlock cursor — generation failures are advisory, not
   // act-on-able, so we don't need a forward-only scan with cursor advance.
-  // Dedupe with a Set so we don't spam the same warning every 30s.
+  // v23 (L1): the per-tick alreadySubmitted Set was the wrong layer for
+  // dedup. It's reset at the top of the main loop, so a GenerationFailed
+  // event that stays in the last 50 blocks (≈50s of chain history) gets
+  // logged again on every 30s tick — the operator's terminal fills with
+  // duplicate warnings. The 50-block window is the only practical scan
+  // range for advisory events (we don't want a forward cursor advance on a
+  // log we don't act on), so the dedup has to persist across ticks.
+  // FIFO-cap the Set at 1000 entries so it doesn't grow unbounded on a
+  // long-running relayer with many distinct failed generation requests.
+  // v24 (M1): decode the (uint8 status, string reason) data so operators
+  // see the actual failure reason ("QuestionTooLong", "wrong-selector",
+  // etc.) instead of just the requestId. The reason was the most useful
+  // debug signal in the contract event and it was being thrown away.
+  // v24 (M2): the alreadySubmitted parameter is dead. The per-tick Set was
+  // reset every loop iteration, so populating it was a no-op even when the
+  // dedup lived there. Now that the dedup is module-level (v23 L1), the
+  // parameter has no role at all — drop it.
   const head = await publicClient.getBlockNumber();
   const from = head > 50n ? head - 50n : 0n;
   const logs = await getLogsChunked(CONTRACT, from, head).catch((err) => {
@@ -919,13 +946,32 @@ async function drainGenerationFailureEvents(alreadySubmitted) {
     (l) => l.topics[0]?.toLowerCase() === GENERATION_FAILED_TOPIC.toLowerCase(),
   );
   for (const log of failedLogs) {
-    if (alreadySubmitted.has(marketKey(log.topics[1]))) continue;
-    // topics[1] is the requestId; the reason is non-indexed so we can't decode
-    // it without a full ABI log decode, but the operator can correlate by id.
+    const key = marketKey(log.topics[1]);
+    if (seenGenerationFailures.has(key)) continue;
+    if (seenGenerationFailures.size >= SEEN_GEN_FAILURE_LIMIT) {
+      const oldest = seenGenerationFailures.values().next().value;
+      seenGenerationFailures.delete(oldest);
+    }
+    seenGenerationFailures.add(key);
+
+    // Decode (uint8 status, string reason) from the non-indexed data.
+    // The reason is the contract's hint to the operator (see _describeCreateRevert
+    // in AutonomousPredictionMarket.sol: "QuestionTooLong", "wrong-selector",
+    // "no-tool-calls", "empty-tool-calls", "create-reverted", "no-success").
+    let reason = 'unknown';
+    try {
+      const decoded = decodeAbiParameters(
+        [{ type: 'uint8' }, { type: 'string' }],
+        log.data,
+      );
+      reason = decoded[1] || 'unknown';
+    } catch {
+      // Malformed log (truncated, wrong shape) — fall through to the
+      // unknown reason rather than crashing the tick.
+    }
     console.warn(
-      `[relayer] generation request ${log.topics[1]} failed (no auto-retry; see receipt at https://agents.testnet.somnia.network/receipts/${log.topics[1]})`,
+      `[relayer] generation request ${log.topics[1]} failed: reason=${reason} (no auto-retry; see receipt at https://agents.testnet.somnia.network/receipts/${log.topics[1]})`,
     );
-    alreadySubmitted.add(marketKey(log.topics[1]));
   }
 }
 
@@ -980,7 +1026,7 @@ while (!stopping) {
     await scanStuckGenerationRequests(alreadySubmitted);
     await drainFailureEvents(alreadySubmitted);
     await drainInferenceUnderfundedEvents(alreadySubmitted);
-    await drainGenerationFailureEvents(alreadySubmitted);
+    await drainGenerationFailureEvents();
     await scanForRetryableMarkets(alreadySubmitted);
     await logResolvedMarkets();
   } catch (err) {

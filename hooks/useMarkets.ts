@@ -146,7 +146,17 @@ export function useMyBetsMarkets(
   const publicClient = useSomniaPublicClient();
 
   return useQuery({
-    queryKey: ['myBetsMarkets', address, markets?.map(({ id }) => id.toString()).join(',')],
+    // v25 (M1): the joined `id,id,id,...` key made any new market creation
+    // invalidate the cache and force a full O(N) re-read of every position.
+    // With useMarkets polling every 10s and the My Bets tab active, this
+    // was an O(2N) read (userYesBets + userNoBets) per market creation event.
+    // Use the market count as a stable structural fingerprint instead —
+    // TanStack Query will still re-run when the markets array changes shape
+    // (new pages via fetchNextPage), but a fresh market id within the same
+    // page count won't bust the cache. The markets array itself is captured
+    // in the query closure, so the queryFn reads positions for whatever
+    // markets are currently loaded.
+    queryKey: ['myBetsMarkets', address, markets?.length ?? 0],
     enabled: !!address && !!markets?.length,
     queryFn: async () => {
       const positions = await Promise.all(

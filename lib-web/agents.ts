@@ -1,3 +1,5 @@
+import { decodeAbiParameters } from 'viem';
+
 export const AGENTS_RECEIPT_API = 'https://receipts.testnet.agents.somnia.host';
 export const AGENTS_EXPLORER = 'https://agents.testnet.somnia.network';
 export const SHANNON_EXPLORER = 'https://shannon-explorer.somnia.network';
@@ -74,6 +76,10 @@ export type AgentReceipt = {
   status?: 'pending' | 'success' | 'failure' | string;
   steps?: ReceiptStep[];
   result?: string;
+  // v24 (H1): when the receipt is for a generation request, this carries
+  // the decoded createMarket calldata from the agent's pendingToolCalls.
+  // Resolution receipts leave this undefined.
+  generationToolCall?: GenerationToolCall;
   subcommittee?: {
     size?: number;
     consensusType?: string;
@@ -141,6 +147,88 @@ function extractResult(entry?: RawReceiptEntry): string | undefined {
   return undefined;
 }
 
+// v24 (H1): for a generation receipt the deliverable is the
+// `createMarket(question, source, durationSeconds)` calldata inside
+// `pendingToolCalls` — the abi.encode of the `inferToolsChat` response tuple
+// (string, string, string[], string[], string[], bytes[]). The receipt
+// viewer's "Result" panel was showing the agent's narration (a `llm_response`
+// string) or the raw hex blob of the response_encoded output, neither of
+// which surfaces the question/source/duration the agent actually designed.
+// This helper decodes the response_encoded output and returns the first
+// createMarket call's args so the viewer can render a structured
+// "Agent Designed Market" panel. Returns null when the receipt isn't a
+// generation-style response or no createMarket call is present.
+export type GenerationToolCall = {
+  question: string;
+  source: string;
+  durationSeconds: bigint;
+  rawCalldata: `0x${string}`;
+};
+
+const CREATE_MARKET_SELECTOR = '0xfb6a61aa'; // keccak256("createMarket(string,string,uint256)").slice(0, 8)
+
+export function extractGenerationToolCall(entry?: RawReceiptEntry): GenerationToolCall | null {
+  const steps = entry?.agentReceipt?.steps || [];
+  const encodedStep = steps.find((s) => s.name === 'response_encoded');
+  if (!encodedStep || typeof encodedStep.output !== 'string') return null;
+
+  const raw = encodedStep.output;
+  // viem's decodeAbiParameters accepts a hex string with or without 0x prefix
+  // and is safe to call on a `bytes[]` element (an opaque hex blob). The
+  // response_encoded output is the full abi.encode of the inferToolsChat
+  // response tuple, always returned by the platform as a 0x-prefixed hex
+  // string. The cast is required because the receipt type is `string`.
+  const hex = (raw.startsWith('0x') ? raw : `0x${raw}`) as `0x${string}`;
+  let decoded: readonly unknown[];
+  try {
+    decoded = decodeAbiParameters(
+      [
+        { type: 'string' }, // finishReason
+        { type: 'string' }, // response (model narration)
+        { type: 'string[]' }, // updatedRoles
+        { type: 'string[]' }, // updatedMessages
+        { type: 'string[]' }, // pendingToolCallIds
+        { type: 'bytes[]' }, // pendingToolCalls
+      ],
+      hex,
+    );
+  } catch {
+    return null;
+  }
+  const pendingToolCalls = decoded[5] as readonly `0x${string}`[] | undefined;
+  if (!pendingToolCalls || pendingToolCalls.length === 0) return null;
+
+  // Find the first createMarket call. Most prompts return one; the contract
+  // executes the first matching call and emits a DuplicateToolCall advisory
+  // for any extras. We surface the first so the viewer shows the market that
+  // was actually created.
+  for (const call of pendingToolCalls) {
+    if (typeof call !== 'string') continue;
+    if (!call.startsWith('0x')) continue;
+    if (call.slice(0, 10).toLowerCase() !== CREATE_MARKET_SELECTOR) continue;
+    try {
+      const args = decodeAbiParameters(
+        [
+          { type: 'string' },
+          { type: 'string' },
+          { type: 'uint256' },
+        ],
+        `0x${call.slice(10)}`,
+      ) as readonly [string, string, bigint];
+      return {
+        question: args[0],
+        source: args[1],
+        durationSeconds: args[2],
+        rawCalldata: call as `0x${string}`,
+      };
+    } catch {
+      // Malformed createMarket calldata; try the next tool call.
+      continue;
+    }
+  }
+  return null;
+}
+
 export function normalizeMinimalReceipt(data: RawMinimalReceiptResponse): AgentReceipt {
   const primary = data.receipts[0];
   if (!primary) {
@@ -167,6 +255,11 @@ export function normalizeMinimalReceipt(data: RawMinimalReceiptResponse): AgentR
     status,
     steps,
     result: extractResult(primary),
+    // v24 (H1): surface the createMarket call so the viewer can render
+    // an "Agent Designed Market" panel for generation receipts. The
+    // decoder reads the response_encoded step and pulls the first
+    // createMarket calldata out of pendingToolCalls.
+    generationToolCall: extractGenerationToolCall(primary) ?? undefined,
     elapsedMs: primary.elapsedMs,
     subcommittee: {
       size: data.receipts.length,

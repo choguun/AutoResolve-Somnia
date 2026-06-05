@@ -110,7 +110,13 @@ export function formatCountdown(endTime: bigint): string {
   // were missed and still used the unsafe `Number(endTime) * 1000`
   // pattern. Current 2026 timestamps are safe either way, but the v19
   // invariant was incomplete.
-  if (endTime > 0xFFFFFFFFn) return '>99y';
+  // v24 (L1): for endTime > 0xFFFFFFFFn, return 'Ended' to match
+  // endTimeMs's "already ended" semantic. Previously this returned
+  // '>99y', which contradicted the disabled=true signal on BetPanel /
+  // canResolve=true signal in useResolutionStatus (both read endTimeMs).
+  // MAX_DURATION=86400 makes this unreachable in practice, but the two
+  // helpers should agree on the edge case.
+  if (endTime > 0xFFFFFFFFn) return 'Ended';
   const diff = endTimeMs(endTime) - Date.now();
   if (diff <= 0) return 'Ended';
 

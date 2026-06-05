@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAccount } from 'wagmi';
 import { MarketCard } from '@/components/markets/MarketCard';
@@ -24,6 +24,20 @@ export default function HomePage() {
   const allMarkets = marketsData?.pages.flat();
   const { data: myBets, isLoading: myBetsLoading } = useMyBetsMarkets(allMarkets, address);
 
+  // v23 (M2): when the user opens the "My Bets" tab, fetch all market
+  // pages so positions on late-id markets are visible without scrolling.
+  // useMyBetsMarkets re-runs as allMarkets grows, so the user's positions
+  // stream in as pages load. Cost: O(N) reads once per tab switch (and
+  // again on the next tick if the user navigated away and back). The
+  // "Active" / "Resolved" tabs still use the lazy Load More button so
+  // they don't pay this cost.
+  // TODO(v24): a contract-side getUserMarkets(address) view would replace
+  // the O(N) RPCs with a single targeted read.
+  useEffect(() => {
+    if (tab !== 'my-bets' || !hasNextPage || isFetchingNextPage) return;
+    fetchNextPage();
+  }, [tab, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
   const myBetsById = new Map(
     myBets?.map(({ id, yes, no }) => [id.toString(), { yes, no }]) ?? []
   );
@@ -35,6 +49,19 @@ export default function HomePage() {
           if (tab === 'active') return market.status !== MarketStatus.Resolved;
           return market.status === MarketStatus.Resolved;
         });
+
+  // v25 (L2): positions on a Resolved market where the user holds the
+  // winning side are claimable. Without this count, a user with 20 positions
+  // has to click each market card to find unclaimed winnings. The Markets
+  // tab button shows "N" (total positions); a separate "claimable" sub-label
+  // surfaces the actionable subset. (We can't filter the tab itself — a user
+  // with 19 losing positions still needs to see them to know what they
+  // resolved to.)
+  const claimableCount =
+    myBets?.filter(({ market, yes, no }) => {
+      if (market.status !== MarketStatus.Resolved) return false;
+      return market.outcome ? yes > 0n : no > 0n;
+    }).length ?? 0;
 
   const showLoading = isLoading || (tab === 'my-bets' && myBetsLoading);
   const activeCount =
@@ -116,6 +143,23 @@ export default function HomePage() {
           </button>
         ))}
       </div>
+
+      {/* v25 (L2): a user with N positions still needs to see all of them
+          (including the losing ones, to know what resolved), but the
+          claimable subset is the actionable slice. Show as a small chip
+          on the My Bets tab content so users don't have to click through
+          every card to find winnings. Only renders when there's a
+          claimable subset — losing-only or active-only positions show
+          nothing here, since there's nothing to act on. */}
+      {tab === 'my-bets' && claimableCount > 0 && (
+        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-2 text-sm text-emerald-200 backdrop-blur-sm">
+          <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+          <span>
+            <strong className="font-bold">{claimableCount}</strong>{' '}
+            {claimableCount === 1 ? 'position is' : 'positions are'} ready to claim.
+          </span>
+        </div>
+      )}
 
       {showLoading && (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

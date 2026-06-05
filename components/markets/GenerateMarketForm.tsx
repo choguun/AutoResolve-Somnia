@@ -189,7 +189,13 @@ export function GenerateMarketForm() {
       <TransactionStatus hash={hash} isConfirming={isConfirming} />
       {requestId != null && (
         <a
-          href={`/receipt/${requestId.toString()}`}
+          // v23 (H1): append `?kind=generation` so the receipt page shows the
+          // generation copy on the long-running / error path. Without this the
+          // page falls back to the resolution copy, which tells the user the
+          // wrong thing ("If the market is stuck in Resolving for more than
+          // 30 minutes…") for a generation requestId — generation has no
+          // on-chain reset and the deposit is non-refundable.
+          href={`/receipt/${requestId.toString()}?kind=generation`}
           target="_blank"
           rel="noreferrer"
           className="block text-center text-xs text-cyan-300 underline-offset-2 hover:underline"

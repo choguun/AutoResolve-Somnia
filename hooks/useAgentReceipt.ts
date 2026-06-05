@@ -5,8 +5,13 @@ import { useEffect, useState } from 'react';
 import { type AgentReceipt, receiptIsComplete } from '@/lib-web/agents';
 
 // 5 minutes is the longest the receipt pipeline should ever take on a healthy
-// platform. After that we stop polling and surface a "this is taking longer
-// than expected" UI so the user knows it's not a broken spinner.
+// platform. v27 dropped the polling cap that used to live in `refetchInterval`
+// below — the constant is now purely a UI threshold for the "this is taking
+// longer than expected" hint surfaced in AgentReceiptViewer. Polling
+// continues until the receipt completes or the query errors, so a
+// healthy-but-slow pipeline (a slow LLM, a queued validator, a brief
+// platform hiccup) can still surface its result instead of getting stuck
+// behind a 5-min wall.
 const MAX_POLL_MS = 5 * 60 * 1000;
 
 // v14: callers identify which pipeline produced the receipt so the UI can
@@ -49,7 +54,6 @@ export function useAgentReceipt(requestId?: string | bigint, kind: ReceiptKind =
     refetchInterval: (query) => {
       if (receiptIsComplete(query.state.data)) return false;
       if (query.state.status === 'error') return false;
-      if (Date.now() - startedAt > MAX_POLL_MS) return false;
       return 5000;
     },
     retry: 2,
