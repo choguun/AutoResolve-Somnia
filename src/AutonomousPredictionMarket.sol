@@ -364,6 +364,12 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         if (block.timestamp < market.endTime) revert MarketStillActive();
         if (market.parseRequestId != 0) revert AlreadyRequested();
 
+        (uint256 totalDeposit,,) = getResolutionFundingStatus();
+        uint256 balanceBeforeTopUp = address(this).balance - msg.value;
+        uint256 topUpNeeded = balanceBeforeTopUp >= totalDeposit ? 0 : totalDeposit - balanceBeforeTopUp;
+        uint256 parseDeposit = getParseDeposit();
+        if (address(this).balance < totalDeposit) revert InsufficientContractBalance();
+
         // v17 (H1): clear any stale parse-result cache from a previous
         // underfunded-inference cycle. v16 only cleared the cache in
         // retryInferenceFromCache (consume-on-success) and handleInferenceCallback
@@ -371,15 +377,18 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         // new requestResolution is attempted and the fresh parse FAILS, the
         // market rolls back to Open with the OLD cache still populated — at
         // which point a relayer could call retryInferenceFromCache and use
-        // the stale result instead of re-parsing. Clearing on entry is the
-        // safe invariant: a parse request in flight never has a cache.
+        // the stale result instead of re-parsing. Clearing here (post-funding)
+        // preserves the safe invariant: a parse request in flight never has
+        // a cache.
+        // v28 (L1): moved the clear to AFTER the InsufficientContractBalance
+        // check. A failed requestResolution (user manually calls on an
+        // underfunded contract, or the relayer's pre-fund check is wrong) used
+        // to destroy the cache as a side effect of the revert, removing the
+        // relayer's only retry path (retryInferenceFromCache). The post-revert
+        // state is now identical to pre-call: cache populated, market Open,
+        // no parse request in flight — so a subsequent retryInferenceFromCache
+        // on the same market still finds the cache and skips the re-parse.
         delete marketParseResult[marketId];
-
-        (uint256 totalDeposit,,) = getResolutionFundingStatus();
-        uint256 balanceBeforeTopUp = address(this).balance - msg.value;
-        uint256 topUpNeeded = balanceBeforeTopUp >= totalDeposit ? 0 : totalDeposit - balanceBeforeTopUp;
-        uint256 parseDeposit = getParseDeposit();
-        if (address(this).balance < totalDeposit) revert InsufficientContractBalance();
 
         market.status = MarketStatus.Resolving;
 

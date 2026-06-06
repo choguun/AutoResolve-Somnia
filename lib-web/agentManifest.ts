@@ -22,8 +22,18 @@ export function getAutoResolveAgentManifest() {
     // frontend/UX version, and the on-chain view for the contract version.
     // The proof page reads this field as the single source of truth for its
     // "Frontend vN" pill (v24 H2 split the Frontend/Contract labels).
-    // Track the live frontend version in lockstep with CLAUDE.md "Live app".
-    version: 'v24',
+    // v29 (H1): bumped v24 → v29 to advertise the new relayer-driven topic
+    // feed (drainTopicFeed) that closes the last "human in the loop" gap in
+    // the fully-autonomous pipeline. Track the live frontend version in
+    // lockstep with CLAUDE.md "Live app".
+    // v30 (H0): bumped v29 → v30 — the v29 relayer was crashing on startup
+    // with a TDZ ReferenceError (the startup console.log at L155 referenced
+    // consts declared further down the file). v30 hoists the v29 consts
+    // above the startup log group, and adds a `pnpm relayer:smoke` step
+    // (scripts/relayer-smoke.sh) so future relayer-side crashes are caught
+    // at verification time — `pnpm lint` + `pnpm build` + `forge test` never
+    // execute the relayer, which is how v29's crash shipped silently.
+    version: 'v30',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
@@ -106,7 +116,7 @@ export function getAutoResolveAgentManifest() {
       innovation:
         'A generalizable primitive: a permissionless contract whose end-to-end lifecycle (create -> bet -> resolve -> claim) is executable by an external agent without frontend or admin keys.',
       autonomousPerformance:
-        'Both creation and resolution run without frontend state. Any external agent can call getGenerationFundingStatus, requestMarketGeneration, scanAgentCreatedMarkets, getResolutionFundingStatus, scanResolvableMarkets, and requestResolution in sequence.',
+        'Both creation and resolution run without frontend state. Any external agent can call getGenerationFundingStatus, requestMarketGeneration, scanAgentCreatedMarkets, getResolutionFundingStatus, scanResolvableMarkets, and requestResolution in sequence. v29 ships a topic-feed relayer (scripts/relayer.mjs drainTopicFeed) that closes the last human-in-the-loop gap: it reads scripts/topics.txt (or $GENERATION_TOPICS_FILE) on every tick and submits requestMarketGeneration for any topic not already in state/submitted-topics.<eoa>.json. v30 hoists the v29 consts above the startup console.log group (the v29 startup crashed with a TDZ ReferenceError — the relayer was offline) and adds pnpm relayer:smoke as the missing piece in the verification triangle, since `pnpm lint` + `pnpm build` + `forge test` never execute the relayer.',
     },
     proofRun: {
       contractAddress: '0x1631303A748076648a0AbbE077a657Ad7812834F',

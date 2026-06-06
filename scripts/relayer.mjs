@@ -144,14 +144,36 @@ const GENERATION_FAILED_TOPIC = keccak256(
 const INFERENCE_UNDERFUNDED_TOPIC = keccak256(
   toBytes('InferenceUnderfunded(uint256,uint256,string)'),
 );
+// v29 (H1): topic-feed source for autonomous market generation. The relayer
+// reads GENERATION_TOPICS_FILE (one topic per line, # = comment) and submits
+// `requestMarketGeneration(topic)` for each unseen topic. The set of already-
+// submitted topics is persisted to disk so a relayer restart doesn't re-submit
+// the same topic (the contract would forward another inference deposit, wasting
+// STT — and the platform would either return a duplicate market or the same
+// failure as last time). EOA-namespaced so two relayers on the same host
+// (e.g. mainnet + testnet, or primary + watchdog) don't clobber each other.
+// v30 (H0): hoisted above the startup console.log group (was previously
+// declared at L203 / L1107) — referencing TOPICS_FILE in the L155 log line
+// threw a ReferenceError on startup and the relayer never reached the main
+// loop. The startup log now needs both values; moving the declarations up is
+// cleaner than splitting the log.
+const TOPICS_FILE = process.env.GENERATION_TOPICS_FILE
+  || join(ROOT, 'scripts', 'topics.txt');
+const SUBMITTED_TOPICS_FILE = process.env.SUBMITTED_TOPICS_FILE
+  || join(ROOT, 'state', `submitted-topics.${account.address.toLowerCase()}.json`);
+// v30 (H0): also hoisted from L1107 (see the drainTopicFeed block below for
+// the per-tick rate-limit context). 30s cadence × 2880 ticks/day × max
+// 1/tick = up to 2880 topic submissions/day, well above any demo cadence.
+const TOPIC_FEED_MAX_PER_TICK = Number(process.env.TOPIC_FEED_MAX_PER_TICK ?? 1);
 
-console.log('[relayer] starting (v24)');
+console.log('[relayer] starting (v30)');
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
 console.log(`  poll:        ${POLL_MS / 1000}s`);
 console.log(`  max top-up:  ${MAX_TOPUP_STT} STT per market`);
 console.log(`  max attempts: ${MAX_ATTEMPTS_PER_MARKET} per market before giving up`);
+console.log(`  topic feed:  ${TOPICS_FILE} (max ${TOPIC_FEED_MAX_PER_TICK}/tick)`);
 
 let lastScannedBlock = await publicClient.getBlockNumber();
 console.log(`  resume from block: ${lastScannedBlock}\n`);
@@ -190,6 +212,11 @@ const parseFailureCache = new Map();
 const seenGenerationFailures = new Set();
 const SEEN_GEN_FAILURE_LIMIT = 1000;
 const maxWei = parseEther(MAX_TOPUP_STT);
+
+// v29 (H1) + v30 (H0): TOPICS_FILE / SUBMITTED_TOPICS_FILE / TOPIC_FEED_MAX_PER_TICK
+// were hoisted to L160–167 so the L176 startup log line can reference them
+// without hitting TDZ. This leaves just the in-memory Set declaration here.
+const submittedTopics = new Set();
 
 function marketKey(marketId) {
   // Normalize so a market that appears in both the event stream (hex) and the
@@ -314,13 +341,83 @@ function isUrlInParseFailureCache(url) {
   return true;
 }
 
+// v29 (H1): persistent dedup of submitted topics. The set is keyed on the raw
+// topic string (trimmed) — the contract doesn't store a topic→requestId
+// mapping, so once a topic is submitted we have to remember it client-side to
+// avoid re-submission. Persisted to disk on every successful submit (debounced
+// to one write per 5s window, same as the parse-failure cache) so a relayer
+// restart doesn't re-submit the same topics and waste inference deposits.
+let submittedTopicsWriteTimer = null;
+let submittedTopicsWriteDirty = false;
+
+function loadSubmittedTopics() {
+  if (!existsSync(SUBMITTED_TOPICS_FILE)) return;
+  try {
+    const raw = readFileSync(SUBMITTED_TOPICS_FILE, 'utf8');
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      let count = 0;
+      for (const t of arr) {
+        if (typeof t === 'string' && t.length > 0 && t.length <= 200) {
+          submittedTopics.add(t);
+          count++;
+        }
+      }
+      if (count > 0) {
+        console.log(`[relayer] loaded ${count} submitted-topic(s) from disk`);
+      }
+    }
+  } catch (err) {
+    console.warn(
+      '[relayer] submitted-topics cache load failed (starting empty):',
+      err.message,
+    );
+  }
+}
+
+function saveSubmittedTopics() {
+  try {
+    const arr = Array.from(submittedTopics);
+    const tmp = SUBMITTED_TOPICS_FILE + '.tmp';
+    writeFileSync(tmp, JSON.stringify(arr));
+    renameSync(tmp, SUBMITTED_TOPICS_FILE);
+  } catch (err) {
+    console.warn('[relayer] submitted-topics cache save failed:', err.message);
+  }
+}
+
+function scheduleSubmittedTopicsSave() {
+  submittedTopicsWriteDirty = true;
+  if (submittedTopicsWriteTimer) return;
+  submittedTopicsWriteTimer = setTimeout(() => {
+    submittedTopicsWriteTimer = null;
+    if (!submittedTopicsWriteDirty) return;
+    submittedTopicsWriteDirty = false;
+    saveSubmittedTopics();
+  }, 5000);
+}
+
+function flushSubmittedTopicsSync() {
+  if (submittedTopicsWriteTimer) {
+    clearTimeout(submittedTopicsWriteTimer);
+    submittedTopicsWriteTimer = null;
+  }
+  if (submittedTopicsWriteDirty) {
+    submittedTopicsWriteDirty = false;
+    saveSubmittedTopics();
+  }
+}
+
 loadParseFailureCache();
+loadSubmittedTopics();
 // v17 (M3): ensure the cache directory exists. A fresh clone may not have
 // `state/` yet (deploy.sh creates it, but operators that run the relayer
 // standalone won't have that step). Without this, the first save (or
 // SIGTERM flush) throws ENOENT and the relayer logs a warning, then loses
 // the LRU on shutdown. Idempotent: mkdirSync with recursive:true is a
-// no-op when the directory already exists.
+// no-op when the directory already exists. v29: same guarantee extends to
+// the submitted-topics file (uses the same state/ directory).
 try {
   mkdirSync(dirname(PARSE_FAILURE_CACHE_FILE), { recursive: true });
 } catch (err) {
@@ -1005,16 +1102,116 @@ async function scanStuckMarkets(alreadySubmitted) {
   }
 }
 
+// v29 (H1): drainTopicFeed is the symmetric "trigger new creations" path to
+// scanForRetryableMarkets (the trigger new resolutions path). It reads the
+// configured topic feed and submits requestMarketGeneration for any topic
+// not already in the submittedTopics Set. The Set is persistent, so a
+// relayer restart picks up only NEW topics added to the file. This closes
+// the last "human in the loop" gap in the fully-autonomous pipeline: a
+// judge can see new markets appear on /proof without ever clicking
+// "Invoke Generator".
+//
+// We bound the per-tick submission rate to TOPIC_FEED_MAX_PER_TICK (default
+// 1) so a relayer that comes up after a 24h downtime doesn't fire 100
+// requestMarketGeneration txs in 30s and exhaust the inference deposit
+// budget. A 30s cadence means ~2880 topics/day max — far above any demo
+// cadence, but the bound keeps the contract's STT balance predictable.
+// v30 (H0): declaration hoisted to L167 so the startup log can reference
+// it without a TDZ throw.
+async function readTopicFeed() {
+  try {
+    const raw = await readFile(TOPICS_FILE, 'utf8');
+    const topics = [];
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed.startsWith('#')) continue;
+      if (trimmed.length > 200) continue; // MAX_TOPIC_LENGTH
+      topics.push(trimmed);
+    }
+    return topics;
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    console.error(`[relayer] failed to read topic feed ${TOPICS_FILE}:`, err.message);
+    return null; // null = error (not "no file"); caller can decide to skip vs warn
+  }
+}
+
+async function drainTopicFeed() {
+  const topics = await readTopicFeed();
+  if (topics === null) return; // read error; already logged
+  const fresh = topics.filter((t) => !submittedTopics.has(t));
+  if (fresh.length === 0) return;
+  console.log(
+    `[relayer] topic feed: ${topics.length} total, ${fresh.length} new, ` +
+      `submitting up to ${TOPIC_FEED_MAX_PER_TICK}`,
+  );
+  const slice = fresh.slice(0, TOPIC_FEED_MAX_PER_TICK);
+  for (const topic of slice) {
+    // v30 (H1): pre-flight checks FIRST, then add to the Set, then submit.
+    // The previous order (set add → read topUp → cap check → continue) meant
+    // a transient cap-exceedance or a transient RPC blip on readInferenceTopUp
+    // would permanently add the topic to submittedTopics — the next relayer
+    // tick wouldn't retry, the operator would have to hand-edit
+    // SUBMITTED_TOPICS_FILE. Now pre-flight failures keep the topic out of
+    // the Set entirely (it'll be retried on the next tick once the operator
+    // raises the cap or the RPC recovers). Once pre-flight passes, the add
+    // is the "we're committing to this submission" signal — even if the
+    // writeContract then reverts InsufficientContractBalance, the deposit
+    // was forwarded to the platform and the topic stays in the Set.
+    try {
+      const topUp = await readInferenceTopUp();
+      if (topUp > maxWei) {
+        console.warn(
+          `[relayer] topic "${topic.slice(0, 40)}…" needs ${formatEther(topUp)} STT inference top-up, exceeds cap; skipping (will retry next tick)`,
+        );
+        continue;
+      }
+      // Pre-flight passed — claim the topic. The within-process Set is the
+      // dedup for any later code path in this tick (none today, but future-
+      // proof); the disk-persisted Set (reloaded on relayer startup) is the
+      // cross-process dedup. A parallel watchdog relayer can still submit a
+      // duplicate in the small race between add and tx-mine — the contract
+      // has no on-chain topic→requestId dedup, so the inference-deposit cost
+      // is the only defense-in-depth.
+      submittedTopics.add(topic);
+      scheduleSubmittedTopicsSave();
+      const hash = await walletClient.writeContract({
+        address: CONTRACT,
+        abi: ABI,
+        functionName: 'requestMarketGeneration',
+        args: [topic],
+        value: topUp,
+      });
+      console.log(
+        `[relayer] submitted requestMarketGeneration("${topic.slice(0, 40)}${topic.length > 40 ? '…' : ''}") → ${hash} (value=${formatEther(topUp)} STT)`,
+      );
+    } catch (err) {
+      console.error(
+        `[relayer] requestMarketGeneration("${topic.slice(0, 40)}…") failed:`,
+        err.shortMessage ?? err.message,
+      );
+      // If pre-flight failed (readInferenceTopUp RPC blip), the topic is NOT
+      // in the Set — it'll be retried next tick. If the writeContract failed
+      // after the Set-add, the topic IS in the Set (deposit was forwarded) —
+      // the operator can clear SUBMITTED_TOPICS_FILE if they want to retry.
+    }
+  }
+}
+
 let stopping = false;
 process.on('SIGINT', () => {
   stopping = true;
   // v16 (H3): flush the parse-failure cache synchronously on shutdown so
   // the next relayer boot can pick up where this one left off.
   flushParseFailureCacheSync();
+  // v29 (H1): same guarantee for the submitted-topics cache.
+  flushSubmittedTopicsSync();
 });
 process.on('SIGTERM', () => {
   stopping = true;
   flushParseFailureCacheSync();
+  flushSubmittedTopicsSync();
 });
 
 while (!stopping) {
@@ -1024,8 +1221,25 @@ while (!stopping) {
   try {
     await scanStuckMarkets(alreadySubmitted);
     await scanStuckGenerationRequests(alreadySubmitted);
-    await drainFailureEvents(alreadySubmitted);
+    // v29 (H1): drainTopicFeed submits new requestMarketGeneration calls for
+    // any topics in the feed that haven't been submitted by this EOA. The
+    // persistent submittedTopics Set (state/submitted-topics.<eoa>.json) is
+    // the cross-restart dedup, so a relayer that comes up after editing
+    // scripts/topics.txt picks up only the new entries.
+    await drainTopicFeed();
+    // v28 (H1): drainInferenceUnderfundedEvents runs BEFORE drainFailureEvents.
+    // The InferenceUnderfunded path emits BOTH InferenceUnderfunded AND
+    // ResolutionFailed(stage=Inference); the v16 ordering let drainFailureEvents
+    // call requestResolution (the wasteful re-parse) first, which cleared the
+    // cache (v17 invariant) and blocked drainInferenceUnderfundedEvents' cache
+    // retry via the hasCachedParse pre-check. Swapping gives the cache-aware
+    // retryInferenceFromCache path the first shot — if it succeeds (contract
+    // funded), the market is in Resolving. If it reverts (contract still
+    // underfunded), the per-tick alreadySubmitted Set prevents the wasteful
+    // re-parse from running. drainFailureEvents still runs as the fallback for
+    // parse-stage failures, where retryInferenceFromCache isn't applicable.
     await drainInferenceUnderfundedEvents(alreadySubmitted);
+    await drainFailureEvents(alreadySubmitted);
     await drainGenerationFailureEvents();
     await scanForRetryableMarkets(alreadySubmitted);
     await logResolvedMarkets();

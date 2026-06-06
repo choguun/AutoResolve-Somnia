@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAccount, useConfig, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
 import { readContract } from 'wagmi/actions';
 import { toast } from 'sonner';
@@ -10,6 +11,7 @@ import {
   formatStt,
 } from '@/lib-web/contract';
 import { useAgentReceipt } from '@/hooks/useAgentReceipt';
+import { useMarketCreatedByRequestId } from '@/hooks/useMarketCreatedByRequestId';
 import { receiptIsComplete } from '@/lib-web/agents';
 import { TransactionStatus } from '@/components/shared/TransactionStatus';
 import {
@@ -22,6 +24,7 @@ const MAX_TOPIC = 200;
 export function GenerateMarketForm() {
   const { isConnected } = useAccount();
   const config = useConfig();
+  const router = useRouter();
   const [topic, setTopic] = useState('');
   const [topUpNeeded, setTopUpNeeded] = useState<bigint | null>(null);
   const [requestId, setRequestId] = useState<bigint | null>(null);
@@ -98,6 +101,19 @@ export function GenerateMarketForm() {
 
   const { data: agentReceipt } = useAgentReceipt(requestId ?? undefined, 'generation');
 
+  // v29 (H2): poll for the MarketCreatedByAgent event matching this requestId
+  // so we can auto-redirect to the new market on success. The hook stops on
+  // match (marketId found) or when the receipt is a terminal failure (no
+  // market will be created). Enabled only while the receipt is still in
+  // flight OR has just completed successfully — once it's a failure, the
+  // callback never emitted the event and the polling would just burn RPC
+  // calls forever.
+  const { data: newMarketId } = useMarketCreatedByRequestId(
+    requestId,
+    !!agentReceipt &&
+      (agentReceipt.status !== 'failure' || !receiptIsComplete(agentReceipt)),
+  );
+
   useEffect(() => {
     if (!agentReceipt || !hash) return;
     if (!receiptIsComplete(agentReceipt)) return;
@@ -109,6 +125,17 @@ export function GenerateMarketForm() {
           : 'AI generation complete';
     showConfirmedTransactionToast(hash, label, 'generate-market');
   }, [agentReceipt, hash]);
+
+  // v29 (H2): auto-redirect to the new market page once the contract has
+  // emitted MarketCreatedByAgent for this requestId. The agent receipt
+  // confirms "tool_calls" was returned; this event confirms the contract
+  // successfully executed createMarket and assigned a marketId. We use
+  // router.replace (not push) so the back button takes the user to wherever
+  // they came from (typically /proof or /), not to a stale /create form.
+  useEffect(() => {
+    if (newMarketId == null) return;
+    router.replace(`/market/${newMarketId.toString()}`);
+  }, [newMarketId, router]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

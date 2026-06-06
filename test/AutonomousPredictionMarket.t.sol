@@ -1649,6 +1649,62 @@ contract AutonomousPredictionMarketTest is Test {
         assertFalse(ctx.parseResultCached, "cache consumed by retry");
     }
 
+    function testRequestResolutionPreservesCacheOnUnderfundedRevert() public {
+        // v28 (L1): pre-v28, requestResolution cleared the parse-result cache
+        // BEFORE the InsufficientContractBalance check. A failed call (user
+        // manually invokes on an underfunded contract, or the relayer's
+        // pre-fund check is wrong) reverted AND destroyed the cache as a
+        // side effect — removing the relayer's only retry path
+        // (retryInferenceFromCache) for that market. v28 moved the clear to
+        // AFTER the funding check, so a reverted requestResolution leaves
+        // the cache populated and the market in its prior state (Open, cache
+        // present, no parse request in flight) — identical to pre-call.
+        uint256 marketId = _createEndedMarket();
+        uint256 totalDeposit = market.getRequiredDeposit();
+        uint256 inferenceDeposit = market.getInferenceDeposit();
+
+        // Populate the cache via the underfunded-inference rollback path:
+        // requestResolution succeeds (funded), parse callback succeeds, but
+        // the inference callback sees the contract is underfunded for
+        // inference → emits ResolutionFailed(stage=Inference) +
+        // InferenceUnderfunded, rolls market back to Open WITH the cache.
+        vm.deal(resolver, totalDeposit);
+        vm.prank(resolver);
+        market.requestResolution{value: totalDeposit}(marketId);
+        vm.deal(address(market), 0.1 ether);
+        assertLt(address(market).balance, inferenceDeposit, "underfunded for inference");
+        vm.prank(PLATFORM);
+        market.handleAgentResponse(
+            1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest()
+        );
+        assertTrue(bytes(market.marketParseResult(marketId)).length > 0, "cache populated after underfunded parse");
+        assertEq(uint256(market.getMarket(marketId).status), uint256(AutonomousPredictionMarket.MarketStatus.Open), "rolled back to Open");
+
+        // Drain the contract below the total resolution deposit. The cache
+        // must survive the next requestResolution's InsufficientContractBalance
+        // revert (the v28 L1 invariant). We call with msg.value=0 (a naive
+        // user, or the relayer's pre-fund check misfiring) — passing
+        // value=totalDeposit would self-fund the contract and bypass the
+        // revert.
+        vm.deal(address(market), 0);
+        assertLt(address(market).balance, totalDeposit, "contract underfunded for total deposit");
+
+        vm.prank(resolver);
+        vm.expectRevert(AutonomousPredictionMarket.InsufficientContractBalance.selector);
+        market.requestResolution(marketId);
+
+        // v28 invariant: cache survives a failed requestResolution.
+        assertTrue(
+            bytes(market.marketParseResult(marketId)).length > 0,
+            "v28: cache preserved on underfunded requestResolution revert"
+        );
+        assertEq(
+            uint256(market.getMarket(marketId).status),
+            uint256(AutonomousPredictionMarket.MarketStatus.Open),
+            "v28: market still Open after revert"
+        );
+    }
+
     function testAgentManifestAdvertisesV17() public {
         // v17 surfaces: marketParseResult cleanup invariant, parseResultCached
         // in AgentMarketContext, the manifest version bump.

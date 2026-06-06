@@ -9,6 +9,15 @@ const RPC_URL = 'https://dream-rpc.somnia.network';
 const GENERATION_FAILED_TOPIC = keccak256(
   toBytes('GenerationFailed(uint256,uint8,string)')
 );
+// v29 (L1): emitted by requestMarketGeneration. The contract deletes
+// requestToTopic[requestId] unconditionally at the top of
+// handleGenerationCallback, so the topic is GONE by the time the
+// GenerationFailed event is observed. We recover the topic from the
+// GenerationRequested event's data (the topic field is non-indexed, so it
+// lives in log.data as the abi.encode(string) of the topic).
+const GENERATION_REQUESTED_TOPIC = keccak256(
+  toBytes('GenerationRequested(uint256,string)')
+);
 const SCAN_WINDOW_BLOCKS = 5000n; // ~50 min on Shannon at ~600ms blocks
 
 const publicClient = createPublicClient({
@@ -20,6 +29,11 @@ export type GenerationFailure = {
   requestId: bigint;
   status: number; // ResponseStatus enum (uint8)
   reason: string;
+  // v29 (L1): original topic the human submitted, recovered from the
+  // GenerationRequested event's data. Null if the topic can't be recovered
+  // (event outside the scan window, decode failure, or the request was
+  // submitted by a different relayer instance before the L1 was shipped).
+  topic: string | null;
   blockNumber: bigint;
   txHash: `0x${string}`;
 };
@@ -48,6 +62,30 @@ async function fetchRecentGenerationFailures(): Promise<GenerationFailure[]> {
     (l) => l.topics[0]?.toLowerCase() === GENERATION_FAILED_TOPIC.toLowerCase(),
   );
 
+  // v29 (L1): build a requestId → topic map from the same scan range. Both
+  // events (GenerationRequested and GenerationFailed) for a given request
+  // land within a few blocks of each other — the platform callback is
+  // seconds-to-minutes, well inside the 5000-block window. If a topic is
+  // missing from the map, the request is either outside the window or
+  // the GenerationRequested decode failed; either way, surface null and
+  // let the UI show "unknown topic".
+  const requested = rawLogs.filter(
+    (l) => l.topics[0]?.toLowerCase() === GENERATION_REQUESTED_TOPIC.toLowerCase(),
+  );
+  const topicByRequestId = new Map<bigint, string>();
+  for (const log of requested) {
+    const requestId = BigInt(log.topics[1] ?? 0n);
+    try {
+      const decoded = decodeAbiParameters([{ type: 'string' }], log.data);
+      const topic = decoded[0];
+      if (typeof topic === 'string' && topic.length > 0) {
+        topicByRequestId.set(requestId, topic);
+      }
+    } catch {
+      // Malformed log — skip silently. The failure row will show null.
+    }
+  }
+
   const out: GenerationFailure[] = [];
   for (const log of failed) {
     const requestId = BigInt(log.topics[1] ?? 0n);
@@ -67,6 +105,7 @@ async function fetchRecentGenerationFailures(): Promise<GenerationFailure[]> {
       requestId,
       status,
       reason,
+      topic: topicByRequestId.get(requestId) ?? null,
       blockNumber: log.blockNumber ?? 0n,
       txHash: log.transactionHash ?? '0x',
     });

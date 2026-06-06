@@ -713,9 +713,16 @@ export function AgentCommandCenter() {
             / "DurationTooLong" failure means the agent mis-hit the contract's
             own limits. The relayer logs the reason (M1) but operators and
             judges don't watch stdout — this is the in-app view. The "Re-run
-            with same topic" button prefills the topic in the generation
-            input above; the receipt link lets the user inspect the agent's
-            response. Cap at 20 rows; polling is 15s.
+            with different topic" button clears the input and scrolls to the
+            generation form above; the receipt link lets the user inspect the
+            agent's response. Cap at 20 rows; polling is 15s.
+            v29 (L1): each row now also shows the original topic (recovered
+            from the matching GenerationRequested event's data) so the user
+            knows what failed without having to retype from memory. Falls
+            back to "(topic not recovered)" when the request is outside the
+            scan window. The button still says "different topic" because
+            the form clears — re-running with the same failed topic would
+            just produce the same failure and burn another inference deposit.
             v26 (L2): when the hook's underlying RPC is failing, the empty
             state ("no failures") was misleading — the user couldn't tell
             whether there were no failures or whether the hook couldn't
@@ -754,19 +761,38 @@ export function AgentCommandCenter() {
               {generationFailures.map((failure) => (
                 <li
                   key={`${failure.txHash}-${failure.requestId.toString()}`}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-400/20 bg-rose-500/5 px-3 py-2"
+                  className="flex flex-col gap-2 rounded-lg border border-rose-400/20 bg-rose-500/5 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
                 >
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <Link
-                      href={`/receipt/${failure.requestId.toString()}?kind=generation`}
-                      className="rounded-full border border-rose-400/30 bg-rose-500/10 px-2.5 py-1 font-semibold text-rose-200 hover:bg-rose-500/20"
-                    >
-                      Request #{failure.requestId.toString()}
-                    </Link>
-                    <code className="rounded bg-black/40 px-1.5 py-0.5 font-mono text-rose-200/90">
-                      {failure.reason}
-                    </code>
-                    <span className="text-zinc-500">block {failure.blockNumber.toString()}</span>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    {/* v29 (L1): show the original topic above the reason so the
+                        user knows what failed without having to retype from
+                        memory. Truncate at 80 chars with a tooltip for the
+                        full string. Falls back to "unknown topic" when the
+                        GenerationRequested event is outside the scan window
+                        (rare — only happens for very old failures). */}
+                    {failure.topic ? (
+                      <Tooltip content={failure.topic}>
+                        <p className="break-words text-sm font-semibold text-rose-100">
+                          &ldquo;{failure.topic.length > 80
+                            ? `${failure.topic.slice(0, 80)}…`
+                            : failure.topic}&rdquo;
+                        </p>
+                      </Tooltip>
+                    ) : (
+                      <p className="text-xs italic text-zinc-500">(topic not recovered)</p>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <Link
+                        href={`/receipt/${failure.requestId.toString()}?kind=generation`}
+                        className="rounded-full border border-rose-400/30 bg-rose-500/10 px-2.5 py-1 font-semibold text-rose-200 hover:bg-rose-500/20"
+                      >
+                        Request #{failure.requestId.toString()}
+                      </Link>
+                      <code className="rounded bg-black/40 px-1.5 py-0.5 font-mono text-rose-200/90">
+                        {failure.reason}
+                      </code>
+                      <span className="text-zinc-500">block {failure.blockNumber.toString()}</span>
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -777,7 +803,7 @@ export function AgentCommandCenter() {
                         .getElementById('agent-command-center-generate-input')
                         ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     }}
-                    className="rounded-lg border border-rose-300/30 bg-rose-500/10 px-3 py-1.5 text-xs font-bold text-rose-200 transition hover:scale-[1.02] hover:border-rose-300/60 hover:bg-rose-500/20"
+                    className="shrink-0 rounded-lg border border-rose-300/30 bg-rose-500/10 px-3 py-1.5 text-xs font-bold text-rose-200 transition hover:scale-[1.02] hover:border-rose-300/60 hover:bg-rose-500/20"
                   >
                     Re-run with different topic
                   </button>

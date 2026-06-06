@@ -5,6 +5,7 @@ import { useState, useMemo } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { ExternalLink, Wand2 } from 'lucide-react';
 import { useAgentReceipt } from '@/hooks/useAgentReceipt';
+import { useMarketCreatedByRequestId } from '@/hooks/useMarketCreatedByRequestId';
 import {
   receiptExplorerUrl,
   receiptIsComplete,
@@ -137,6 +138,24 @@ export function AgentReceiptViewer({
   kind?: 'resolution' | 'generation';
 }) {
   const { data: receipt, isLoading, error, isLongRunning, refetch, isFetching } = useAgentReceipt(requestId, kind);
+  // v29 (H2): for generation receipts, also poll for the MarketCreatedByAgent
+  // event matching this requestId so the "Agent Designed Market" panel can
+  // surface a "View new market #N" link. Only enabled for generation receipts
+  // and while the agent receipt is still in flight (or just completed
+  // successfully). Stops on match.
+  const requestIdBig = useMemo(() => {
+    try {
+      return BigInt(requestId);
+    } catch {
+      return null;
+    }
+  }, [requestId]);
+  const { data: newMarketId } = useMarketCreatedByRequestId(
+    requestIdBig,
+    kind === 'generation' &&
+      !!receipt &&
+      (receipt.status !== 'failure' || !receiptIsComplete(receipt)),
+  );
   const [compareOpen, setCompareOpen] = useState(false);
 
   const nodes = useMemo(() => receipt?.subcommittee?.nodes || [], [receipt]);
@@ -495,11 +514,22 @@ export function AgentReceiptViewer({
               <Wand2 className="h-4 w-4" />
               Agent Designed Market
             </h4>
-            <Tooltip content="Decoded from the agent's createMarket calldata in pendingToolCalls. The contract executes the first matching call; any duplicates emit a DuplicateToolCall advisory.">
-              <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-200">
-                decoded from receipt
-              </span>
-            </Tooltip>
+            <div className="flex items-center gap-2">
+              {newMarketId != null && (
+                <Link
+                  href={`/market/${newMarketId.toString()}`}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-200 transition hover:scale-[1.02] hover:border-emerald-400/70 hover:bg-emerald-500/25"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  View market #{newMarketId.toString()}
+                </Link>
+              )}
+              <Tooltip content="Decoded from the agent's createMarket calldata in pendingToolCalls. The contract executes the first matching call; any duplicates emit a DuplicateToolCall advisory.">
+                <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-200">
+                  decoded from receipt
+                </span>
+              </Tooltip>
+            </div>
           </div>
           <dl className="grid gap-3 text-sm sm:grid-cols-3">
             <div className="rounded-xl border border-white/5 bg-black/40 p-4 shadow-inner">

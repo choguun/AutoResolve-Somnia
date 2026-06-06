@@ -21,7 +21,7 @@ hard constraints that are easy to break.
   build-ready). v19 is fully tested (104/104 Foundry) and ready for
   `./scripts/deploy.sh` to ship a fresh contract address on Somnia Shannon
   Testnet (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
-- **Live app (v24)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
+- **Live app (v30)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
   agent manifest at `/api/agent-manifest` and
   `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof (v2)**: market #1 on the v2 contract resolved `YES`
@@ -109,7 +109,7 @@ Quick reference for "what shipped when":
   "RPC unavailable" chip + dimmed card border + alternate
   empty-state copy so operators can tell "no failures" apart
   from "hook failed to fetch."
-- **v27 frontend** (this audit cycle) — `useAgentReceipt.refetchInterval`
+- **v27 frontend** — `useAgentReceipt.refetchInterval`
   drops the 5-min `MAX_POLL_MS` cap so a healthy-but-slow pipeline
   (slow LLM, queued validator, brief platform hiccup) can still
   surface its result; the constant is retained as a UI threshold
@@ -122,6 +122,77 @@ Quick reference for "what shipped when":
   drops a dead `events: {} as never` no-op from its `getLogs` call
   (was silencing viem's type check on an empty events object —
   semantically identical to omitting the field).
+- **v28 contract+relayer** — swaps the relayer
+  main-loop drain order so `drainInferenceUnderfundedEvents` (the
+  cache-aware `retryInferenceFromCache` path) runs BEFORE
+  `drainFailureEvents` (the wasteful-re-parse path). Pre-v28, when
+  both events fired for the same market in the same tick,
+  `drainFailureEvents` ran first, called `requestResolution`, and
+  the v17 H1 up-front cache clear wiped the cache — leaving
+  `drainInferenceUnderfundedEvents`'s `hasCachedParse` pre-check to
+  return false and the relayer to call the wasteful re-parse AND
+  skip the cache retry, two network calls where one would have
+  done. The swap gives the cache-aware path the first shot;
+  `drainFailureEvents` still runs as the fallback for parse-stage
+  failures where `retryInferenceFromCache` isn't applicable. On the
+  contract side, moves `delete marketParseResult[marketId]` in
+  `requestResolution` to AFTER the `InsufficientContractBalance`
+  check — a reverted (underfunded) call used to destroy the cache
+  as a side effect, removing the relayer's only retry path for
+  that market. The v17 H1 invariant ("a parse request in flight
+  never has a cache") still holds on the success path; the new
+  guarantee is "a reverted `requestResolution` does not destroy
+  the cache either." 105/105 Foundry tests pass (104 prior + 1
+  L1 regression). No frontend change.
+- **v29 relayer+frontend** (this audit cycle) — H1 adds
+  `drainTopicFeed` to the relayer's main loop. Reads
+  `scripts/topics.txt` (or `$GENERATION_TOPICS_FILE`) on every
+  tick and submits `requestMarketGeneration` for any topic not
+  already in the persistent `state/submitted-topics.<eoa>.json`
+  (debounced atomic-rename writes, same v16 H3 pattern as the
+  parse-failure cache). Bounded by `TOPIC_FEED_MAX_PER_TICK` (env,
+  default 1) so a relayer coming up after a long downtime doesn't
+  fire N requestMarketGeneration txs in one tick and exhaust the
+  inference deposit budget. Closes the last "human in the loop"
+  gap in the fully-autonomous pipeline (creation was
+  human-triggered, now relayer-driven). H2 new
+  `useMarketCreatedByRequestId` hook polls the `MarketCreatedByAgent`
+  event matching a given requestId (using viem's typed-event
+  `event: parseAbiItem(...)` + `args: {}` form, the pattern v27 L1
+  hinted at); `GenerateMarketForm` auto-redirects to
+  `/market/[id]` on success (router.replace, not push, so the back
+  button takes the user to where they came from); `AgentReceiptViewer`
+  shows a "View market #N" link badge in the "Agent Designed
+  Market" panel. Both consumers flip `enabled: false` once the
+  agent receipt is a terminal failure. L1 `useGenerationFailures`
+  also scans `GenerationRequested` events in the same 5000-block
+  window and builds a requestId→topic map (the contract's
+  `requestToTopic` mapping is unconditionally deleted at the top
+  of `handleGenerationCallback`, so the event is the only off-chain
+  recovery source); the failure row in `AgentCommandCenter` now
+  shows the original topic above the reason, truncated at 80 chars
+  with a tooltip. 105/105 Foundry tests pass (no contract change).
+- **v30 relayer+tooling** (this audit cycle) — H0 hoists the v29
+  consts (`TOPICS_FILE`, `SUBMITTED_TOPICS_FILE`,
+  `TOPIC_FEED_MAX_PER_TICK`) above the L148 startup `console.log`
+  group in `scripts/relayer.mjs`. The v29 startup line referenced
+  these consts but they were declared further down the file
+  (L203 / L1107), so JS hit a TDZ ReferenceError and the relayer
+  process exited before the main loop ever started — meaning v29
+  H1's autonomous creation, v28 H1's drain-order swap, and every
+  v8–v28 recovery behavior had been offline since v29 shipped.
+  H1 reverses `drainTopicFeed`'s pre-flight/add order so the
+  `topUp > maxWei` cap check runs BEFORE
+  `submittedTopics.add(topic)` — pre-v30, a transient
+  cap-exceedance or RPC blip would permanently add the topic to
+  the persistent Set (operator had to hand-edit the JSON to
+  recover). The verification gap is also closed: new
+  `pnpm relayer:smoke` + `scripts/relayer-smoke.sh` forks the
+  relayer with a populated env, waits 1.5s, and asserts the
+  process is still alive. `pnpm lint` + `pnpm build` + `forge
+  test` never execute the relayer — that's how v29's crash shipped
+  silently. The smoke is the missing piece in the verification
+  triangle. 105/105 Foundry tests pass (no contract change).
 - **v15–v18 contract (all share the v15 address — none deployed)** — the
   Foundry-tested sequence that adds the relayer + recovery pipeline
   (`forceResetMarket`, `scanStuckMarkets`, `STALE_REQUEST_TIMEOUT`,
