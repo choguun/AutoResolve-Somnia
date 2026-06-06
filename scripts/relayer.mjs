@@ -166,7 +166,7 @@ const SUBMITTED_TOPICS_FILE = process.env.SUBMITTED_TOPICS_FILE
 // 1/tick = up to 2880 topic submissions/day, well above any demo cadence.
 const TOPIC_FEED_MAX_PER_TICK = Number(process.env.TOPIC_FEED_MAX_PER_TICK ?? 1);
 
-console.log('[relayer] starting (v34)');
+console.log('[relayer] starting (v35)');
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);

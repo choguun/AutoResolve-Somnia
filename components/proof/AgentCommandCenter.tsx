@@ -241,9 +241,10 @@ export function AgentCommandCenter() {
   // the platform DID respond but with a non-success status — those surface
   // as GenerationFailed events with a descriptive reason ("no-tool-calls",
   // "wrong-selector", "QuestionTooLong", etc.). The hook reads the last
-  // ~50 min of logs and decodes the (uint8 status, string reason) data so
-  // the panel can tell the user *why* the agent failed and let them
-  // re-submit with an adjusted topic.
+  // ~8 hours of logs (v35 H0 widened to 50_000n, symmetric with
+  // useMarketCreatedByRequestId) and decodes the (uint8 status, string
+  // reason) data so the panel can tell the user *why* the agent failed
+  // and let them re-submit with an adjusted topic.
   const { data: generationFailures, isError: generationFailuresError } = useGenerationFailures();
 
   const requestResolution = (context: AgentMarketContext) => {
@@ -781,7 +782,7 @@ export function AgentCommandCenter() {
                 </Tooltip>
               )}
               <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-zinc-400">
-                last ~50 min · create pipeline
+                last ~8 hours · create pipeline
               </span>
             </div>
           </div>
@@ -843,7 +844,7 @@ export function AgentCommandCenter() {
             <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-5 text-center text-xs text-zinc-500">
               {generationFailuresError
                 ? 'Could not load recent generation failures — the upstream RPC is unavailable. Check the relayer log for the authoritative stream.'
-                : 'No recent generation failures — the agent has returned valid createMarket calls for every request in the last ~50 minutes.'}
+                : 'No recent generation failures — the agent has returned valid createMarket calls for every request in the last ~8 hours.'}
             </div>
           )}
         </div>

@@ -1,18 +1,20 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { type AgentReceipt, receiptIsComplete } from '@/lib-web/agents';
 
-// 5 minutes is the longest the receipt pipeline should ever take on a healthy
-// platform. v27 dropped the polling cap that used to live in `refetchInterval`
-// below — the constant is now purely a UI threshold for the "this is taking
+// v35 (H1): renamed MAX_POLL_MS → LONG_RUNNING_HINT_MS. 5 minutes is the
+// longest the receipt pipeline should ever take on a healthy platform. v27
+// dropped the polling cap that used to live in `refetchInterval` below —
+// the constant is now purely a UI threshold for the "this is taking
 // longer than expected" hint surfaced in AgentReceiptViewer. Polling
 // continues until the receipt completes or the query errors, so a
 // healthy-but-slow pipeline (a slow LLM, a queued validator, a brief
 // platform hiccup) can still surface its result instead of getting stuck
-// behind a 5-min wall.
-const MAX_POLL_MS = 5 * 60 * 1000;
+// behind a 5-min wall. The old name was misleading — it sounded like a
+// polling budget, which it isn't anymore.
+const LONG_RUNNING_HINT_MS = 5 * 60 * 1000;
 
 // v14: callers identify which pipeline produced the receipt so the UI can
 // pick the right copy when a receipt is slow or missing. Generation receipts
@@ -23,7 +25,19 @@ export type ReceiptKind = 'resolution' | 'generation';
 
 export function useAgentReceipt(requestId?: string | bigint, kind: ReceiptKind = 'resolution') {
   const id = requestId?.toString();
-  const [startedAt] = useState(() => Date.now());
+  // v35 (H2): was `useState(() => Date.now())`, which captured the wall
+  // clock at hook mount time. On a route that mounts the hook ONCE and
+  // then changes the requestId (e.g. /receipt/[requestId] when the user
+  // clicks through the creation pipeline), the long-running hint was
+  // anchored to the FIRST requestId, not the current one — a user looking
+  // at receipt #2 would see the banner timing based on receipt #1's
+  // fetch start. Move to useRef + useEffect keyed on `id` so the hint is
+  // always anchored to the current requestId's first fetch.
+  const startedAtRef = useRef(Date.now());
+  useEffect(() => {
+    startedAtRef.current = Date.now();
+  }, [id]);
+  const startedAt = startedAtRef.current;
 
   const query = useQuery<AgentReceipt>({
     queryKey: ['agent-receipt', id],
@@ -91,17 +105,17 @@ export function useAgentReceipt(requestId?: string | bigint, kind: ReceiptKind =
       }
       return;
     }
-    if (Date.now() - startedAt > MAX_POLL_MS) {
+    if (Date.now() - startedAt > LONG_RUNNING_HINT_MS) {
       setIsLongRunning(true);
       return;
     }
     // Healthy polling — clear the long-running flag in case it was set by a
     // transient error, then schedule a setTimeout for the *remaining* time
-    // until the deadline. (Re-arming with the full MAX_POLL_MS on every
-    // query.data update would push the timeout out indefinitely under
-    // continuous polling.)
+    // until the deadline. (Re-arming with the full LONG_RUNNING_HINT_MS on
+    // every query.data update would push the timeout out indefinitely
+    // under continuous polling.)
     setIsLongRunning(false);
-    const remaining = MAX_POLL_MS - (Date.now() - startedAt);
+    const remaining = LONG_RUNNING_HINT_MS - (Date.now() - startedAt);
     const handle = setTimeout(() => {
       if (!receiptIsComplete(query.data)) setIsLongRunning(true);
     }, remaining);

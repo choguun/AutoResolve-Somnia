@@ -21,7 +21,7 @@ hard constraints that are easy to break.
   build-ready). v19 is fully tested (104/104 Foundry) and ready for
   `./scripts/deploy.sh` to ship a fresh contract address on Somnia Shannon
   Testnet (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
-- **Live app (v34)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
+- **Live app (v35)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
   agent manifest at `/api/agent-manifest` and
   `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof (v2)**: market #1 on the v2 contract resolved `YES`
@@ -36,7 +36,7 @@ hard constraints that are easy to break.
 ### Version history
 
 The contract has been hardened through v8–v19 (Foundry) and the frontend /
-relayer through v22–v34. Each version's full diff lives in the
+relayer through v22–v35. Each version's full diff lives in the
 `auto-resolve-v*-hardening` memory files in
 `~/.claude/projects/-Users-choguun-Documents-workspaces-hackathon-AutoResolve-Somnia/memory/`.
 Memory pointer list at the bottom of this file (`[[...]]`).
@@ -325,6 +325,29 @@ Quick reference for "what shipped when":
   set, so a future contract enum value can't ship without an
   explicit code change. 105/105 Foundry tests pass (no contract
   change).
+- **v35 frontend-only** (this audit cycle) — H0
+  `useGenerationFailures`'s `SCAN_WINDOW_BLOCKS` bumped 5000n →
+  50_000n, symmetric with `useMarketCreatedByRequestId` (v33 H2). The
+  two hooks now have matching coverage (~8.3 hours on Shannon) so a
+  slow LLM pipeline (60+ min) doesn't surface its
+  `MarketCreatedByAgent` event in the auto-redirect hook but
+  silently drop its `GenerationFailed` event out of the failure
+  panel. AgentCommandCenter's "last ~50 min" chip + empty-state
+  copy updated to "last ~8 hours" (M1). H1 `useAgentReceipt`'s
+  `MAX_POLL_MS` constant renamed to `LONG_RUNNING_HINT_MS` — the
+  name was misleading post-v27 (v27 dropped the polling cap; the
+  constant is now purely a UI threshold for the amber "taking
+  longer than expected" hint). H2 the same hook's `startedAt`
+  moves from `useState(() => Date.now())` to `useRef` + `useEffect`
+  keyed on `id`. Pre-v35, the wall clock was captured at hook
+  MOUNT, not on `requestId` change — a `/receipt/[requestId]`
+  page that mounted the hook once and then changed the
+  requestId would show the long-running hint timed from the
+  *first* requestId's fetch start, not the current one. M0 the
+  `/api/topics` route now sets `Cache-Control: public, max-age=5`
+  so the topics.txt read is cached by the Next.js data cache and
+  the route stops being a per-fetch disk-read hot spot under load.
+  105/105 Foundry tests pass (no contract change).
 - **v15–v18 contract (all share the v15 address — none deployed)** — the
   Foundry-tested sequence that adds the relayer + recovery pipeline
   (`forceResetMarket`, `scanStuckMarkets`, `STALE_REQUEST_TIMEOUT`,

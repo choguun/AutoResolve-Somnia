@@ -105,7 +105,40 @@ export function getAutoResolveAgentManifest() {
     // L2: statusLabel in lib-web/contract.ts logs a dev-mode
     // console.warn when status isn't in the known set, so a future
     // contract enum value can't ship without an explicit code change.
-    version: 'v34',
+    // v35 (H0+H1+H2+M0+M1): bumped v34 → v35 — five polish fixes, no
+    // contract change, no behavior change to the relayer main loop.
+    // H0: useGenerationFailures's SCAN_WINDOW_BLOCKS bumped 5000n →
+    // 50_000n. Symmetric with useMarketCreatedByRequestId (v33 H2) so
+    // both hooks cover the same ~8.3-hour window. Pre-v35, a slow LLM
+    // pipeline (60+ min) that eventually emitted a GenerationFailed
+    // event could fall OUT of the failure panel's 5000-block window
+    // even though the corresponding MarketCreatedByAgent event was
+    // still in the auto-redirect hook's 50_000-block window — the
+    // two hooks had asymmetric coverage, so the failure would
+    // disappear from the recovery panel before the corresponding
+    // market landed in the operator's UI.
+    // H1: useAgentReceipt's MAX_POLL_MS constant renamed to
+    // LONG_RUNNING_HINT_MS. The v27 cycle dropped the polling cap,
+    // making the constant purely a UI threshold for the amber
+    // "taking longer than expected" hint in AgentReceiptViewer —
+    // polling continues until the receipt completes or errors. The
+    // old name was misleading: it sounded like a polling budget,
+    // which it isn't anymore.
+    // H2: the same hook's startedAt moves from useState(() => Date.now())
+    // to useRef + useEffect keyed on id. Pre-v35, the wall clock was
+    // captured at hook MOUNT, not on requestId change — a
+    // /receipt/[requestId] page that mounted the hook once and then
+    // changed the requestId would show the long-running hint timed
+    // from the FIRST requestId's fetch start. The hint is now
+    // anchored to the current requestId's first fetch.
+    // M0: /api/topics adds Cache-Control: public, max-age=5. The
+    // topic list is operator-edited and safe to cache for 5s;
+    // without the header, every AgentCommandCenter + relayer fetch
+    // hit the disk and Next.js's default `private, no-cache` policy
+    // made the route a serialization hot spot under load.
+    // M1: AgentCommandCenter's "last ~50 min" chip + empty-state
+    // copy updated to "last ~8 hours" to match H0.
+    version: 'v35',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
@@ -198,7 +231,7 @@ export function getAutoResolveAgentManifest() {
       innovation:
         'A generalizable primitive: a permissionless contract whose end-to-end lifecycle (create -> bet -> resolve -> claim) is executable by an external agent without frontend or admin keys.',
       autonomousPerformance:
-        'Both creation and resolution run without frontend state. Any external agent can call getGenerationFundingStatus, requestMarketGeneration, scanAgentCreatedMarkets, getResolutionFundingStatus, scanResolvableMarkets, and requestResolution in sequence. v29 ships a topic-feed relayer (scripts/relayer.mjs drainTopicFeed) that closes the last human-in-the-loop gap: it reads scripts/topics.txt (or $GENERATION_TOPICS_FILE) on every tick and submits requestMarketGeneration for any topic not already in state/submitted-topics.<eoa>.json. v30 hoists the v29 consts above the startup console.log group (the v29 startup crashed with a TDZ ReferenceError — the relayer was offline) and adds pnpm relayer:smoke as the missing piece in the verification triangle, since `pnpm lint` + `pnpm build` + `forge test` never execute the relayer. v31 makes drainTopicFeed wait for the tx receipt before adding the topic to the persistent Set, closing a residual of v30 H1: a contract-level InsufficientContractBalance revert (e.g. another actor draining the contract balance in the same block) used to refund the deposit to the relayer EOA while leaving the topic in submitted-topics.json, requiring a hand-edit to recover. v32 makes the Set-add write synchronously to disk (closing a SIGKILL race that would re-submit on next boot) and renames the manifest `promptTemplate.system` field to `userSuffix` because the contract sends a single user message of "<prefix><topic><suffix>" — there is no system role. v33 adds a `seenResolvedMarkets` Set so each resolution is logged once (not 50 times over the 50-block scan window), widens the MarketCreatedByAgent scan window to 50_000n so slow LLM pipelines (60+ min) still surface the new marketId to the frontend, fixes MarketCard\'s "View live receipt" link to prefer the inference receipt over the parse receipt when both exist, and tracks forceResetMarket/forceResetGeneration targets in a per-tx Map so rapid double-clicks invalidate the right /market/[id] query. v34 adds the v7 E2E AI-created→AI-resolved proof run to /proof (market #3 on 0xd3E946aC…4B69 — the only on-chain evidence of the autonomous-creation pipeline; pre-v34 the page was silent about it despite CLAUDE.md advertising it), reads the live contractVersion from agentManifest() at SSR time (5-min unstable_cache) so the page self-updates on every deploy — no more manual "v19 (pending) / live on-chain is v15" string edits — and teaches useRpcHealth about a "pending" first-tick state and a "stuck" state (2 consecutive same-block ticks) so operators can tell "chain halted" from "chain slow but alive" and the green dot doesn\'t flash "ok" for one tick on a halted chain.',
+        'Both creation and resolution run without frontend state. Any external agent can call getGenerationFundingStatus, requestMarketGeneration, scanAgentCreatedMarkets, getResolutionFundingStatus, scanResolvableMarkets, and requestResolution in sequence. v29 ships a topic-feed relayer (scripts/relayer.mjs drainTopicFeed) that closes the last human-in-the-loop gap: it reads scripts/topics.txt (or $GENERATION_TOPICS_FILE) on every tick and submits requestMarketGeneration for any topic not already in state/submitted-topics.<eoa>.json. v30 hoists the v29 consts above the startup console.log group (the v29 startup crashed with a TDZ ReferenceError — the relayer was offline) and adds pnpm relayer:smoke as the missing piece in the verification triangle, since `pnpm lint` + `pnpm build` + `forge test` never execute the relayer. v31 makes drainTopicFeed wait for the tx receipt before adding the topic to the persistent Set, closing a residual of v30 H1: a contract-level InsufficientContractBalance revert (e.g. another actor draining the contract balance in the same block) used to refund the deposit to the relayer EOA while leaving the topic in submitted-topics.json, requiring a hand-edit to recover. v32 makes the Set-add write synchronously to disk (closing a SIGKILL race that would re-submit on next boot) and renames the manifest `promptTemplate.system` field to `userSuffix` because the contract sends a single user message of "<prefix><topic><suffix>" — there is no system role. v33 adds a `seenResolvedMarkets` Set so each resolution is logged once (not 50 times over the 50-block scan window), widens the MarketCreatedByAgent scan window to 50_000n so slow LLM pipelines (60+ min) still surface the new marketId to the frontend, fixes MarketCard\'s "View live receipt" link to prefer the inference receipt over the parse receipt when both exist, and tracks forceResetMarket/forceResetGeneration targets in a per-tx Map so rapid double-clicks invalidate the right /market/[id] query. v34 adds the v7 E2E AI-created→AI-resolved proof run to /proof (market #3 on 0xd3E946aC…4B69 — the only on-chain evidence of the autonomous-creation pipeline; pre-v34 the page was silent about it despite CLAUDE.md advertising it), reads the live contractVersion from agentManifest() at SSR time (5-min unstable_cache) so the page self-updates on every deploy — no more manual "v19 (pending) / live on-chain is v15" string edits — and teaches useRpcHealth about a "pending" first-tick state and a "stuck" state (2 consecutive same-block ticks) so operators can tell "chain halted" from "chain slow but alive" and the green dot doesn\'t flash "ok" for one tick on a halted chain. v35 bumps useGenerationFailures\'s SCAN_WINDOW_BLOCKS to 50_000n (symmetric with useMarketCreatedByRequestId) so the failure panel covers the same ~8.3 hours as the auto-redirect window, fixes useAgentReceipt\'s startedAt (now useRef+useEffect keyed on id) so the amber long-running hint is anchored to the current requestId\'s first fetch (not the hook mount), and caches /api/topics for 5s so the topic feed stops being a disk-read hot spot.',
     },
     proofRun: {
       contractAddress: '0x1631303A748076648a0AbbE077a657Ad7812834F',

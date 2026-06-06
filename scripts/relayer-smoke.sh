@@ -6,7 +6,7 @@
 # in the verification triangle: `pnpm lint` + `pnpm build` + `forge test`
 # never execute the relayer, so a runtime crash like the v29 TDZ bug
 # (#162) shipped silently.
-# v31-v34: the grep below tracks the v34 startup label. Update the grep
+# v31-v35: the grep below tracks the v35 startup label. Update the grep
 # string on every relayer version bump.
 #
 # The contract address is the zero address because we don't want to
@@ -45,10 +45,10 @@ if kill -0 "$PID" 2>/dev/null; then
   kill -9 "$PID" 2>/dev/null
   # Look for the v32 startup line — the H0 fix is specifically about
   # getting this log to print without a TDZ throw.
-  if grep -q "starting (v34)" /tmp/relayer-smoke.log; then
-    echo "[relayer-smoke] OK: v34 startup line printed"
+  if grep -q "starting (v35)" /tmp/relayer-smoke.log; then
+    echo "[relayer-smoke] OK: v35 startup line printed"
   else
-    echo "[relayer-smoke] WARN: v34 startup line missing — relayer may be running an older version"
+    echo "[relayer-smoke] WARN: v35 startup line missing — relayer may be running an older version"
     cat /tmp/relayer-smoke.log
   fi
   exit 0

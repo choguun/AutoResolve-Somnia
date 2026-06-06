@@ -18,7 +18,17 @@ const GENERATION_FAILED_TOPIC = keccak256(
 const GENERATION_REQUESTED_TOPIC = keccak256(
   toBytes('GenerationRequested(uint256,string)')
 );
-const SCAN_WINDOW_BLOCKS = 5000n; // ~50 min on Shannon at ~600ms blocks
+// v35 (H0): bumped 5000n → 50_000n to match useMarketCreatedByRequestId
+// (v33 H2). 50_000n covers ~8.3 hours on Shannon at ~600ms blocks, which
+// closes a residual asymmetry: a slow LLM pipeline (60+ min) that eventually
+// emitted a GenerationFailed event used to fall OUT of this hook's scan
+// window before the auto-redirect hook (the one that creates markets) saw
+// the corresponding MarketCreatedByAgent event. The two hooks are now
+// symmetric — the auto-redirect window widens to catch the slow pipeline,
+// the failure window widens to surface the slow pipeline's eventual
+// failure. The `args` filter on indexed event topics keeps the RPC
+// bandwidth bounded.
+const SCAN_WINDOW_BLOCKS = 50_000n;
 
 const publicClient = createPublicClient({
   chain: somniaTestnet,
@@ -65,7 +75,7 @@ async function fetchRecentGenerationFailures(): Promise<GenerationFailure[]> {
   // v29 (L1): build a requestId → topic map from the same scan range. Both
   // events (GenerationRequested and GenerationFailed) for a given request
   // land within a few blocks of each other — the platform callback is
-  // seconds-to-minutes, well inside the 5000-block window. If a topic is
+  // seconds-to-minutes, well inside the 50_000-block window. If a topic is
   // missing from the map, the request is either outside the window or
   // the GenerationRequested decode failed; either way, surface null and
   // let the UI show "unknown topic".
