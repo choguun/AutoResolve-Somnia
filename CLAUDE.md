@@ -21,7 +21,7 @@ hard constraints that are easy to break.
   build-ready). v19 is fully tested (104/104 Foundry) and ready for
   `./scripts/deploy.sh` to ship a fresh contract address on Somnia Shannon
   Testnet (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
-- **Live app (v30)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
+- **Live app (v32)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
   agent manifest at `/api/agent-manifest` and
   `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof (v2)**: market #1 on the v2 contract resolved `YES`
@@ -193,6 +193,61 @@ Quick reference for "what shipped when":
   test` never execute the relayer — that's how v29's crash shipped
   silently. The smoke is the missing piece in the verification
   triangle. 105/105 Foundry tests pass (no contract change).
+- **v31 relayer+manifest** (this audit cycle) — H0 makes
+  `drainTopicFeed` wait for `publicClient.waitForTransactionReceipt`
+  after `writeContract` and only add the topic to the persistent
+  `submittedTopics` Set if `receipt.status === 'success'`. v30 H1
+  had reordered the pre-flight/add/submit sequence but still
+  trusted `writeContract`'s hash return as proof of submission —
+  a contract-level `InsufficientContractBalance` revert (e.g.
+  another actor draining the contract's STT balance in the same
+  block) would refund the deposit to the relayer EOA but leave
+  the topic in the Set, requiring a hand-edit of
+  `state/submitted-topics.<eoa>.json` to recover. v31 closes the
+  same theme as v30 H1: don't trust the relayer's local view of
+  "this topic is done"; verify on-chain via the receipt. The 4
+  other relayer paths (`tryResetStuckMarket`,
+  `retryInferenceFromCache`, etc.) already follow the
+  wait-for-receipt pattern; `drainTopicFeed` is brought into
+  line. v31 also fixes the misleading v30 H1 comment that
+  claimed "the deposit was forwarded to the platform" on a
+  revert — that's only true for reverts that happen AFTER
+  `PLATFORM.createRequest`, not for the pre-platform-call
+  `InsufficientContractBalance` check that runs as the first
+  thing in `requestMarketGeneration`. 105/105 Foundry tests
+  pass (no contract change).
+- **v32 relayer+manifest+frontend-polish** (this audit cycle) —
+  H0 the manifest's `promptTemplate.system` field was
+  semantically wrong when populated from the live contract —
+  the contract has no system role, just a single user message
+  of "<prefix><topic><suffix>". Renamed to `userSuffix` in both
+  manifest route handlers and updated the static fallback in
+  `lib-web/agentManifest.ts` to match the v7 SPECIFIC-URL +
+  [300,600] SHORT-duration prompt text the live contract
+  encodes (the old static was missing both requirements,
+  matching the pre-v7 failure mode that blocked AI-created →
+  AI-resolved markets). Also fixes the `onchainTools`
+  description's `question <= 200 chars` → `question <= 500
+  chars (MAX_QUESTION_LENGTH)` (200 is `MAX_TOPIC_LENGTH`, the
+  proposer's topic — not the agent's designed question). H1
+  `drainTopicFeed` Set-add now writes synchronously to disk
+  instead of via the 5s-debounced `scheduleSubmittedTopicsSave`
+  — the debounce was a SIGKILL race: a kill between the
+  in-memory add and the disk flush would cause next boot to
+  re-read the old file and re-submit the topic (burning a
+  second ~0.3 STT inference deposit). Also removes the
+  now-dead `scheduleSubmittedTopicsSave` function (ESLint
+  `--max-warnings=0` caught it). L0 `waitForTransactionReceipt`
+  in `drainTopicFeed` gets a 60s `timeout` so a stuck tx
+  (dropped from mempool) can't block the main loop
+  indefinitely. L2 proof page `contractVersionNote` now says
+  "live on-chain is v15" so the live-vs-pending split is
+  explicit. L3 receipt-by-tx route logs a warning when
+  `NEXT_PUBLIC_CONTRACT_ADDRESS` is unset (the permissive
+  filter is preserved, but the operator notices). L4 proof
+  page "Seeded Markets" label hardcoded "Markets #3-#6" →
+  "See live markets" (the actual count is environment-
+  dependent). 105/105 Foundry tests pass (no contract change).
 - **v15–v18 contract (all share the v15 address — none deployed)** — the
   Foundry-tested sequence that adds the relayer + recovery pipeline
   (`forceResetMarket`, `scanStuckMarkets`, `STALE_REQUEST_TIMEOUT`,

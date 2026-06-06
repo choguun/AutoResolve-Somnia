@@ -33,9 +33,12 @@ const proofRun = {
 // they're at the wrong contract. The proof page now surfaces both
 // labels so the split is explicit. When the v19 contract ships, the
 // parenthetical drops.
+// v32 (L2): the previous note said just "pending deploy" — judges had to
+// separately know the live on-chain contract is v15. Restructured to
+// make the live-vs-pending split explicit in the rendered text.
 const frontendVersion = getAutoResolveAgentManifest().version;
-const contractVersion = 'v19';
-const contractVersionNote = 'pending deploy';
+const contractVersion = 'v19 (pending)';
+const contractVersionNote = 'live on-chain is v15';
 
 const criteria = [
   {
@@ -140,7 +143,7 @@ export default function ProofPage() {
             value="/.well-known/autoresolve-agent.json"
             external={false}
           />
-          <ProofLink label="Seeded Markets" href={addressExplorerUrl(CONTRACT_ADDRESS)} value="Markets #3-#6" />
+          <ProofLink label="Seeded Markets" href={addressExplorerUrl(CONTRACT_ADDRESS)} value="See live markets" />
         </div>
       </section>
 

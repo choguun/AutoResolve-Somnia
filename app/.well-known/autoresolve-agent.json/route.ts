@@ -12,9 +12,14 @@ export async function GET() {
   const prompt = await getCachedGenerationPromptTemplate();
   if (prompt) {
     const [prefix, suffix] = prompt;
+    // v32 (H0): see app/api/agent-manifest/route.ts for the rationale. The
+    // contract sends "<prefix><topic><suffix>" as a single user message —
+    // no system role. Renaming `system` → `userSuffix` matches the actual
+    // model architecture so external agents don't misread the prompt
+    // structure.
     manifest.creation = {
       ...manifest.creation,
-      promptTemplate: { userPrefix: prefix, system: suffix },
+      promptTemplate: { userPrefix: prefix, userSuffix: suffix },
     };
   }
   return NextResponse.json(manifest);

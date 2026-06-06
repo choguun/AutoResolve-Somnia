@@ -166,7 +166,7 @@ const SUBMITTED_TOPICS_FILE = process.env.SUBMITTED_TOPICS_FILE
 // 1/tick = up to 2880 topic submissions/day, well above any demo cadence.
 const TOPIC_FEED_MAX_PER_TICK = Number(process.env.TOPIC_FEED_MAX_PER_TICK ?? 1);
 
-console.log('[relayer] starting (v30)');
+console.log('[relayer] starting (v32)');
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
@@ -387,16 +387,20 @@ function saveSubmittedTopics() {
   }
 }
 
-function scheduleSubmittedTopicsSave() {
-  submittedTopicsWriteDirty = true;
-  if (submittedTopicsWriteTimer) return;
-  submittedTopicsWriteTimer = setTimeout(() => {
-    submittedTopicsWriteTimer = null;
-    if (!submittedTopicsWriteDirty) return;
-    submittedTopicsWriteDirty = false;
-    saveSubmittedTopics();
-  }, 5000);
-}
+// v32 (H1): the 5s-debounced scheduleSubmittedTopicsSave was the source
+// of a SIGKILL race — if the relayer was killed between the in-memory
+// add and the debounce's disk flush, the next boot would re-read the
+// old file and re-submit the topic (duplicate requestMarketGeneration,
+// ~0.3 STT inference deposit burned). drainTopicFeed now calls
+// saveSubmittedTopics() synchronously after the Set-add (writeFileSync +
+// renameSync is atomic, so the on-disk file is always either pre-add
+// or post-add, never partial). The debounce is no longer needed; the
+// sync write is ~5ms of disk time per topic submission, bounded by
+// TOPIC_FEED_MAX_PER_TICK (default 1). flushSubmittedTopicsSync is
+// retained below as a no-op defensive flush on SIGINT/SIGTERM (it's
+// always a no-op now that the debounce variables are never set, but
+// removing the call sites from the signal handlers is a bigger
+// refactor for no functional gain).
 
 function flushSubmittedTopicsSync() {
   if (submittedTopicsWriteTimer) {
@@ -1149,16 +1153,28 @@ async function drainTopicFeed() {
   const slice = fresh.slice(0, TOPIC_FEED_MAX_PER_TICK);
   for (const topic of slice) {
     // v30 (H1): pre-flight checks FIRST, then add to the Set, then submit.
-    // The previous order (set add → read topUp → cap check → continue) meant
+    // The pre-v30 order (set add → read topUp → cap check → continue) meant
     // a transient cap-exceedance or a transient RPC blip on readInferenceTopUp
     // would permanently add the topic to submittedTopics — the next relayer
     // tick wouldn't retry, the operator would have to hand-edit
     // SUBMITTED_TOPICS_FILE. Now pre-flight failures keep the topic out of
     // the Set entirely (it'll be retried on the next tick once the operator
-    // raises the cap or the RPC recovers). Once pre-flight passes, the add
-    // is the "we're committing to this submission" signal — even if the
-    // writeContract then reverts InsufficientContractBalance, the deposit
-    // was forwarded to the platform and the topic stays in the Set.
+    // raises the cap or the RPC recovers).
+    //
+    // v31 (H0): wait for the receipt before adding to the Set. writeContract
+    // returns a hash the moment the RPC accepts the tx — it does NOT confirm
+    // the contract accepted the value. The pre-v31 order (add → writeContract
+    // → log success) silently lost the topic if the tx reverted: a contract-
+    // level InsufficientContractBalance (e.g. another actor drained the
+    // contract's STT balance below the inference deposit in the same block)
+    // reverts BEFORE any value is forwarded, so msg.value is refunded to the
+    // relayer EOA — but the topic is in the Set, so the next tick skips it
+    // and the operator has to hand-edit SUBMITTED_TOPICS_FILE to recover.
+    // v31 fixes the same theme as v30 H1: don't trust the relayer's local
+    // view of "this topic is done"; verify on-chain. The other 4 relayer
+    // paths (tryResetStuckMarket, retryInferenceFromCache, etc.) already
+    // follow the wait-for-receipt pattern; drainTopicFeed is the only one
+    // that trusted writeContract's return value.
     try {
       const topUp = await readInferenceTopUp();
       if (topUp > maxWei) {
@@ -1167,15 +1183,6 @@ async function drainTopicFeed() {
         );
         continue;
       }
-      // Pre-flight passed — claim the topic. The within-process Set is the
-      // dedup for any later code path in this tick (none today, but future-
-      // proof); the disk-persisted Set (reloaded on relayer startup) is the
-      // cross-process dedup. A parallel watchdog relayer can still submit a
-      // duplicate in the small race between add and tx-mine — the contract
-      // has no on-chain topic→requestId dedup, so the inference-deposit cost
-      // is the only defense-in-depth.
-      submittedTopics.add(topic);
-      scheduleSubmittedTopicsSave();
       const hash = await walletClient.writeContract({
         address: CONTRACT,
         abi: ABI,
@@ -1183,18 +1190,72 @@ async function drainTopicFeed() {
         args: [topic],
         value: topUp,
       });
+      // v32 (L0): cap the wait at 60s. Without a timeout, a tx that gets
+      // dropped from the mempool (gas too low) blocks the relayer's main
+      // loop indefinitely — drainFailureEvents, scanStuckMarkets, etc.
+      // can't run while we're stuck here. writeContract's default gas
+      // bumping usually mines within 1-2s on Shannon, so 60s is
+      // generous; a stuck tx after that is a real problem and the next
+      // tick can deal with it.
+      let receipt;
+      try {
+        receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
+      } catch (err) {
+        console.warn(
+          `[relayer] waitForTransactionReceipt timed out for "${topic.slice(0, 40)}${topic.length > 40 ? '…' : ''}" ` +
+          `(tx ${hash}); will retry next tick`,
+          err.shortMessage ?? err.message,
+        );
+        continue;  // topic is NOT in the Set — retried next tick
+      }
+      if (receipt.status !== 'success') {
+        console.warn(
+          `[relayer] requestMarketGeneration("${topic.slice(0, 40)}${topic.length > 40 ? '…' : ''}") ` +
+          `reverted in block ${receipt.blockNumber} (tx ${hash}); will retry next tick`,
+        );
+        continue;  // topic is NOT in the Set — retried next tick
+      }
+      // Pre-flight AND on-chain submit both succeeded — claim the topic.
+      // The within-process Set is the dedup for any later code path in this
+      // tick (none today, but future-proof); the disk-persisted Set
+      // (reloaded on relayer startup) is the cross-process dedup. A parallel
+      // watchdog relayer can still submit a duplicate in the small race
+      // between add and tx-mine — the contract has no on-chain
+      // topic→requestId dedup, so the inference-deposit cost is the only
+      // defense-in-depth.
+      //
+      // v32 (H1): write synchronously to disk, not via the 5s-debounced
+      // scheduleSubmittedTopicsSave. The debounce is fine for the parse-
+      // failure cache (a SIGKILL there just costs a few extra re-parses)
+      // but a SIGKILL here costs a duplicate requestMarketGeneration
+      // (~0.3 STT inference deposit) on next boot. The sync write is
+      // ~5ms of disk time per topic submission, well below the 30s
+      // POLL_MS, and bounded by TOPIC_FEED_MAX_PER_TICK (default 1).
+      // saveSubmittedTopics uses writeFileSync + renameSync so the
+      // write itself is atomic — the on-disk file is always either the
+      // pre-add state or the post-add state, never a partial write.
+      submittedTopics.add(topic);
+      saveSubmittedTopics();
       console.log(
-        `[relayer] submitted requestMarketGeneration("${topic.slice(0, 40)}${topic.length > 40 ? '…' : ''}") → ${hash} (value=${formatEther(topUp)} STT)`,
+        `[relayer] submitted requestMarketGeneration("${topic.slice(0, 40)}${topic.length > 40 ? '…' : ''}") ` +
+        `→ ${hash} (value=${formatEther(topUp)} STT, block ${receipt.blockNumber})`,
       );
     } catch (err) {
       console.error(
         `[relayer] requestMarketGeneration("${topic.slice(0, 40)}…") failed:`,
         err.shortMessage ?? err.message,
       );
-      // If pre-flight failed (readInferenceTopUp RPC blip), the topic is NOT
-      // in the Set — it'll be retried next tick. If the writeContract failed
-      // after the Set-add, the topic IS in the Set (deposit was forwarded) —
-      // the operator can clear SUBMITTED_TOPICS_FILE if they want to retry.
+      // Pre-flight RPC blip (readInferenceTopUp): topic NOT in Set — retried
+      // next tick. writeContract RPC error (relayer couldn't even submit):
+      // topic NOT in Set — retried next tick. waitForTransactionReceipt
+      // timeout: topic NOT in Set (handled by the explicit catch + continue
+      // above) — retried next tick. Sync disk write failure
+      // (saveSubmittedTopics catches internally and warns): topic IS in
+      // the in-memory Set but the disk write may not have landed — the
+      // next boot would re-submit. This is the residual risk: a disk
+      // failure between the Set-add and the atomic rename. The
+      // saveSubmittedTopics try/catch at L385-387 already logs the
+      // warning; the operator can hand-edit SUBMITTED_TOPICS_FILE.
     }
   }
 }

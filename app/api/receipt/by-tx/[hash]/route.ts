@@ -59,7 +59,19 @@ export async function GET(
     // `GenerationRequested`; the Somnia platform may also emit its own logs
     // (e.g. `RequestCreated`). We only care about the AutoResolve contract's
     // logs — `log.address` is the contract that emitted the event.
+    // v32 (L3): when NEXT_PUBLIC_CONTRACT_ADDRESS is unset (local dev
+    // without a deploy), the filter below is bypassed entirely — every
+    // log in the tx is checked against the event signatures. The risk is
+    // low (the event signatures are AutoResolve-specific) but a wrong-
+    // contract match would surface a bogus requestId. Log a one-time
+    // warning so the operator notices the unset env.
     const contractAddress = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || '').toLowerCase();
+    if (!contractAddress) {
+      console.warn(
+        '[api/receipt/by-tx] NEXT_PUBLIC_CONTRACT_ADDRESS is unset; contract-address filter is permissive. ' +
+        'Set it in .env for production-grade accuracy.',
+      );
+    }
     for (const log of receipt.logs) {
       if (contractAddress && log.address.toLowerCase() !== contractAddress) {
         continue;

@@ -13,9 +13,15 @@ export async function GET() {
   const prompt = await getCachedGenerationPromptTemplate();
   if (prompt) {
     const [prefix, suffix] = prompt;
+    // v32 (H0): the contract sends the agent a single user message of
+    // "<prefix><topic><suffix>" — there is no system role. The previous
+    // shape labeled `suffix` as `system`, which would mislead external
+    // agents reading the manifest into thinking the agent has a separate
+    // system message. Rename to `userSuffix` so the field name matches
+    // the underlying model architecture.
     manifest.creation = {
       ...manifest.creation,
-      promptTemplate: { userPrefix: prefix, system: suffix },
+      promptTemplate: { userPrefix: prefix, userSuffix: suffix },
     };
   }
   return NextResponse.json(manifest);
