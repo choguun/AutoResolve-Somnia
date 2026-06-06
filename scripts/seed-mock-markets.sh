@@ -32,6 +32,17 @@ place_bet() {
   local option="$2"
   local amount="$3"
 
+  # v33 (M2): footgun guard. `cast send --value` interprets bare numbers as
+  # wei and `N ether` / `N gwei` as unit-suffixed values. A bare `0.03`
+  # would be sent as 0.03 wei — far below MIN_BET (0.001 STT = 1e15 wei) —
+  # and the contract would revert BetBelowMinimum. The existing call sites
+  # all use the `ether` suffix, so this just guards future operators from a
+  # silent wei-vs-STT mistake.
+  if [[ "$amount" != *ether && "$amount" != *gwei && "$amount" != *wei ]]; then
+    echo "place_bet: amount must end in 'ether', 'gwei', or 'wei' (cast convention); got '$amount'" >&2
+    exit 1
+  fi
+
   cast send "$CONTRACT" "bet(uint256,uint8)" "$market_id" "$option" \
     --value "$amount" "${COMMON_ARGS[@]}"
 }

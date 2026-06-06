@@ -166,7 +166,7 @@ const SUBMITTED_TOPICS_FILE = process.env.SUBMITTED_TOPICS_FILE
 // 1/tick = up to 2880 topic submissions/day, well above any demo cadence.
 const TOPIC_FEED_MAX_PER_TICK = Number(process.env.TOPIC_FEED_MAX_PER_TICK ?? 1);
 
-console.log('[relayer] starting (v32)');
+console.log('[relayer] starting (v34)');
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
@@ -211,6 +211,15 @@ const parseFailureCache = new Map();
 // failed requests at typical demo cadence.
 const seenGenerationFailures = new Set();
 const SEEN_GEN_FAILURE_LIMIT = 1000;
+// v33 (H0): module-level dedup Set for MarketResolved events. logResolvedMarkets
+// scans the same 50-block window every tick, so a market that resolved at
+// block N stays in the window for the next 50 ticks (~25 min at POLL_MS=30s).
+// Without dedup, the same "market N resolved outcome=YES" line is printed 50
+// times, filling the operator's terminal with duplicates. The seenGenerationFailures
+// pattern above is the template; resolved events are positive (success), so a
+// 1000-entry FIFO cap covers weeks of resolutions at typical demo cadence.
+const seenResolvedMarkets = new Set();
+const SEEN_RESOLVED_LIMIT = 1000;
 const maxWei = parseEther(MAX_TOPUP_STT);
 
 // v29 (H1) + v30 (H0): TOPICS_FILE / SUBMITTED_TOPICS_FILE / TOPIC_FEED_MAX_PER_TICK
@@ -866,6 +875,17 @@ async function logResolvedMarkets() {
     (l) => l.topics[0]?.toLowerCase() === MARKET_RESOLVED_TOPIC.toLowerCase(),
   );
   for (const log of resolved) {
+    const key = marketKey(log.topics[1]);
+    // v33 (H0): module-level dedup so a market that resolved at block N isn't
+    // re-logged on every tick for the next 50 blocks (~25 min). Same pattern
+    // as seenGenerationFailures (L212). FIFO eviction when at the cap so the
+    // Set doesn't grow unbounded on a long-running relayer.
+    if (seenResolvedMarkets.has(key)) continue;
+    if (seenResolvedMarkets.size >= SEEN_RESOLVED_LIMIT) {
+      const oldest = seenResolvedMarkets.values().next().value;
+      seenResolvedMarkets.delete(oldest);
+    }
+    seenResolvedMarkets.add(key);
     const outcome = BigInt(log.topics[2]) === 1n ? 'YES' : 'NO';
     console.log(`[relayer] ✓ market ${log.topics[1]} resolved outcome=${outcome}`);
   }

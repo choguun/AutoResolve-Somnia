@@ -12,6 +12,12 @@ function healthColor(health: RpcHealth): string {
       return 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]';
     case 'slow':
       return 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.7)]';
+    case 'stuck':
+      // v34 (L1): chain halted for 2+ ticks. Same red as 'down' but
+      // visually distinguishable via the ping-animation (stuck still
+      // pings, down doesn't) so operators can tell "RPC up, chain
+      // halted" from "RPC unreachable".
+      return 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.7)]';
     case 'down':
       return 'bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.7)]';
     default:
@@ -22,6 +28,15 @@ function healthColor(health: RpcHealth): string {
 function healthLabel(health: RpcHealth, latencyMs: number | null, block: bigint | null): string {
   if (health === 'pending') return 'Checking Somnia RPC...';
   if (health === 'down') return 'Somnia RPC unreachable';
+  // v34 (L1): distinct copy for the stuck state. Same color as 'down'
+  // (rose) but a different message so the operator knows the recovery
+  // path is different — RPC is responding, but the chain itself
+  // stopped producing blocks.
+  if (health === 'stuck') {
+    const parts: string[] = ['Somnia chain stuck'];
+    if (block !== null) parts.push(`last block #${block.toString()}`);
+    return parts.join(' · ');
+  }
   const parts: string[] = [];
   parts.push(health === 'ok' ? 'Somnia RPC live' : 'Somnia RPC slow');
   if (latencyMs !== null) parts.push(`${Math.round(latencyMs)}ms`);
@@ -39,7 +54,17 @@ function RpcStatusIndicator() {
           {health !== 'down' && (
             <span
               className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${
-                health === 'ok' ? 'bg-emerald-400' : health === 'slow' ? 'bg-amber-400' : 'bg-zinc-400'
+                health === 'ok'
+                  ? 'bg-emerald-400'
+                  : health === 'slow'
+                    ? 'bg-amber-400'
+                    // v34 (L1): stuck pings in red (same as down's
+                    // static color) so the operator can tell at a
+                    // glance that the indicator is "live" (pinging)
+                    // but the chain is "stuck" (red).
+                    : health === 'stuck'
+                      ? 'bg-rose-400'
+                      : 'bg-zinc-400'
               }`}
             />
           )}

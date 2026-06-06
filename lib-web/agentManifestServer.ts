@@ -54,3 +54,33 @@ export const getCachedGenerationPromptTemplate = unstable_cache(
   ['generation-prompt-template', CONTRACT_ADDRESS],
   { revalidate: 300 }, // 5 min — collapses repeated manifest fetches
 );
+
+// v34 (M1): cached reader for the contract's `agentManifest()` string view.
+// The view is a constant per contract address (baked in at deploy time), so
+// the 5-min revalidate collapses repeated reads while still picking up
+// redeploys. The proof page parses the version prefix (e.g. "AutoResolve
+// agent interface v19." → "v19") so the page can render the live contract
+// version without a hardcoded string. The v33 proof page shipped with
+// `contractVersion = 'v19 (pending)'` and `contractVersionNote = 'live on-
+// chain is v15'` hardcoded — every contract deploy required a manual
+// string edit. The SSR read below closes that drift hazard.
+async function readAgentManifestFromChain(): Promise<string | null> {
+  try {
+    return (await serverPublicClient.readContract({
+      address: CONTRACT_ADDRESS,
+      abi: CONTRACT_ABI,
+      functionName: 'agentManifest',
+    })) as string;
+  } catch {
+    // Contract unreachable (RPC down, address unset, the function returns
+    // nothing, or a v0-of-N contract doesn't expose it). Caller falls back
+    // to a 'detecting…' placeholder so the page still renders.
+    return null;
+  }
+}
+
+export const getCachedAgentManifest = unstable_cache(
+  readAgentManifestFromChain,
+  ['agent-manifest', CONTRACT_ADDRESS],
+  { revalidate: 300 }, // 5 min — same cadence as the prompt template
+);

@@ -53,7 +53,17 @@ export function useAgentReceipt(requestId?: string | bigint, kind: ReceiptKind =
     },
     refetchInterval: (query) => {
       if (receiptIsComplete(query.state.data)) return false;
-      if (query.state.status === 'error') return false;
+      if (query.state.status === 'error') {
+        // v33 (L1): branch on the upstream status. 404 means "not yet indexed"
+        // (the platform hasn't seen this requestId yet — normal for the first
+        // few seconds after the tx mines) and should keep polling; only 5xx
+        // and unknown errors stop the polling loop. Pre-v33, the single
+        // `status === 'error' → false` rule meant a slow-to-index receipt
+        // would stop polling entirely after `retry: 2` (~10-15s of 404s), and
+        // the user had to click Refresh to recover.
+        const err = query.state.error as (Error & { status?: number }) | null;
+        return err?.status === 404 ? 5000 : false;
+      }
       return 5000;
     },
     retry: 2,
@@ -68,8 +78,17 @@ export function useAgentReceipt(requestId?: string | bigint, kind: ReceiptKind =
     }
     // On error after the retry budget is exhausted, surface the long-running
     // UI early so the user can hit Refresh instead of staring at a spinner.
+    // v33 (L2): 404 ("not yet indexed") is NOT a real error and shouldn't
+    // trigger the amber "taking longer than expected" banner — the polling
+    // is healthy, the platform just hasn't indexed yet. 5xx (and unknown)
+    // keep the original behavior.
     if (query.error) {
-      setIsLongRunning(true);
+      const err = query.error as Error & { status?: number };
+      if (err.status === 404) {
+        setIsLongRunning(false);
+      } else {
+        setIsLongRunning(true);
+      }
       return;
     }
     if (Date.now() - startedAt > MAX_POLL_MS) {

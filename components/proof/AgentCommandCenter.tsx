@@ -101,11 +101,17 @@ export function AgentCommandCenter() {
   const queryClient = useQueryClient();
   const [activePipeline, setActivePipeline] = useState<'resolve' | 'generate' | 'recover'>('resolve');
   const [topic, setTopic] = useState('');
-  // v15: track which market the active recovery reset targets so the success
-  // callback can invalidate the corresponding `/market/[id]` query in any
-  // other open tab — otherwise the recovery panel "fixes" a stuck market and
-  // the user navigates to it on another tab only to see stale data.
-  const [recoveredMarketId, setRecoveredMarketId] = useState<bigint | null>(null);
+  // v33 (H3): per-tx reset tracking. The pre-v33 design used a single
+  // `recoveredMarketId` state that was overwritten on every click — if the
+  // user clicked "Force reset" on market 1, then quickly clicked "Force reset"
+  // on market 2 before market 1's tx confirmed, the success effect at L344
+  // would invalidate market 2's `/market/[id]` query (the one captured at
+  // effect render time) instead of market 1's. Use a Map<hash, {kind, id}>
+  // so each tx's id is captured in the onSuccess closure at click time and
+  // matched to its actual hash.
+  const [pendingReset, setPendingReset] = useState<
+    Map<`0x${string}`, { kind: 'market' | 'generation'; id: bigint }>
+  >(() => new Map());
 
   const {
     data,
@@ -298,7 +304,9 @@ export function AgentCommandCenter() {
   const forceResetMarket = (marketId: bigint) => {
     reset();
     setActivePipeline('recover');
-    setRecoveredMarketId(marketId);
+    // v33 (H3): capture the marketId in a Map keyed by the eventual tx hash
+    // (set in onSuccess below) so the success effect can match the right
+    // id to the right hash, even on rapid double-click.
     writeContract(
       {
         address: CONTRACT_ADDRESS,
@@ -307,12 +315,18 @@ export function AgentCommandCenter() {
         args: [marketId],
       },
       {
-        onSuccess: (txHash) =>
+        onSuccess: (txHash) => {
+          setPendingReset((prev) => {
+            const next = new Map(prev);
+            next.set(txHash, { kind: 'market', id: marketId });
+            return next;
+          });
           showSubmittedTransactionToast(
             txHash,
             `Force-resetting market #${marketId.toString()}...`,
             'agent-recovery'
-          ),
+          );
+        },
         onError: (err) => toast.error(err.message.slice(0, 140)),
       }
     );
@@ -321,7 +335,6 @@ export function AgentCommandCenter() {
   const forceResetGeneration = (requestId: bigint) => {
     reset();
     setActivePipeline('recover');
-    setRecoveredMarketId(null);
     writeContract(
       {
         address: CONTRACT_ADDRESS,
@@ -330,12 +343,18 @@ export function AgentCommandCenter() {
         args: [requestId],
       },
       {
-        onSuccess: (txHash) =>
+        onSuccess: (txHash) => {
+          setPendingReset((prev) => {
+            const next = new Map(prev);
+            next.set(txHash, { kind: 'generation', id: requestId });
+            return next;
+          });
           showSubmittedTransactionToast(
             txHash,
             `Force-resetting generation request #${requestId.toString()}...`,
             'agent-recovery'
-          ),
+          );
+        },
         onError: (err) => toast.error(err.message.slice(0, 140)),
       }
     );
@@ -350,15 +369,25 @@ export function AgentCommandCenter() {
     } else {
       showConfirmedTransactionToast(hash, 'Stuck request reset - pipeline is unblocked', 'agent-recovery');
       refetchRecovery();
-      // v15: invalidate the recovered market's query so `/market/[id]` in any
-      // other open tab refetches and shows the freshly-reset state instead of
-      // the stale Resolving view.
-      if (recoveredMarketId != null) {
-        queryClient.invalidateQueries({ queryKey: ['market', recoveredMarketId.toString()] });
+      // v33 (H3): look up the (kind, id) pair by the actual hash that
+      // confirmed, not by a shared `recoveredMarketId` state that gets
+      // overwritten on rapid double-click. `kind === 'market'` is the only
+      // case that has a `/market/[id]` query to invalidate — generation
+      // resets have no associated market.
+      const reset = pendingReset.get(hash);
+      if (reset?.kind === 'market') {
+        queryClient.invalidateQueries({ queryKey: ['market', reset.id.toString()] });
       }
-      setRecoveredMarketId(null);
+      // Clean up the entry regardless of kind so the Map doesn't grow
+      // unbounded over a long session.
+      setPendingReset((prev) => {
+        if (!prev.has(hash)) return prev;
+        const next = new Map(prev);
+        next.delete(hash);
+        return next;
+      });
     }
-  }, [hash, isSuccess, activePipeline, refetchRecovery, queryClient, recoveredMarketId]);
+  }, [hash, isSuccess, activePipeline, refetchRecovery, queryClient, pendingReset]);
 
   const resolveSteps = [
     {

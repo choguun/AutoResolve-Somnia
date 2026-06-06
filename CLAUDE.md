@@ -21,7 +21,7 @@ hard constraints that are easy to break.
   build-ready). v19 is fully tested (104/104 Foundry) and ready for
   `./scripts/deploy.sh` to ship a fresh contract address on Somnia Shannon
   Testnet (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
-- **Live app (v32)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
+- **Live app (v34)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
   agent manifest at `/api/agent-manifest` and
   `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof (v2)**: market #1 on the v2 contract resolved `YES`
@@ -36,7 +36,7 @@ hard constraints that are easy to break.
 ### Version history
 
 The contract has been hardened through v8–v19 (Foundry) and the frontend /
-relayer through v22–v24. Each version's full diff lives in the
+relayer through v22–v34. Each version's full diff lives in the
 `auto-resolve-v*-hardening` memory files in
 `~/.claude/projects/-Users-choguun-Documents-workspaces-hackathon-AutoResolve-Somnia/memory/`.
 Memory pointer list at the bottom of this file (`[[...]]`).
@@ -248,6 +248,83 @@ Quick reference for "what shipped when":
   page "Seeded Markets" label hardcoded "Markets #3-#6" →
   "See live markets" (the actual count is environment-
   dependent). 105/105 Foundry tests pass (no contract change).
+- **v33 relayer+frontend-polish** (this audit cycle) — H0
+  `logResolvedMarkets` now uses a module-level
+  `seenResolvedMarkets` Set (FIFO-capped at 1000, same
+  pattern as the existing `seenGenerationFailures` Set at
+  relayer.mjs:212) so a market that resolved at block N is
+  logged once, not re-logged on every tick for the next 50
+  blocks (~25 min at POLL_MS=30s) of duplicate "market N
+  resolved outcome=YES" spam. H1 `MarketCard`\'s
+  "View live receipt" link for markets in `Resolving` state
+  now prefers `inferenceRequestId` over `parseRequestId` when
+  both are > 0 — pre-v33, a market mid-inference linked to
+  the (already-completed) parse receipt, so users missed the
+  live inference. H2 `useMarketCreatedByRequestId`\'s
+  `SCAN_WINDOW_BLOCKS` bumped 5000n → 50_000n (~50 min →
+  ~8.3 hours on Shannon at ~600ms blocks). The window is
+  recomputed from `head` on every poll, so an event at block
+  N is permanently outside the window once `head > N + WINDOW`.
+  50_000n covers slow LLM pipelines (60+ min) without missing
+  the `MarketCreatedByAgent` event; the `args: { requestId }`
+  indexed-arg filter keeps the RPC bandwidth bounded. H3
+  `forceResetMarket` / `forceResetGeneration` now stash
+  `(hash, kind, id)` tuples in a per-tx `Map` at `onSuccess`
+  time so the success effect matches the right id to the
+  right hash on rapid double-click — pre-v33, a single
+  `recoveredMarketId` state was overwritten on every click,
+  so the second click\'s marketId got invalidated on the first
+  click\'s hash confirmation. M2 `seed-mock-markets.sh`
+  `place_bet` helper now validates the amount ends in
+  `ether` / `gwei` / `wei` (cast convention) so a future
+  caller passing a bare number doesn\'t silently send wei-
+  scale value and revert with `BetBelowMinimum`. L0
+  `e2e-onchain.sh` drops the redundant 0.5 STT prefund at
+  step [7/7] — the [1/7] prefund of 1 STT is enough to cover
+  both the resolution (0.66 STT forwarded) and the two
+  inference requests (0.33 STT each). L1+L2 `useAgentReceipt`
+  branches on `err.status`: 404 ("not yet indexed") keeps
+  polling at 5s and does NOT show the amber "taking longer
+  than expected" banner (pre-v33, the single `status === 'error'
+  → false` rule stopped polling entirely after `retry: 2` —
+  ~10-15s of 404s — and the user had to click Refresh). 5xx
+  keeps the original stop-polling + show-banner behavior.
+- **v34 frontend+relayer+manifest** (this audit cycle) — H0 the
+  proof page now shows the v7 E2E AI-created→AI-resolved proof
+  run (market #3 on `0xd3E946aC…4B69`, parse `4254170`, inference
+  `4254291`, resolution tx `0x362daa6f…b5143`) as a second
+  "Historical Proof Run" section. CLAUDE.md has always advertised
+  the v7 proof but the page was silent about it — judges who went
+  straight to `/proof` missed the only on-chain evidence of the
+  autonomous-creation pipeline (the headline capability of the
+  project). H1 `useRpcHealth`'s first tick now returns `'pending'`
+  (chain is responding, advancing is unknown) instead of `'ok'`.
+  Pre-v34, the `lastBlockRef.current === null` short-circuit made
+  the advancing check trivially true — a user loading `/proof`
+  right when the chain had halted saw the green "ok" dot for ~30s.
+  H2 `AgentReceiptViewer` branches on `upstreamStatus === 200`
+  (the proxy returned 502 because `normalizeMinimalReceipt` threw)
+  with a specific "we couldn't parse the response" message. Pre-v34,
+  the malformed-body case fell through to the generic "Receipt not
+  available yet" with no signal that the platform was actually
+  responding. M1 the proof page's `contractVersion` and
+  `contractVersionNote` strings are no longer hardcoded — the page
+  is now an async server component that reads the contract's
+  `agentManifest()` view at SSR time (5-min `unstable_cache` in
+  `lib-web/agentManifestServer.ts`) and parses the `vN` prefix.
+  Every contract deploy auto-updates the page. L0 added a
+  `// HISTORICAL ANCHOR` comment block above the two `proofRun`
+  consts so future maintainers know the contract addresses, market
+  ids, and tx hashes are load-bearing. L1 `useRpcHealth` adds a
+  `'stuck'` state — after 2 consecutive same-block ticks (~60s at
+  `POLL_INTERVAL_MS=30s`), escalate `'slow'` → `'stuck'`. Operators
+  can now tell "RPC up, chain halted" from "RPC slow" via the rose
+  ping animation + the "Somnia chain stuck" tooltip copy. L2
+  `statusLabel` in `lib-web/contract.ts` logs a dev-mode
+  `console.warn` when the `MarketStatus` value isn't in the known
+  set, so a future contract enum value can't ship without an
+  explicit code change. 105/105 Foundry tests pass (no contract
+  change).
 - **v15–v18 contract (all share the v15 address — none deployed)** — the
   Foundry-tested sequence that adds the relayer + recovery pipeline
   (`forceResetMarket`, `scanStuckMarkets`, `STALE_REQUEST_TIMEOUT`,

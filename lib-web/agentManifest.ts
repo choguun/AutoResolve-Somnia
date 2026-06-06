@@ -43,21 +43,69 @@ export function getAutoResolveAgentManifest() {
     // hand-edit of state/submitted-topics.<eoa>.json to recover. v31
     // closes the same theme as v30 H1: don't trust the relayer's local
     // view of "this topic is done"; verify on-chain via the receipt.
-    // v32 (H0+H1): bumped v31 → v32 — two fixes.
-    // H0: the manifest's `promptTemplate.system` field was semantically
-    // wrong when populated from the live contract (the contract has no
-    // system role — just a single user message of "<prefix><topic><suffix>").
-    // Renamed to `userSuffix` in both route handlers and updated the
-    // static fallback in agentManifest.ts to use the v7 SPECIFIC-URL +
-    // SHORT-duration prompt text the live contract encodes.
-    // H1: drainTopicFeed's Set-add now uses a sync disk write instead of
-    // the 5s-debounced scheduleSubmittedTopicsSave. A SIGKILL between
-    // the in-memory add and the debounce's disk flush was the residual
-    // race: next boot re-read the old file and re-submitted the topic,
-    // burning a second inference deposit. Also bumps drainTopicFeed's
-    // waitForTransactionReceipt to 60s timeout (v32 L0) so a stuck tx
-    // can't block the main loop indefinitely.
-    version: 'v32',
+    // v33 (H0+H1+H2+H3): bumped v32 → v33 — four fixes.
+    // H0: logResolvedMarkets now uses a module-level `seenResolvedMarkets` Set
+    // (FIFO-capped at 1000) so a market that resolved at block N is logged
+    // once, not 50 times. The 50-block scan window is recomputed every tick,
+    // so without dedup a single resolution produced ~25 min of duplicate log
+    // lines. Same pattern as the existing seenGenerationFailures Set.
+    // H1: MarketCard's "View live receipt" link for markets in Resolving
+    // state now prefers `inferenceRequestId` over `parseRequestId` when
+    // both are > 0. Pre-v33, a market mid-inference linked to the
+    // (already-completed) parse receipt, so users missed the live
+    // inference.
+    // H2: useMarketCreatedByRequestId's SCAN_WINDOW_BLOCKS bumped 5000n →
+    // 50_000n (~50 min → ~8.3 hours on Shannon at 600ms blocks). The window
+    // is recomputed from `head` every poll, so an event at block N is
+    // permanently outside the window once `head > N + WINDOW`. 50_000n
+    // covers slow LLM pipelines (60+ min) without missing the
+    // MarketCreatedByAgent event. The `args: { requestId }` indexed-arg
+    // filter keeps the RPC bandwidth bounded.
+    // H3: forceResetMarket / forceResetGeneration now stash (hash, kind,
+    // id) tuples in a Map at onSuccess time, so the success effect matches
+    // the right id to the right hash on rapid double-click. Pre-v33, a
+    // single `recoveredMarketId` state was overwritten on every click, so
+    // the second click's marketId got invalidated on the first click's
+    // hash confirmation.
+    // v34 (H0+H1+H2+M1+L0+L1+L2): bumped v33 → v34 — three UX fixes,
+    // one drift-hazard fix, two polish fixes, one dev-mode safety net.
+    // H0: proof page now shows the v7 E2E AI-created→AI-resolved proof
+    // run (market #3 on 0xd3E946aC…4B69, parse 4254170, inference
+    // 4254291, resolution tx 0x362daa6f…b5143) as a second "Historical
+    // Proof Run" section. CLAUDE.md advertises the v7 proof but the
+    // page was silent about it — judges who went straight to /proof
+    // missed the only on-chain evidence of the autonomous-creation
+    // pipeline.
+    // H1: useRpcHealth's first tick returns 'pending' (chain is
+    // responding, advancing is unknown) instead of 'ok'. Pre-v34, the
+    // `lastBlockRef.current === null` short-circuit made the advancing
+    // check trivially true — a user loading /proof right when the
+    // chain had halted saw the green 'ok' dot for ~30s.
+    // H2: AgentReceiptViewer branches on `upstreamStatus === 200`
+    // (proxy returned 502 because normalizeMinimalReceipt threw). Pre-
+    // v34, the malformed-body case fell through to "Receipt not
+    // available yet" with no signal that the platform was actually
+    // responding. New branch surfaces a specific "we couldn't parse
+    // the response" message.
+    // M1: proof page's `contractVersion` and `contractVersionNote` are
+    // no longer hardcoded. The page is now an async server component
+    // that reads the contract's `agentManifest()` view at SSR time
+    // (5-min unstable_cache in lib-web/agentManifestServer.ts) and
+    // parses the `vN` prefix out of the body string. Every contract
+    // deploy automatically updates the page — no manual string edit.
+    // L0: added a `// HISTORICAL ANCHOR` comment block above the two
+    // proofRun consts in app/proof/page.tsx so future maintainers know
+    // the contract addresses, market ids, and tx hashes are load-
+    // bearing (and not stale constants to update).
+    // L1: useRpcHealth adds a 'stuck' state — after 2 consecutive
+    // same-block ticks (~60s at POLL_INTERVAL_MS=30s), escalate
+    // 'slow' → 'stuck'. Operators can now tell "RPC up, chain halted"
+    // from "RPC slow" via the rose ping animation + the "Somnia chain
+    // stuck" tooltip copy.
+    // L2: statusLabel in lib-web/contract.ts logs a dev-mode
+    // console.warn when status isn't in the known set, so a future
+    // contract enum value can't ship without an explicit code change.
+    version: 'v34',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
@@ -150,7 +198,7 @@ export function getAutoResolveAgentManifest() {
       innovation:
         'A generalizable primitive: a permissionless contract whose end-to-end lifecycle (create -> bet -> resolve -> claim) is executable by an external agent without frontend or admin keys.',
       autonomousPerformance:
-        'Both creation and resolution run without frontend state. Any external agent can call getGenerationFundingStatus, requestMarketGeneration, scanAgentCreatedMarkets, getResolutionFundingStatus, scanResolvableMarkets, and requestResolution in sequence. v29 ships a topic-feed relayer (scripts/relayer.mjs drainTopicFeed) that closes the last human-in-the-loop gap: it reads scripts/topics.txt (or $GENERATION_TOPICS_FILE) on every tick and submits requestMarketGeneration for any topic not already in state/submitted-topics.<eoa>.json. v30 hoists the v29 consts above the startup console.log group (the v29 startup crashed with a TDZ ReferenceError — the relayer was offline) and adds pnpm relayer:smoke as the missing piece in the verification triangle, since `pnpm lint` + `pnpm build` + `forge test` never execute the relayer. v31 makes drainTopicFeed wait for the tx receipt before adding the topic to the persistent Set, closing a residual of v30 H1: a contract-level InsufficientContractBalance revert (e.g. another actor draining the contract balance in the same block) used to refund the deposit to the relayer EOA while leaving the topic in submitted-topics.json, requiring a hand-edit to recover. v32 makes the Set-add write synchronously to disk (closing a SIGKILL race that would re-submit on next boot) and renames the manifest `promptTemplate.system` field to `userSuffix` because the contract sends a single user message of "<prefix><topic><suffix>" — there is no system role.',
+        'Both creation and resolution run without frontend state. Any external agent can call getGenerationFundingStatus, requestMarketGeneration, scanAgentCreatedMarkets, getResolutionFundingStatus, scanResolvableMarkets, and requestResolution in sequence. v29 ships a topic-feed relayer (scripts/relayer.mjs drainTopicFeed) that closes the last human-in-the-loop gap: it reads scripts/topics.txt (or $GENERATION_TOPICS_FILE) on every tick and submits requestMarketGeneration for any topic not already in state/submitted-topics.<eoa>.json. v30 hoists the v29 consts above the startup console.log group (the v29 startup crashed with a TDZ ReferenceError — the relayer was offline) and adds pnpm relayer:smoke as the missing piece in the verification triangle, since `pnpm lint` + `pnpm build` + `forge test` never execute the relayer. v31 makes drainTopicFeed wait for the tx receipt before adding the topic to the persistent Set, closing a residual of v30 H1: a contract-level InsufficientContractBalance revert (e.g. another actor draining the contract balance in the same block) used to refund the deposit to the relayer EOA while leaving the topic in submitted-topics.json, requiring a hand-edit to recover. v32 makes the Set-add write synchronously to disk (closing a SIGKILL race that would re-submit on next boot) and renames the manifest `promptTemplate.system` field to `userSuffix` because the contract sends a single user message of "<prefix><topic><suffix>" — there is no system role. v33 adds a `seenResolvedMarkets` Set so each resolution is logged once (not 50 times over the 50-block scan window), widens the MarketCreatedByAgent scan window to 50_000n so slow LLM pipelines (60+ min) still surface the new marketId to the frontend, fixes MarketCard\'s "View live receipt" link to prefer the inference receipt over the parse receipt when both exist, and tracks forceResetMarket/forceResetGeneration targets in a per-tx Map so rapid double-clicks invalidate the right /market/[id] query. v34 adds the v7 E2E AI-created→AI-resolved proof run to /proof (market #3 on 0xd3E946aC…4B69 — the only on-chain evidence of the autonomous-creation pipeline; pre-v34 the page was silent about it despite CLAUDE.md advertising it), reads the live contractVersion from agentManifest() at SSR time (5-min unstable_cache) so the page self-updates on every deploy — no more manual "v19 (pending) / live on-chain is v15" string edits — and teaches useRpcHealth about a "pending" first-tick state and a "stuck" state (2 consecutive same-block ticks) so operators can tell "chain halted" from "chain slow but alive" and the green dot doesn\'t flash "ok" for one tick on a halted chain.',
     },
     proofRun: {
       contractAddress: '0x1631303A748076648a0AbbE077a657Ad7812834F',

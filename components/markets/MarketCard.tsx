@@ -79,10 +79,16 @@ export function MarketCard({
 
   const isResolved = market.status === MarketStatus.Resolved;
   const isAiCreated = isAgentCreated(market.creator);
+  // v33 (H1): when status is Resolving, prefer inferenceRequestId over
+  // parseRequestId. The parse callback may have already succeeded (status is
+  // Resolving and inferenceRequestId > 0); in that case the inference is the
+  // live operation, but the pre-v33 logic linked the parse receipt (which is
+  // already "completed") and the user missed the live inference. Fall through
+  // to parseRequestId only when inference hasn't started yet.
   const receiptId = isResolved && market.inferenceRequestId > 0n
     ? market.inferenceRequestId
-    : !isResolved && market.status === MarketStatus.Resolving && market.parseRequestId > 0n
-      ? market.parseRequestId
+    : !isResolved && market.status === MarketStatus.Resolving
+      ? (market.inferenceRequestId > 0n ? market.inferenceRequestId : market.parseRequestId)
       : 0n;
 
   return (

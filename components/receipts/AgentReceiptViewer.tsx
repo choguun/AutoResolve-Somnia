@@ -178,6 +178,16 @@ export function AgentReceiptViewer({
       upstreamStatus !== undefined && upstreamStatus >= 500 && upstreamStatus < 600;
     const isRateLimited = upstreamStatus === 429;
     const isNotFound = errWithStatus?.status === 404;
+    // v34 (H2): the proxy returns 502 with `upstreamStatus: 200` when
+    // the platform served a 200 but `normalizeMinimalReceipt` threw
+    // (malformed body, missing fields). The pre-v34 branch table
+    // missed this case and fell through to the generic "Receipt not
+    // available yet" — judges / users had no idea the platform was
+    // actually responding. The proxy's own comment at
+    // app/api/receipt/[requestId]/route.ts:111-115 calls this out as
+    // "the honest signal" and the viewer should surface it as such.
+    const isUnusable =
+      errWithStatus?.status === 502 && upstreamStatus === 200;
 
     let message: string;
     if (isNotFound) {
@@ -186,6 +196,11 @@ export function AgentReceiptViewer({
       message = 'The Somnia agent platform is currently unavailable. Receipts will resume when it recovers.';
     } else if (isRateLimited) {
       message = 'Receipt service is throttling requests — retrying shortly.';
+    } else if (isUnusable) {
+      // Specific copy: the platform is up, the data is back, but the
+      // shape wasn't parseable. Often a mid-deploy on the platform
+      // side, or a brand-new receipt type we don't normalize yet.
+      message = 'The receipt service returned a response we couldn’t parse. The platform may be mid-deploy; click Refresh in a minute.';
     } else if (isLongRunning) {
       message =
         kind === 'generation'

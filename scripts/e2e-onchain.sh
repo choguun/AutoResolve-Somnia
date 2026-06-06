@@ -20,8 +20,8 @@ KEY="$PRIVATE_KEY"
 echo "=== AutoResolve On-Chain E2E ==="
 echo "Contract: $CONTRACT"
 
-echo "[1/7] Prefund contract (0.5 STT)..."
-cast send "$CONTRACT" --value 0.5ether --rpc-url "$SHANNON_RPC_URL" --private-key "$KEY" --legacy
+echo "[1/7] Prefund contract (1 STT — covers resolution + inference deposits with headroom)..."
+cast send "$CONTRACT" --value 1ether --rpc-url "$SHANNON_RPC_URL" --private-key "$KEY" --legacy
 
 echo "[2/7] Create demo markets..."
 cast send "$CONTRACT" "createMarket(string,string,uint256)" \
@@ -53,8 +53,11 @@ cast send "$CONTRACT" "requestResolution(uint256)" 1 --value "$DEPOSIT" \
   --rpc-url "$SHANNON_RPC_URL" --private-key "$KEY" --legacy
 
 echo "[7/7] Trigger autonomous market generation..."
-# Prefund so the inference deposit is covered.
-cast send "$CONTRACT" --value 0.5ether --rpc-url "$SHANNON_RPC_URL" --private-key "$KEY" --legacy
+# v33 (L0): the 0.5 STT prefund that used to live here is no longer needed —
+# step [1/7] prefunds 1 STT, the resolution step forwards ~0.66 STT to the
+# platform, and the remaining ~0.34 STT is enough to cover the inference
+# deposit (0.33 STT) for the two generation requests below. Sending another
+# 0.5 STT would over-fund the contract unnecessarily.
 
 GEN_TOPUP=$(cast call "$CONTRACT" "getGenerationFundingStatus()(uint256,uint256,uint256)" --rpc-url "$SHANNON_RPC_URL" | awk 'NR==3 {print $1; exit}')
 echo "Inference topUpNeeded: $GEN_TOPUP wei"

@@ -129,7 +129,25 @@ export function formatCountdown(endTime: bigint): string {
   return `${seconds}s`;
 }
 
+// v34 (L2): the contract's MarketStatus enum is duplicated here as a
+// TS enum (Solidity uint8). If a future contract change adds a new
+// value (e.g. Cancelled = 3), the frontend silently renders 'Unknown'
+// in statusLabel and no badge color in MarketCard (the styles map
+// returns undefined → the badge component is never styled). The
+// dev-mode console.warn below surfaces the mismatch during local dev
+// and CI so the new value can't ship without an explicit code change.
+const KNOWN_MARKET_STATUSES = new Set<MarketStatus>([
+  MarketStatus.Open,
+  MarketStatus.Resolving,
+  MarketStatus.Resolved,
+]);
+
 export function statusLabel(status: MarketStatus): string {
+  if (process.env.NODE_ENV !== 'production' && !KNOWN_MARKET_STATUSES.has(status)) {
+    console.warn(
+      `[contract.ts] Unknown MarketStatus: ${status}. Update statusLabel + MarketCard styles + KNOWN_MARKET_STATUSES.`,
+    );
+  }
   switch (status) {
     case MarketStatus.Open:
       return 'Open';

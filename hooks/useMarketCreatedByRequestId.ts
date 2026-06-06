@@ -15,7 +15,17 @@ const RPC_URL = 'https://dream-rpc.somnia.network';
 const MARKET_CREATED_BY_AGENT_EVENT = parseAbiItem(
   'event MarketCreatedByAgent(uint256 indexed requestId, uint256 indexed marketId, address indexed proposer)',
 );
-const SCAN_WINDOW_BLOCKS = 5000n; // ~50 min on Shannon at ~600ms blocks
+// v33 (H2): bumped 5000n → 50_000n. The window is recomputed from `head` on
+// every poll, so an event at block N is permanently outside the window once
+// `head > N + WINDOW`. With 5000n (~50 min), a slow LLM pipeline (60+ min —
+// slow LLM + validator queue) emits MarketCreatedByAgent at block N, but by
+// the time the receipt completes successfully and the hook starts polling
+// aggressively, `head` is past N + 5000 and the event is missed. The form
+// never auto-redirects to the new market. 50_000n (~8.3 hours on Shannon at
+// ~600ms blocks) covers even pathological pipelines; the `args: { requestId }`
+// indexed-arg filter is pushed to the RPC, so the bandwidth cost is bounded
+// by matching events, not by the window size.
+const SCAN_WINDOW_BLOCKS = 50_000n;
 
 const publicClient = createPublicClient({
   chain: somniaTestnet,
