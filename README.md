@@ -333,6 +333,46 @@ pnpm exec vercel deploy --prod
 
 This repo includes `vercel.json` to force Vercel to build the app as Next.js.
 
+### Relayer hosting
+
+Vercel is a serverless platform — the hosted `autoresolve-somnia.vercel.app`
+runs the Next.js app, **not the relayer**. To keep the autonomous resolution
+pipeline alive (re-submit on `ResolutionFailed`, clear stuck markets, run
+`drainTopicFeed` from `scripts/topics.txt`), run `scripts/relayer.mjs` on a
+long-lived host. The repo ships a `Dockerfile` at the root for this:
+
+```bash
+# Build (from the repo root):
+docker build -t autoresolve-relayer -f Dockerfile .
+
+# Run — PRIVATE_KEY and NEXT_PUBLIC_CONTRACT_ADDRESS are required.
+# All other env vars (RELAYER_POLL_MS, RELAYER_MAX_TOPUP_STT, etc.) are
+# optional and fall back to the defaults documented in .env.example.
+docker run -d --name autoresolve-relayer --restart unless-stopped \
+  -e PRIVATE_KEY=0x... \
+  -e NEXT_PUBLIC_CONTRACT_ADDRESS=0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+  -v autoresolve-state:/app/state \
+  autoresolve-relayer
+```
+
+The named volume (`autoresolve-state`) persists the relayer's two on-disk
+state files across container restarts: the parse-failure LRU
+(`state/parse-failure-cache.<eoa>.json`) and the submitted-topics Set
+(`state/submitted-topics.<eoa>.json`). Without it, every container restart
+wipes both and the relayer re-attempts URLs it already proved unparseable /
+re-submits topics it already created. The `HEALTHCHECK` directive
+(`pgrep -f "node scripts/relayer.mjs"`) marks the container unhealthy if
+the main loop dies for ~3 minutes.
+
+For SPOF mitigation, run a second relayer with a **second funded EOA**
+pointed at the same contract. The on-chain side (`forceResetMarket`,
+`forceResetGeneration`) is callable by anyone, so the watchdog doesn't
+need a shared lock — the relayer's per-process `alreadySubmitted` Set
+means the two instances will occasionally double-submit, but the contract
+reverts `MarketNotOpen` on the second submission and the relayer logs and
+moves on. See the `SPOF NOTE` at the top of `scripts/relayer.mjs` for the
+full analysis.
+
 ## How to verify
 
 Every claim in this README can be independently verified in under two minutes. Walk through the steps below in order — they form a complete trust ladder from "it exists" to "the agents actually ran it."

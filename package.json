@@ -11,7 +11,7 @@
     "postinstall": "node scripts/export-abi.mjs || true",
     "build:contracts": "forge build",
     "test:contracts": "forge test -vv",
-    "deploy": "forge script script/Deploy.s.sol --rpc-url shannon --broadcast --legacy -vvvv",
+    "deploy": "bash scripts/deploy.sh",
     "export-abi": "node scripts/export-abi.mjs",
     "relayer:smoke": "bash scripts/relayer-smoke.sh"
   },
