@@ -65,7 +65,13 @@ export async function GET(
     // low (the event signatures are AutoResolve-specific) but a wrong-
     // contract match would surface a bogus requestId. Log a one-time
     // warning so the operator notices the unset env.
+    // v36 (L0): also surface the unset state to the CLIENT via the
+    // `contractFilterApplied` response flag, so the form can show a
+    // one-time toast. The console.warn is fine for an operator, but
+    // a user who navigates to the by-tx URL directly (e.g. via the
+    // explorer deep link) never sees the dev-server logs.
     const contractAddress = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || '').toLowerCase();
+    const contractFilterApplied = !!contractAddress;
     if (!contractAddress) {
       console.warn(
         '[api/receipt/by-tx] NEXT_PUBLIC_CONTRACT_ADDRESS is unset; contract-address filter is permissive. ' +
@@ -102,6 +108,10 @@ export async function GET(
     return NextResponse.json({
       hash,
       contractAddress: contractAddress || null,
+      // v36 (L0): false when NEXT_PUBLIC_CONTRACT_ADDRESS is unset (the
+      // contract-address log filter at L75 is bypassed). GenerateMarketForm
+      // shows a one-time warning toast on `contractFilterApplied === false`.
+      contractFilterApplied,
       blockNumber: receipt.blockNumber.toString(),
       resolutionRequestIds: resolutionRequestIds.map((id) => id.toString()),
       generationRequestIds: generationRequestIds.map((id) => id.toString()),

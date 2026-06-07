@@ -21,7 +21,7 @@ hard constraints that are easy to break.
   build-ready). v19 is fully tested (104/104 Foundry) and ready for
   `./scripts/deploy.sh` to ship a fresh contract address on Somnia Shannon
   Testnet (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
-- **Live app (v35)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
+- **Live app (v37)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
   agent manifest at `/api/agent-manifest` and
   `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof (v2)**: market #1 on the v2 contract resolved `YES`
@@ -36,7 +36,7 @@ hard constraints that are easy to break.
 ### Version history
 
 The contract has been hardened through v8–v19 (Foundry) and the frontend /
-relayer through v22–v35. Each version's full diff lives in the
+relayer through v22–v37. Each version's full diff lives in the
 `auto-resolve-v*-hardening` memory files in
 `~/.claude/projects/-Users-choguun-Documents-workspaces-hackathon-AutoResolve-Somnia/memory/`.
 Memory pointer list at the bottom of this file (`[[...]]`).
@@ -348,6 +348,63 @@ Quick reference for "what shipped when":
   so the topics.txt read is cached by the Next.js data cache and
   the route stops being a per-fetch disk-read hot spot under load.
   105/105 Foundry tests pass (no contract change).
+- **v36 frontend+relayer+manifest** (this audit cycle) — H0 the
+  relayer's `urlKey` hashes the FULL normalized URL. v15 dropped the
+  path via `split('/').slice(0, 3)`, so a parse failure on
+  `https://en.wikipedia.org/wiki/Paris` was added to the LRU as
+  `hash('https://en.wikipedia.org')` — every subsequent Wikipedia
+  market (and any other host sharing that scheme+host) was then
+  silently skipped by `isUrlInParseFailureCache` for
+  `PARSE_FAILURE_TTL_MS` (1h). The v15 comment claimed "the path
+  is case-sensitive in the LLM parsing sense, so we leave the path
+  alone" but the implementation contradicted it. djb2 body
+  unchanged; only the input string is different. M0 the relayer's
+  cap-exceedance log in `drainTopicFeed` (the `topUp > maxWei`
+  branch) now uses the same conditional-ellipsis pattern as the
+  sibling success/reverted logs
+  (`${topic.slice(0, 40)}${topic.length > 40 ? '…' : ''}`) — pre-v36
+  the cap-exceedance line always emitted a trailing "…" even for
+  short topics, pure copy inconsistency. L0
+  `/api/receipt/by-tx/[hash]` now surfaces a `contractFilterApplied`
+  boolean in the JSON response (false when
+  `NEXT_PUBLIC_CONTRACT_ADDRESS` is unset, so the contract-address
+  log filter at L75 is bypassed). `GenerateMarketForm` reads the
+  flag and shows a one-time warning toast (gated by a `useRef` so
+  it fires at most once per page lifetime) — the server-side
+  `console.warn` stays for operators, the toast covers users who
+  navigate via the explorer deep link and never see dev-server logs.
+  L1 `useAgentReceipt` caps 404 polling at `LONG_RUNNING_HINT_MS`.
+  v33 L1 switched the 404 path from "stop polling entirely" to
+  "keep polling at 5s" — right fix for a slow-to-index receipt,
+  but a stale or dead requestId was burning a 5s poll + server
+  round-trip forever. The hook now tracks `firstNotFoundAt` in a
+  ref, stops polling after `LONG_RUNNING_HINT_MS` of consecutive
+  404s, and exposes `hasGivenUpOn404` to the UI; `AgentReceiptViewer`
+  swaps the "stale link" copy for a "we've stopped polling"
+  message in the give-up branch. The ref resets on success, on
+  `id` change, and on a manual refetch (the wrapped `refetch`).
+  105/105 Foundry tests pass (no contract change).
+- **v37 frontend+relayer+manifest** (this audit cycle) — H0 the
+  relayer's `logResolvedMarkets` decodes the outcome from `log.data`
+  (not `log.topics[2]`). The contract event
+  `MarketResolved(uint256 indexed marketId, bool outcome, string
+  reason, uint256 timestamp)` only has `marketId` indexed, so
+  `log.topics[2]` was undefined and `BigInt(undefined)` threw on
+  every resolved market. The throw was caught by the main loop's
+  try/catch (L1339), which kept the relayer alive but suppressed
+  the operator's primary signal — `[relayer] loop error: ...`
+  replaced the `market N resolved outcome=YES` log line. Same
+  `decodeAbiParameters` pattern as `drainFailureEvents` (L684) and
+  `drainGenerationFailureEvents` (L1093); the try/catch around the
+  decode is the same defensive pattern that protects those two
+  sites from a malformed log. M0 `useMarkets` parallelizes the 9
+  `getMarket` reads per page with `Promise.all`. Pre-v37, the
+  `for` loop awaited each read sequentially — at Shannon RPC's
+  200-500ms/read latency, a full page took 1.8-4.5s to land.
+  Post-v37, the page collapses to a single round-trip latency
+  window (~500ms, the slowest of the 9 reads). Same pattern as
+  `useMyBetsMarkets` (L162) and `useUserBets` (L212). 105/105
+  Foundry tests pass (no contract change).
 - **v15–v18 contract (all share the v15 address — none deployed)** — the
   Foundry-tested sequence that adds the relayer + recovery pipeline
   (`forceResetMarket`, `scanStuckMarkets`, `STALE_REQUEST_TIMEOUT`,

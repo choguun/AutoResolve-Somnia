@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { type AgentReceipt, receiptIsComplete } from '@/lib-web/agents';
 
 // v35 (H1): renamed MAX_POLL_MS → LONG_RUNNING_HINT_MS. 5 minutes is the
@@ -75,8 +75,20 @@ export function useAgentReceipt(requestId?: string | bigint, kind: ReceiptKind =
         // `status === 'error' → false` rule meant a slow-to-index receipt
         // would stop polling entirely after `retry: 2` (~10-15s of 404s), and
         // the user had to click Refresh to recover.
+        // v36 (L1): cap the 404 polling at LONG_RUNNING_HINT_MS. A
+        // permanently-lost receipt (stale link, dead requestId) was
+        // burning a 5s poll + a server round-trip forever. Once the 404
+        // streak crosses LONG_RUNNING_HINT_MS, return `false` to stop
+        // polling. The `hasGivenUpOn404` flag surfaced below + the
+        // AgentReceiptViewer Refresh button let the user retry from a
+        // clean slate.
         const err = query.state.error as (Error & { status?: number }) | null;
-        return err?.status === 404 ? 5000 : false;
+        if (err?.status !== 404) return false;
+        const firstNotFoundAt = firstNotFoundAtRef.current;
+        if (firstNotFoundAt != null && Date.now() - firstNotFoundAt > LONG_RUNNING_HINT_MS) {
+          return false;
+        }
+        return 5000;
       }
       return 5000;
     },
@@ -122,5 +134,55 @@ export function useAgentReceipt(requestId?: string | bigint, kind: ReceiptKind =
     return () => clearTimeout(handle);
   }, [query.data, query.error, startedAt]);
 
-  return { ...query, isLongRunning, kind };
+  // v36 (L1): cap the 404 polling at LONG_RUNNING_HINT_MS. v33 L1 switched
+  // the 404 path from "stop polling entirely" to "keep polling at 5s", which
+  // was the right fix for a slow-to-index receipt — but a receipt that
+  // stays in 404 for hours (e.g. the user bookmarked a stale requestId, or
+  // the platform permanently lost the request) burns a 5s poll + a server
+  // round-trip forever. Track the first 404 timestamp and stop polling
+  // after LONG_RUNNING_HINT_MS of consecutive 404s. The flag is exposed
+  // to the UI so AgentReceiptViewer can swap the "request not yet indexed"
+  // message for a "we've stopped polling" message and surface a Refresh
+  // button. The ref is reset on success, on id change, and on a manual
+  // refetch (the user wants to try again from a clean slate).
+  const firstNotFoundAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    firstNotFoundAtRef.current = null;
+  }, [id]);
+  useEffect(() => {
+    if (receiptIsComplete(query.data)) {
+      firstNotFoundAtRef.current = null;
+    }
+  }, [query.data]);
+
+  const refetch = useMemo(() => {
+    const inner = query.refetch;
+    return async (...args: Parameters<typeof inner>) => {
+      firstNotFoundAtRef.current = null;
+      return inner(...args);
+    };
+  }, [query.refetch]);
+
+  const hasGivenUpOn404 =
+    query.error != null &&
+    (query.error as Error & { status?: number }).status === 404 &&
+    firstNotFoundAtRef.current != null &&
+    Date.now() - firstNotFoundAtRef.current > LONG_RUNNING_HINT_MS;
+
+  // Hook the 404 streak tracking into the refetchInterval body via a
+  // refetch-side effect: when a 404 lands, set firstNotFoundAtRef; when
+  // anything else lands, clear it. We can't do this inside refetchInterval
+  // (it must be pure / cheap), so a separate effect owns the bookkeeping.
+  useEffect(() => {
+    const err = query.error as (Error & { status?: number }) | null;
+    if (err?.status === 404) {
+      if (firstNotFoundAtRef.current == null) {
+        firstNotFoundAtRef.current = Date.now();
+      }
+    } else {
+      firstNotFoundAtRef.current = null;
+    }
+  }, [query.error]);
+
+  return { ...query, isLongRunning, hasGivenUpOn404, refetch, kind };
 }

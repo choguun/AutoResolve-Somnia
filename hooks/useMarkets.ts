@@ -80,16 +80,33 @@ export function useMarkets() {
 
       if (startId < 1) return [];
 
+      // v37 (M0): was a sequential `for` loop awaiting 9 getMarket reads one
+      // after the other — at Shannon RPC's 200-500ms/read latency, a full
+      // page took 1.8-4.5s to land. Switched to Promise.all so the page
+      // collapses to a single round-trip latency window (~500ms, the slowest
+      // of the 9 reads). Order is preserved because Promise.all resolves
+      // inputs in order; the marketIds array is also built in order so the
+      // `markets.push` below walks the highest-id-first page identically
+      // to the pre-v37 sequential path. Same pattern as useMyBetsMarkets
+      // (L162) and useUserBets (L212).
+      const ids: bigint[] = [];
       for (let id = startId; id >= endId; id--) {
-        const market = (await publicClient!.readContract({
-          address: CONTRACT_ADDRESS,
-          abi: CONTRACT_ABI,
-          functionName: 'getMarket',
-          args: [BigInt(id)],
-        })) as Market;
-
+        ids.push(BigInt(id));
+      }
+      const reads = await Promise.all(
+        ids.map((id) =>
+          publicClient!.readContract({
+            address: CONTRACT_ADDRESS,
+            abi: CONTRACT_ABI,
+            functionName: 'getMarket',
+            args: [id],
+          }) as Promise<Market>,
+        ),
+      );
+      for (let i = 0; i < reads.length; i++) {
+        const market = reads[i];
         if (market.question) {
-          markets.push({ id: BigInt(id), market });
+          markets.push({ id: ids[i], market });
         }
       }
 

@@ -137,7 +137,7 @@ export function AgentReceiptViewer({
   requestId: string;
   kind?: 'resolution' | 'generation';
 }) {
-  const { data: receipt, isLoading, error, isLongRunning, refetch, isFetching } = useAgentReceipt(requestId, kind);
+  const { data: receipt, isLoading, error, isLongRunning, hasGivenUpOn404, refetch, isFetching } = useAgentReceipt(requestId, kind);
   // v29 (H2): for generation receipts, also poll for the MarketCreatedByAgent
   // event matching this requestId so the "Agent Designed Market" panel can
   // surface a "View new market #N" link. Only enabled for generation receipts
@@ -191,7 +191,19 @@ export function AgentReceiptViewer({
 
     let message: string;
     if (isNotFound) {
-      message = 'This request ID isn’t known to the receipt service. The link may be stale.';
+      // v36 (L1): the hook now caps 404 polling at LONG_RUNNING_HINT_MS
+      // and exposes `hasGivenUpOn404`. Once we've stopped polling, the
+      // "stale link" copy isn't quite right — we've been polling for 5
+      // minutes and the platform still doesn't know about this requestId,
+      // so the user is stuck unless they Refresh. Surface a specific
+      // "we've stopped polling" message and rely on the Refresh button
+      // below to resume from a clean slate (the hook resets its
+      // firstNotFoundAtRef on manual refetch).
+      message = hasGivenUpOn404
+        ? 'We’ve stopped polling for this request ID. The platform has not seen it in ' +
+          'over 5 minutes — the request may have been lost or the link may be stale. ' +
+          'Click Refresh to retry from scratch.'
+        : 'This request ID isn’t known to the receipt service. The link may be stale.';
     } else if (isPlatform5xx) {
       message = 'The Somnia agent platform is currently unavailable. Receipts will resume when it recovers.';
     } else if (isRateLimited) {

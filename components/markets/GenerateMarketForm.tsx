@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAccount, useConfig, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
 import { readContract } from 'wagmi/actions';
@@ -55,6 +55,13 @@ export function GenerateMarketForm() {
   const { writeContract, data: hash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
+  // v36 (L0): guard so the "by-tx filter bypassed" toast only fires once per
+  // page lifetime, not on every submission. The endpoint is server-side, so
+  // a toast per request would be visually noisy without adding signal — the
+  // underlying problem (unset NEXT_PUBLIC_CONTRACT_ADDRESS) is operator-side
+  // and only one reminder is needed.
+  const warnedAboutFilterRef = useRef(false);
+
   // v16 (M3): use the dedicated `/api/receipt/by-tx/[hash]` endpoint to look up
   // the requestId for the confirmed tx, instead of doing a local event log
   // decode. v15's local decode had two problems: (a) it was duplicated across
@@ -82,8 +89,21 @@ export function GenerateMarketForm() {
         const data = (await res.json()) as {
           primaryRequestId?: string;
           primaryKind?: 'generation' | 'resolution';
+          // v36 (L0): false when the server's contract-address log filter
+          // was bypassed (NEXT_PUBLIC_CONTRACT_ADDRESS unset). Surface as a
+          // one-time warning toast — the server already console.warns, but
+          // a user who hits the endpoint via the explorer deep link never
+          // sees dev-server logs.
+          contractFilterApplied?: boolean;
         };
         if (cancelled) return;
+        if (data.contractFilterApplied === false && !warnedAboutFilterRef.current) {
+          warnedAboutFilterRef.current = true;
+          toast.warning(
+            'Server is running without NEXT_PUBLIC_CONTRACT_ADDRESS set — ' +
+              'the by-tx lookup is permissive. Set it in .env for production.',
+          );
+        }
         if (data.primaryRequestId && data.primaryKind === 'generation') {
           setRequestId(BigInt(data.primaryRequestId));
         }

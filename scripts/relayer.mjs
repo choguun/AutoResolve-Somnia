@@ -166,7 +166,7 @@ const SUBMITTED_TOPICS_FILE = process.env.SUBMITTED_TOPICS_FILE
 // 1/tick = up to 2880 topic submissions/day, well above any demo cadence.
 const TOPIC_FEED_MAX_PER_TICK = Number(process.env.TOPIC_FEED_MAX_PER_TICK ?? 1);
 
-console.log('[relayer] starting (v35)');
+console.log('[relayer] starting (v37)');
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
@@ -235,11 +235,20 @@ function marketKey(marketId) {
 }
 
 function urlKey(url) {
-  // Normalize the URL for the LRU key: trim + lowercase the scheme + host so
-  // "https://Example.com/path" and "https://example.com/path" share an entry.
-  // The path is case-sensitive in the LLM parsing sense, so we leave the path
-  // alone. Cheap hash (djb2) — no crypto needed, just to spread LRU entries.
-  const normalized = url.trim().toLowerCase().split('/').slice(0, 3).join('/');
+  // v36 (H0): hash the FULL normalized URL. v15 dropped the path via
+  // split('/').slice(0, 3) — so the key for
+  // https://en.wikipedia.org/wiki/Paris was hash('https://en.wikipedia.org'),
+  // and a single parse failure on ANY path on that host added
+  // hash('https://en.wikipedia.org') to the parse-failure LRU. Every
+  // subsequent Wikipedia-based market (and any other host sharing the same
+  // scheme+host) was then silently skipped by isUrlInParseFailureCache for
+  // PARSE_FAILURE_TTL_MS. The v15 comment claimed "the path is
+  // case-sensitive in the LLM parsing sense, so we leave the path alone"
+  // but the implementation contradicted it. The djb2 body is unchanged;
+  // only the input string is different. The case-folding (trim +
+  // toLowerCase) is retained so "https://Example.com/path" and
+  // "https://example.com/PATH" still share an entry.
+  const normalized = url.trim().toLowerCase();
   let hash = 5381;
   for (let i = 0; i < normalized.length; i++) {
     hash = ((hash << 5) + hash + normalized.charCodeAt(i)) | 0;
@@ -886,7 +895,31 @@ async function logResolvedMarkets() {
       seenResolvedMarkets.delete(oldest);
     }
     seenResolvedMarkets.add(key);
-    const outcome = BigInt(log.topics[2]) === 1n ? 'YES' : 'NO';
+    // v37 (H0): decode outcome from log.data, not log.topics[2]. The
+    // contract event is `MarketResolved(uint256 indexed marketId, bool
+    // outcome, string reason, uint256 timestamp)` — only marketId is
+    // indexed, so log.topics = [sig, marketId] and log.topics[2] is
+    // undefined. Pre-v37, BigInt(undefined) threw on every resolved
+    // market, the throw was caught by the main loop's try/catch at
+    // L1339, and the operator saw `[relayer] loop error: ...` instead
+    // of the "market N resolved outcome=YES" log. The try/catch kept
+    // the relayer alive but suppressed the operator's primary signal
+    // that the autonomous pipeline actually completed. Decode the
+    // outcome from the ABI-encoded (bool, string, uint256) in
+    // log.data using the same decodeAbiParameters pattern that
+    // drainFailureEvents (L684) and drainGenerationFailureEvents
+    // (L1093) already use.
+    let outcome = 'NO';
+    try {
+      const decoded = decodeAbiParameters(
+        [{ type: 'bool' }, { type: 'string' }, { type: 'uint256' }],
+        log.data,
+      );
+      outcome = decoded[0] ? 'YES' : 'NO';
+    } catch {
+      // Malformed log (truncated, wrong shape) — default to NO and
+      // let the operator investigate via the receipt URL.
+    }
     console.log(`[relayer] ✓ market ${log.topics[1]} resolved outcome=${outcome}`);
   }
 }
@@ -1198,8 +1231,11 @@ async function drainTopicFeed() {
     try {
       const topUp = await readInferenceTopUp();
       if (topUp > maxWei) {
+        // v36 (M0): conditional ellipsis matches the success/reverted log
+        // format at L1225/L1233 below — short topics don't get a misleading
+        // trailing "…" character.
         console.warn(
-          `[relayer] topic "${topic.slice(0, 40)}…" needs ${formatEther(topUp)} STT inference top-up, exceeds cap; skipping (will retry next tick)`,
+          `[relayer] topic "${topic.slice(0, 40)}${topic.length > 40 ? '…' : ''}" needs ${formatEther(topUp)} STT inference top-up, exceeds cap; skipping (will retry next tick)`,
         );
         continue;
       }
