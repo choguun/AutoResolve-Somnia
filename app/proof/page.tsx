@@ -90,19 +90,19 @@ function parseContractVersion(manifest: string | null): { version: string; note:
 const criteria = [
   {
     label: 'Functionality',
-    detail: 'Deployed market flow covers create, bet, autonomous resolve, receipt review, and claim.',
+    detail: 'Deployed app supports manual create, AI-generated create, bet, autonomous resolve, receipt review, and claim flows.',
   },
   {
     label: 'Agent-First Design',
-    detail: 'The contract exposes discovery, context, funding, and invocation methods for resolver agents.',
+    detail: 'The contract exposes discovery, context, funding, and invocation methods for both creator and resolver agents. The live AgentCommandCenter below calls them all.',
   },
   {
     label: 'Innovation',
-    detail: 'The resolver is a reusable settlement primitive, not a backend oracle or admin action.',
+    detail: 'First prediction market where the same validator-executed agents that resolve a market can also create it. A single on-chain `createRequest` → `handleGenerationCallback` loop replaces both the oracle AND the curator.',
   },
   {
     label: 'Autonomous Performance',
-    detail: 'Expired markets can be scanned and resolved independently through Somnia agent callbacks.',
+    detail: 'Any external agent can discover a topic, generate a market, fund the inference deposit, and resolve the result. No human interaction is required at any point in the loop.',
   },
 ];
 
@@ -308,7 +308,14 @@ export default async function ProofPage() {
       <section className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 to-violet-500/5 p-6 backdrop-blur-md shadow-[0_0_30px_rgba(6,182,212,0.1)]">
         <h2 className="text-2xl font-bold text-cyan-100">Machine-Readable Agent Interface</h2>
         <p className="mt-3 max-w-3xl text-base leading-relaxed text-zinc-300">
-          Autonomous callers do not need the UI. They can discover markets with{' '}
+          Autonomous callers do not need the UI. For <strong className="text-white">creation</strong>:
+          read{' '}
+          <code className="rounded-md bg-black/40 px-2 py-1 text-sm font-mono text-cyan-200">getGenerationFundingStatus</code>,
+          call{' '}
+          <code className="rounded-md bg-black/40 px-2 py-1 text-sm font-mono text-cyan-200">requestMarketGeneration(topic)</code>
+          {' '}with the reported top-up, then verify the result with{' '}
+          <code className="rounded-md bg-black/40 px-2 py-1 text-sm font-mono text-cyan-200">scanAgentCreatedMarkets</code>.
+          For <strong className="text-white">resolution</strong>: discover markets with{' '}
           <code className="rounded-md bg-black/40 px-2 py-1 text-sm font-mono text-cyan-200">scanResolvableMarkets</code>,
           inspect action context with{' '}
           <code className="rounded-md bg-black/40 px-2 py-1 text-sm font-mono text-cyan-200">getAgentMarketContext</code>,

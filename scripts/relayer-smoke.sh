@@ -43,7 +43,7 @@ sleep 1.5
 if kill -0 "$PID" 2>/dev/null; then
   echo "[relayer-smoke] OK: relayer survived startup (pid=$PID, log at /tmp/relayer-smoke.log)"
   kill -9 "$PID" 2>/dev/null
-  # Look for the v32 startup line — the H0 fix is specifically about
+  # Look for the v37 startup line — the H0 fix is specifically about
   # getting this log to print without a TDZ throw.
   if grep -q "starting (v37)" /tmp/relayer-smoke.log; then
     echo "[relayer-smoke] OK: v37 startup line printed"
