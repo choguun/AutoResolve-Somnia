@@ -3,6 +3,7 @@
 | Contract | Address | Explorer |
 |---|---|---|
 | **AutonomousPredictionMarket (v15 — current, 1 v14-audit HIGH + 6 MEDIUM + 1 LOW closed: parseRequestedAt rollback cleanup in all 3 handleInferenceCallback branches, relayer parse-failure URL LRU + exponential backoff, recovery panel invalidates market queries, receipt proxy fallback host, receipt by-tx endpoint, generation prompt template getter, SPOF doc + verbose gate)** | `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` | [View](https://shannon-explorer.somnia.network/address/0x764Dc86246D242382c7619Fc715d0E3A64B2022b) |
+| **Frontend (v40 — pending contract deploy (v19 + v40) on the v15 address family: 1 HIGH + 7 new tests for the v40 `getUserMarkets` view; 8 v16-v19 audit cycles (requestResolution cache clear, receipt proxy `NEXT_PUBLIC_CONTRACT_ADDRESS`, _describeCreateRevert `DurationTooLong`, handleInferenceCallback overlong+invalid+non-success clear, formatStt/formatCountdown precision safety, PayoutClaim useUserBets invalidation); 19 frontend v22-v40 hardening cycles (relayer drainTopicFeed + 30+ log.topics[N] decoders, useAgentReceipt 404 polling cap, SSR contract version, My Bets tab claimable chip, etc.))** | n/a (frontend) | [Live app](https://autoresolve-somnia.vercel.app) |
 | AutonomousPredictionMarket (v14 — 9 v13-audit gaps closed: NO-outcome parser, AgentMarketContext timestamps, DuplicateToolCall advisory, relayer reset attempt cap, receipt-kind branch, status passthrough, stuck-gen doc comment, manifest v14 bump, exact YES/NO manifest correction) | `0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9` | [View](https://shannon-explorer.somnia.network/address/0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9) |
 | AutonomousPredictionMarket (v13 — 5 v12-audit gaps closed: stuck-generation recovery, agent output length cap, relayer GenerationFailed visibility + recovery, non-reverting callbacks on over-long output, `lastGenerationRequestId` high-water mark) | `0x37822751E5ab0688344135797ee8FFCFa76443fB` | [View](https://shannon-explorer.somnia.network/address/0x37822751E5ab0688344135797ee8FFCFa76443fB) |
 | AutonomousPredictionMarket (v12 — 3 v11-audit gaps closed: `MarketReset.stuckRequestId`, `useAgentReceipt` recovery flag reset, 502 cache removed) | `0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5` | [View](https://shannon-explorer.somnia.network/address/0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5) |
@@ -151,6 +152,187 @@ and the recovery-panel query invalidation (M4) have no automated test
 coverage — the repo has no JS test framework for the relayer (single-file
 `node` script) and no Next.js test framework. They are defended by the
 code change itself, the matching hook changes, and manual review.
+
+## Latest frontend (v40) — pending contract deploy (v19 + v40) on the v15 address family — completed
+
+The frontend at `autoresolve-somnia.vercel.app` is on v40 (the v22-v40 audit
+sequence — 30+ audit cycles, 19 shipped versions). The contract on-chain is
+still v15 (the v15 audit at the top of this file). v16, v17, v18, v19, and
+v40 contract changes are all Foundry-tested and merge-ready but have not
+been deployed to a new address; the next contract deploy will land them on
+top of the live v15 address family in a single `forge create`.
+
+This section is the v8-v40 changelog for the next deploy. The bytecode diff
+vs the live v15 is additive (new storage slots + new public functions + new
+events; the existing functions and the resolution/generation pipeline are
+unchanged). After the next deploy, this section becomes the new "Latest
+deployment" and the v15 section above moves to "Previous deployment".
+
+**v40 contract (1 L0 + 7 new tests)**
+- L0 — `getUserMarkets(address) → uint256[]` view. Adds the
+  `userMarketIds[user] / _userMarketIndex[user][marketId]` storage pair
+  (manual EnumerableSet pattern with the 0-sentinel convention, 1 SSTORE on
+  first bet, O(1) check on re-bet). `bet()` calls `_addUserMarketIfAbsent`
+  after the existing `userYesBets` / `userNoBets` writes. `claimWinnings`
+  does NOT remove from the set — the array tracks "user has bet on this
+  market at some point" and the frontend reads the zeroed amounts to
+  distinguish active positions from history. The frontend's `useMyBets`
+  hook (consolidated from the pre-v40 `useMyBetsMarkets` + `useMyBets` pair)
+  calls `getUserMarkets` once then `Promise.all`s the per-market
+  `(getMarket, userYesBets, userNoBets)` triple — O(K) where K = the user's
+  position count, replacing the O(N) "load every market page and check"
+  loop in `app/page.tsx`.
+
+**v19 contract (8 audit gaps closed, no live deploy yet)**
+- H1 — `handleInferenceCallback` hoists `marketParseResult` cleanup. The
+  pre-v19 overlong + invalid + non-success paths returned before reaching
+  the v16 M1 bottom-of-function delete, leaving a stale cache that misled
+  the relayer's `retryInferenceFromCache` pre-check.
+- H2 — `PayoutClaim` invalidates `useUserBets` on success (frontend-only
+  change paired with this).
+- H3 — `tryResetStuckMarket` clears `nextRetryAt` (frontend-only change
+  paired with this).
+- M1 — receipt proxy returns 502 with `upstreamStatus: 200` when
+  `normalizeMinimalReceipt` throws, so the frontend can distinguish a
+  malformed body from a platform 5xx.
+- M2 — `AgentCommandCenter` surfaces the `parseResultCached` field from
+  `AgentMarketContext` (frontend-only change paired with this).
+- L1 — `ResolutionPanel` filters `ResolutionRequested` logs by event
+  signature, not just `topics[1] === marketId` (frontend-only).
+- L2 — `formatStt` / `formatCountdown` precision safety (v19 widened the
+  `formatStt` exponential threshold to 1 STT; v22 reverted it to 0.001 STT
+  because the 1-STT threshold regressed 0.3/0.66/0.01 STT amounts to
+  scientific notation; v22 ships the 0.001-STT threshold).
+- L3 — receipt proxy `Cache-Control: max-age=2` on 5xx (v26 tightened from
+  10s).
+
+**v18 contract (7 audit gaps closed)**
+- H1 — relayer `tryRetryInferenceFromCache` pre-check uses
+  `cached.length > 0` instead of `> 2` (the old threshold was wrong because
+  viem decodes `string` return values as plain JS strings, not hex).
+- H2 — `_describeCreateRevert` decodes `DurationTooLong()` (v16's
+  `MAX_DURATION=86400` upper bound was the most likely real-world
+  over-budget path).
+- M1 — `handleAgentResponse` overlong-output branch clears
+  `marketParseResult` (symmetric to v19 H1's inference-callback fix).
+- M2 — dead `AgentOutputTooLong` error removed.
+- M3 — `AgentReceiptViewer` surfaces `_source: 'fallback'` badge.
+- M4 — manifest documents public `marketParseResult` getter.
+- L2 — `CREATE_MARKET_SELECTOR` constant extracted in
+  `lib-web/agents.ts`.
+
+**v17 contract (6 audit gaps closed)**
+- H1 — `requestResolution` clears `marketParseResult` up-front (prevents
+  the stale-cache race where a fresh resolution after a parse failure
+  would leave the OLD cache in place).
+- H2 — receipt proxy uses `NEXT_PUBLIC_CONTRACT_ADDRESS` instead of
+  hardcoded platform address.
+- L1 — `AgentMarketContext.parseResultCached: bool` field added.
+- L2 — receipt proxy M4 retry loop catches fetch network errors as 599.
+- M1 — relayer per-instance parse-failure LRU file keyed by EOA.
+- M2 — relayer pre-checks `marketParseResult` before `retryFromCache`.
+- M3 — relayer `mkdirSync(state/)` on startup.
+
+**v16 contract (8 audit gaps closed)**
+- H1 — `deploy.sh` prefund 1 → 2 STT.
+- H2 — `MAX_DURATION = 86400` upper bound.
+- H3 — persistent parse-failure LRU + drop v15 `attemptCount>0` gate.
+- M1 — `retryInferenceFromCache` + `marketParseResult` cache +
+  `InferenceUnderfunded` event + relayer routing.
+- M3 — `GenerateMarketForm` wires `/api/receipt/by-tx`.
+- M4 — receipt proxy retries primary once on 5xx.
+- L1 — `generationRequestedAt` cleanup invariant.
+- L3 — `AgentReceiptViewer` keyed on requestId.
+
+**Frontend-only v22-v40 (no contract change)**
+- v22 — `formatStt` restores 0.001-STT exponential threshold (fixes v19 L2
+  regression); `endTimeMs` helper consolidated.
+- v23 — receipt `?kind=generation` query param threaded through
+  `GenerateMarketForm` + `AgentCommandCenter` → `AgentReceiptViewer`;
+  `/proof` "Live version" label reads from manifest; `useMyBets` triggers
+  `fetchNextPage` on tab switch (later removed in v40).
+- v24 — `extractGenerationToolCall` decodes `createMarket` calldata;
+  `/proof` "Latest Agent-Discoverable Deployment" splits into
+  Frontend/Contract pill badges; relayer `drainGenerationFailureEvents`
+  decodes `(uint8 status, string reason)` data; `useGenerationFailures`
+  hook + "Recent Generation Failures" card.
+- v25 — manifest `version` v22 → v24; `MarketContextCard` renders
+  `parseResultCached` as 5th `MiniMetric`; `useMyBetsMarkets` drops
+  joined market ids from query key; relayer startup log v16 → v24;
+  Refresh button disabled while refetching; My Bets tab shows claimable
+  count chip; manifest route handlers merge live `getGenerationPromptTemplate()`.
+- v26 — `lib-web/agentManifestServer.ts` wraps
+  `getGenerationPromptTemplate()` in `unstable_cache` (5 min revalidate) +
+  module-level `publicClient`; receipt proxy 404/502 cache `max-age=10` →
+  `max-age=2`; `AgentCommandCenter` surfaces `useGenerationFailures`
+  `isError` state.
+- v27 — `useAgentReceipt` drops 5-min `MAX_POLL_MS` cap; new amber
+  "this is taking longer than expected" banner.
+- v28 — relayer `drainInferenceUnderfundedEvents` runs before
+  `drainFailureEvents`; `requestResolution` cache cleanup moves AFTER
+  `InsufficientContractBalance` check.
+- v29 — relayer `drainTopicFeed` (the "last human in the loop" gap closer)
+  reads `scripts/topics.txt` on every tick; `useMarketCreatedByRequestId`
+  hook for the "View market #N" auto-redirect + receipt-viewer link.
+- v30 — relayer hoists `TOPICS_FILE` / `SUBMITTED_TOPICS_FILE` /
+  `TOPIC_FEED_MAX_PER_TICK` above the startup `console.log` group (the
+  v29 startup crashed with a TDZ ReferenceError and the relayer never
+  reached the main loop — v30's `pnpm relayer:smoke` closes the
+  verification triangle); `drainTopicFeed` pre-flight/add order reversed.
+- v31 — `drainTopicFeed` waits for `waitForTransactionReceipt` and only
+  adds the topic to the persistent Set if `receipt.status === 'success'`.
+- v32 — manifest `promptTemplate.system` → `userSuffix`; `drainTopicFeed`
+  Set-add writes synchronously to disk; `waitForTransactionReceipt`
+  gets a 60s `timeout`; proof page "live on-chain is v15" note;
+  receipt-by-tx logs a warning when `NEXT_PUBLIC_CONTRACT_ADDRESS` is
+  unset.
+- v33 — relayer `logResolvedMarkets` uses module-level
+  `seenResolvedMarkets` Set; `MarketCard` "View live receipt" link
+  prefers `inferenceRequestId` over `parseRequestId`;
+  `useMarketCreatedByRequestId` `SCAN_WINDOW_BLOCKS` 5000n → 50_000n;
+  `forceResetMarket` / `forceResetGeneration` use a per-tx `(hash, kind,
+  id)` Map; `seed-mock-markets.sh` `place_bet` validates amount suffix;
+  `e2e-onchain.sh` drops redundant 0.5 STT prefund; `useAgentReceipt`
+  branches on `err.status`: 404 keeps polling, 5xx stops polling.
+- v34 — proof page shows the v7 E2E AI-created→AI-resolved proof run;
+  `useRpcHealth` first tick returns `'pending'`, adds `'stuck'` state at
+  2 consecutive same-block ticks; `AgentReceiptViewer` branches on
+  `upstreamStatus === 200`; proof page now async server component
+  reading `agentManifest()` view at SSR time (5-min `unstable_cache`) so
+  `contractVersion` self-updates on every deploy.
+- v35 — `useGenerationFailures` `SCAN_WINDOW_BLOCKS` 5000n → 50_000n
+  (symmetric with `useMarketCreatedByRequestId`); `useAgentReceipt`
+  `MAX_POLL_MS` → `LONG_RUNNING_HINT_MS` rename; `useAgentReceipt`
+  `startedAt` moves from `useState` to `useRef` + `useEffect` keyed on
+  `id`; `/api/topics` adds `Cache-Control: public, max-age=5`.
+- v36 — relayer `urlKey` hashes the FULL normalized URL (v15 dropped the
+  path via `split.slice(0,3)`); relayer cap-exceedance log uses
+  conditional-ellipsis; `/api/receipt/by-tx/[hash]` surfaces
+  `contractFilterApplied` boolean + one-time toast in
+  `GenerateMarketForm`; `useAgentReceipt` caps 404 polling at
+  `LONG_RUNNING_HINT_MS` + `hasGivenUpOn404` flag.
+- v37 — relayer `logResolvedMarkets` decodes outcome from `log.data` not
+  `log.topics[2]` (`MarketResolved` only has `marketId` indexed);
+  `useMarkets` parallelizes 9 `getMarket` reads per page with
+  `Promise.all` (1.8-4.5s → ~500ms).
+- v38 — `ResolutionPanel` extracts `ResolutionRequested` `requestId` from
+  `log.data` not `log.topics[2]`; `/api/receipt/by-tx/[hash]` had the
+  same bug for the `ResolutionRequested` branch.
+- v40 — `getUserMarkets(address) → uint256[]` (above). Closes the
+  pre-existing `app/page.tsx:34` `TODO(v24)` and the O(N) tab-switch
+  trigger in `useMyBetsMarkets`.
+
+**Test count: 112/112 Foundry tests pass** (105 prior + 7 new for
+`getUserMarkets`).
+
+**The next deploy is `./scripts/deploy.sh`** — single `forge create`
+against Shannon, prefund 2 STT, seed 2 markets, update
+`NEXT_PUBLIC_CONTRACT_ADDRESS` in `.env` to the new (still v15-family)
+address, then `pnpm export-abi` and `pnpm exec vercel deploy --prod`. The
+v15 live address stays the parent of the v15 address family because none
+of v8-v15 were deployed to a new address; the v15 bytecode at
+`0x764D…2022b` is the parent for all subsequent redeploys of the same
+source family.
 
 ## Previous deployment (v14 — 9 audit gaps closed) — historical
 
@@ -815,7 +997,7 @@ pnpm dev   # http://localhost:3000
 ```
 
 Set in `.env`:
-- `NEXT_PUBLIC_CONTRACT_ADDRESS=0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9`
+- `NEXT_PUBLIC_CONTRACT_ADDRESS=0x764Dc86246D242382c7619Fc715d0E3A64B2022b`
 
 ## Auto-retry relayer
 
@@ -826,7 +1008,7 @@ request, then re-submits `requestResolution` with the wallet's top-up.
 
 ```bash
 PRIVATE_KEY=0x... \
-  NEXT_PUBLIC_CONTRACT_ADDRESS=0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9 \
+  NEXT_PUBLIC_CONTRACT_ADDRESS=0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
   node scripts/relayer.mjs
 ```
 

@@ -19,7 +19,8 @@ The important part: the AI output is not just displayed in the UI. It changes on
 | Proof page | [autoresolve-somnia.vercel.app/proof](https://autoresolve-somnia.vercel.app/proof) |
 | Agent manifest | [autoresolve-somnia.vercel.app/api/agent-manifest](https://autoresolve-somnia.vercel.app/api/agent-manifest) |
 | Well-known agent JSON | [/.well-known/autoresolve-agent.json](https://autoresolve-somnia.vercel.app/.well-known/autoresolve-agent.json) |
-| Current contract (v18 — 2 v17-audit HIGH + 3 MEDIUM + 2 LOW closed (relayer string-length pre-check + DurationTooLong decoder + overlong-branch cache-clear + dead error removed + fallback host badge + marketParseResult getter doc + CREATE_MARKET_SELECTOR constant)) | [0x764D…2022b](https://shannon-explorer.somnia.network/address/0x764Dc86246D242382c7619Fc715d0E3A64B2022b) |
+| Current contract (v15 live on-chain, v19+v40 contract pending deploy on the same v15 address family — the v16/v17/v18/v19/v40 source changes are fully Foundry-tested and merge-ready but have not been deployed yet; the live bytecode is the v15 build at `0x764D…2022b`; see `DEPLOYED.md` "Latest frontend (v40)" for the full v8-v40 changelog and the next deploy plan) | [0x764D…2022b](https://shannon-explorer.somnia.network/address/0x764Dc86246D242382c7619Fc715d0E3A64B2022b) |
+| Live frontend (v40 — `getUserMarkets(address)` O(K) My Bets view; v22-v39 frontend + manifest hardening; `useAgentReceipt` 404 polling cap; SSR contract version; v7 E2E proof section on `/proof`) | [autoresolve-somnia.vercel.app](https://autoresolve-somnia.vercel.app) |
 | **v7** AI-created market → AI-resolved end-to-end (parse) | [4254170](https://agents.testnet.somnia.network/receipts/4254170) |
 | **v7** AI-created market → AI-resolved end-to-end (inference) | [4254291](https://agents.testnet.somnia.network/receipts/4254291) |
 | v2 historical proof (parse) | [2400421](https://agents.testnet.somnia.network/receipts/2400421) |
@@ -138,8 +139,10 @@ AutoResolve is the first prediction-market primitive that lets a contract ask an
 Current deployment:
 
 ```text
-AutonomousPredictionMarket v18 (fully autonomous — creation + resolution + auto-retry relayer + stuck-request recovery + stuck-generation recovery + output cap + 3 v11-audit + 5 v12-audit + 9 v13-audit + 9 v14-audit + 8 v15-audit + 8 v16-audit + 6 v17-audit gap closures; v18 closes 2 v17-audit HIGH + 3 MEDIUM + 2 LOW: relayer string-length pre-check, DurationTooLong decoder, overlong-branch cache-clear, dead AgentOutputTooLong error removed, fallback host badge, marketParseResult getter doc, CREATE_MARKET_SELECTOR constant)
-0x764Dc86246D242382c7619Fc715d0E3A64B2022b
+AutonomousPredictionMarket (v15 live on-chain at 0x764Dc86246D242382c7619Fc715d0E3A64B2022b; v19+v40 contract pending deploy on the same address family)
+Live bytecode = v15 (the v8-v15 audit hardening sequence — parseRequestedAt rollback cleanup, parse-failure URL LRU, receipt proxy fallback host, by-tx endpoint, generation prompt template getter, SPOF doc + verbose gate).
+Pending deploy = v19 (8 v16-audit + 7 v17-audit + 8 v18-audit + 8 v19-audit gap closures — requestResolution cache clear, receipt proxy NEXT_PUBLIC_CONTRACT_ADDRESS, _describeCreateRevert DurationTooLong, handleInferenceCallback overlong+invalid+non-success clear, formatStt/formatCountdown precision safety, PayoutClaim useUserBets invalidation) + v40 (`getUserMarkets(address) → uint256[]` O(K) My Bets enumeration view — replaces the O(N) tab-switch trigger in the frontend with a single targeted read).
+See DEPLOYED.md "Latest frontend (v40)" for the full v8-v40 changelog.
 ```
 
 Core functions:
@@ -157,6 +160,7 @@ Core functions:
 | `forceResetMarket(marketId)` | Anyone can call to revert a stuck market back to `Open` and clear its request state. Emits `MarketReset(marketId, resetBy, stage, stuckRequestId)`. |
 | `scanStuckGenerationRequests(cursor, limit)` | Let external agents discover generation requests whose callback never arrived (older than `STALE_REQUEST_TIMEOUT`). Walks `[cursor, lastGenerationRequestId]` with a tight upper bound. |
 | `forceResetGeneration(requestId)` | Anyone can call to clear the four state mappings for a stuck generation request. Emits `GenerationReset(requestId, resetBy)`. The inference deposit was forwarded to the platform at request time and is not refundable. |
+| `getUserMarkets(address user) → uint256[]` (v40) | Enumerate the markets a user has bet on, in the order they were first bet on. Returns the O(K) position list the My Bets tab reads to replace an O(N) "load every market page and check each" with a single targeted read. After a claim, the market id stays in the array and the frontend reads `userYesBets` / `userNoBets` (which the contract zeroes on `claimWinnings`) to distinguish active positions from history. |
 | `getAgentMarketContext(marketId)` | Return question, source, funding, status, and request IDs for agents. |
 | `getResolutionFundingStatus()` | Return required deposit, contract balance, and top-up needed for resolution. |
 | `getGenerationFundingStatus()` | Return required deposit, contract balance, and top-up needed for creation. |
@@ -231,6 +235,7 @@ Historical E2E proof on the v2 contract (predates the creation feature):
 5. Open the main app, go to `/create`, and show the **Manual** and **AI-Generated** tabs. The AI-Generated tab triggers `requestMarketGeneration(topic)`; the resulting market appears on `/` with the "Created by AI" badge.
 6. Connect a wallet on Somnia Shannon, place a bet on any market, and request resolution after the market's `endTime`.
 7. Show the resolution timeline and claim flow.
+8. **Demonstrate the relayer's autonomous creation (v29 H1 — closes the last "human in the loop" gap).** Show `scripts/topics.txt` and run `./scripts/auto-generate.sh` (or start `scripts/relayer.mjs` with `GENERATION_TOPICS_FILE` set). The relayer's `drainTopicFeed` reads the topic list on every tick and submits `requestMarketGeneration` for any topic not already in `state/submitted-topics.<eoa>.json`. New AI-created markets appear on `/` within a few minutes, each with the "Created by AI" badge and `creator = 0x…A1`.
 
 If live agent execution takes longer than the pitch slot, use the v7 proof receipts `4254170` and `4254291`, or the v2 historical proof `2400421` and `2400485`.
 
@@ -292,7 +297,10 @@ Open [http://localhost:3000](http://localhost:3000).
 pnpm lint
 pnpm build
 forge test -vv
+pnpm relayer:smoke
 ```
+
+The first three gates never execute `scripts/relayer.mjs`, so a relayer runtime crash (the v29 TDZ bug) shipped silently in a prior cycle. `pnpm relayer:smoke` forks the relayer with a populated env and asserts the process is still alive after 1.5s — it's the missing piece in the verification triangle and must stay green before any merge that touches `scripts/relayer.mjs`. See `scripts/relayer-smoke.sh` for details.
 
 Current contract test coverage includes:
 
@@ -307,6 +315,7 @@ Current contract test coverage includes:
 - Agent discovery and context scanning.
 - `requestMarketGeneration` happy path, refund math, empty/long topic, callback-only-platform, `nonReentrant`.
 - `scanAgentCreatedMarkets` paginates markets whose `creator == AGENT_CREATOR_SENTINEL`.
+- `getUserMarkets` empty / returns betted / no duplicates on rebet / isolates users / both yes and no / ignores non-betted markets / after-claim-winnings (v40).
 
 ## Deployment
 
@@ -405,6 +414,11 @@ cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
 
 cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
   "getGenerationFundingStatus()" \
+  --rpc-url https://dream-rpc.somnia.network
+
+# v40 — O(K) My Bets enumeration (replaces O(N) "load every market and check")
+cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+  "getUserMarkets(address)" 0xYourEOA \
   --rpc-url https://dream-rpc.somnia.network
 
 cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
