@@ -52,9 +52,21 @@ export function PayoutClaim({ marketId, market }: { marketId: bigint; market: Ma
     // error toast). The v15 recovery-panel pattern is the same shape:
     // queryClient.invalidateQueries on tx success so other tabs / the same
     // tab see fresh data.
+    // v43 (L1): also invalidate the `myBets` query (useMyBets in
+    // hooks/useMarkets.ts:174 uses a different key — `['myBets', address]`
+    // — than the per-market `useUserBets` view at L235). Without this
+    // second invalidate, the My Bets tab keeps rendering the just-claimed
+    // market with a zeroed position until its 10s refetchInterval fires
+    // (the L220 `yes === 0n && no === 0n` filter eventually drops it, so
+    // no correctness bug — just a ~10s stale UI window where a user
+    // could click a market they have no position in). The same `address`
+    // gate is reused.
     if (address) {
       queryClient.invalidateQueries({
         queryKey: ['userBets', marketId.toString(), address],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['myBets', address],
       });
     }
     showConfirmedTransactionToast(hash, 'Winnings claimed!', 'claim-winnings');

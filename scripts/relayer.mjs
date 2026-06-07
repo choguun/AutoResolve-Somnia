@@ -491,18 +491,25 @@ async function fetchContextForMarket(marketId) {
 // v16 (M1): the inference deposit alone (0.3 STT) — retryInferenceFromCache
 // only needs the inference half because the parse result is already cached
 // on-chain in `marketParseResult`.
+// v43 (L1): collapse the two-call mirror into a single getGenerationFundingStatus
+// read. The v16 mirror (readContract(getInferenceDeposit) + getBalance + local
+// arithmetic) returns the same value as the contract's own topUpNeeded, but
+// the comment claiming "the inference path doesn't have a direct
+// 'getInferenceFundingStatus' view" was wrong — getGenerationFundingStatus
+// (AutonomousPredictionMarket.sol:459) returns exactly this triple:
+// (getInferenceDeposit, contractBalance, topUpNeeded). The mirror works
+// today but is a drift hazard: if the deposit math ever changes (e.g. a
+// new deposit getter, a fee, a multiplier), the relayer would silently
+// send the wrong amount and the inference call would revert
+// InsufficientContractBalance. Same shape as readTopUp at L469-476 for
+// requestResolution.
 async function readInferenceTopUp() {
-  const deposit = await publicClient.readContract({
+  const status = await publicClient.readContract({
     address: CONTRACT,
     abi: ABI,
-    functionName: 'getInferenceDeposit',
+    functionName: 'getGenerationFundingStatus',
   });
-  // Compute topUpNeeded vs contract balance locally — the contract's
-  // getGenerationFundingStatus returns the same arithmetic, but the inference
-  // path doesn't have a direct "getInferenceFundingStatus" view, so we mirror
-  // the math here.
-  const balance = await publicClient.getBalance({ address: CONTRACT });
-  return balance >= deposit ? 0n : deposit - balance;
+  return status[2]; // topUpNeeded
 }
 
 async function tryResolveMarket(marketId, alreadySubmitted) {
