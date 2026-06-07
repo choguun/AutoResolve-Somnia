@@ -39,12 +39,17 @@ fi
 
 echo "Prefunding and seeding markets..."
 # v16 (H1): bumped prefund 1 → 2 STT. v15 prefund covered the parse +
-# inference deposit (0.6 STT) for ~1.6 resolutions before draining. v16's
+# inference deposit (0.62 STT) for ~1.6 resolutions before draining. v16's
 # `retryInferenceFromCache` spends another inference deposit (0.3 STT) on
 # a single underfunded-inference recovery, and the v8+ MAX_BET path can
-# trigger parse retries for `attemptCount` markets. 2 STT covers ~6
+# trigger parse retries for `attemptCount` markets. 2 STT covers ~3
 # resolution cycles or ~3 retry-inference cycles — enough for the relayer
 # to drain a missed-block burst without the operator manually refilling.
+# v45 (L2): the "~6" claim was a stale typo from the v16 draft (when
+# getResolutionDeposit was estimated at ~0.3 STT). The real number is
+# 0.01 + 0.3 + 0.01 + 0.3 = 0.62 STT per resolution, so 2 STT ≈ 3.2
+# cycles. The "~3 retry-inference cycles" half of the sentence was
+# correct and is preserved.
 cast send "$CONTRACT" --value 2ether --rpc-url "$SHANNON_RPC_URL" --private-key "$PRIVATE_KEY" --legacy
 
 cast send "$CONTRACT" "createMarket(string,string,uint256)" \

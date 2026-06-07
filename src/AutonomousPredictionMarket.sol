@@ -1113,7 +1113,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
 
     function agentManifest() external pure returns (string memory) {
         return string.concat(
-            "AutoResolve agent interface v19. ",
+            "AutoResolve agent interface v40. ",
             "RESOLUTION PIPELINE: scanResolvableMarkets(cursor, limit) to discover expired open markets (returns (uint256[] ids, uint256 nextCursor), max limit 50). ",
             "getAgentMarketContext(marketId) for question, source, funding, request IDs, and per-request timestamps (parseRequestedAt, inferenceRequestedAt - both 0 when no request is in flight, including for Open markets in the inference-rollback window). ",
             "requestResolution(marketId) payable returns (uint256 requestId); the call is gated on market.status==Open, endTime passed, parseRequestId==0; requires topUpNeeded STT. ",
@@ -1125,6 +1125,7 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             "forceResetMarket emits MarketReset(uint256 indexed marketId, address indexed resetBy, RequestStage stage, uint256 stuckRequestId) so external agents tracking platform request ids can correlate the reset with their own bookkeeping; the bundled relayer keys its own retry state by marketId and does not consume stuckRequestId. ",
             "STUCK-GENERATION RECOVERY: scanStuckGenerationRequests(cursor, limit) lists in-flight generation requests older than STALE_REQUEST_TIMEOUT (30 minutes); forceResetGeneration(requestId) clears the requestToTopic, generationProposer, requestStage, and generationRequestedAt mappings so the user's inference deposit is the only lost value (the deposit was forwarded to the platform at request time and is not refundable). v16 also clears generationRequestedAt on every successful handleGenerationCallback exit, matching the v15 parseRequestedAt cleanup invariant. ",
             "forceResetGeneration emits GenerationReset(uint256 indexed requestId, address indexed resetBy). ",
+            "USER POSITION DISCOVERY (v40): getUserMarkets(address user) returns (uint256[]) -- enumerates the markets the user has bet on, in the order they were first bet on. Replaces the O(N) 'load every market and check' pattern with a single targeted read. bet() pushes (msg.sender, marketId) into a per-user set on first bet; claimWinnings does NOT remove the entry -- the array tracks 'user has bet on this market at some point' and frontends read userYesBets/userNoBets (which are zeroed on claim) to distinguish active positions from history. ",
             "CREATION PIPELINE: requestMarketGeneration(string topic) payable returns (uint256 requestId); triggers LLM Inference inferToolsChat that yields createMarket(question, source, durationSeconds) calldata. ",
             "getGenerationFundingStatus() returns the inference deposit and topUpNeeded. ",
             "getGenerationPromptTemplate() returns (string prefix, string suffix); the contract concatenates prefix + topic + suffix as the single user message - external agents can read this to predict the agent's tool-call output without decompiling. ",

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { parseEther } from 'viem';
-import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 import { showConfirmedTransactionToast, showSubmittedTransactionToast } from '@/lib-web/transactionToast';
@@ -19,6 +20,8 @@ import {
 } from '@/lib-web/contract';
 
 export function BetPanel({ marketId, market }: { marketId: bigint; market: Market }) {
+  const { address } = useAccount();
+  const queryClient = useQueryClient();
   const [amount, setAmount] = useState('0.01');
   // v22 (H2): use the shared endTimeMs helper. v19 (L2) added the uint32
   // clamping inline in formatCountdown but missed this callsite; see the
@@ -52,10 +55,30 @@ export function BetPanel({ marketId, market }: { marketId: bigint; market: Marke
   };
 
   useEffect(() => {
-    if (isSuccess) {
-      showConfirmedTransactionToast(hash, 'Bet placed', 'place-bet');
+    if (!isSuccess) return;
+    // v45 (M2): mirror PayoutClaim's v19 H2 + v43 L1 invalidation pattern
+    // on a successful bet. The bet flow adds the (user, marketId) pair to
+    // userMarketIds (v40 L0), increments userYesBets/userNoBets, and bumps
+    // the per-market yes/no totals. Without this invalidate, the My Bets
+    // tab is stale for the full 10s useMyBets refetchInterval (the just-
+    // bet market won't appear, and a fresh bet on a previously-unbetted
+    // market is invisible to the user) and the per-market yes/no totals
+    // are stale for 5s (the useMarket refetchInterval). The address gate
+    // is the same one PayoutClaim uses — invalidating with an undefined
+    // key would no-op.
+    if (address) {
+      queryClient.invalidateQueries({
+        queryKey: ['myBets', address],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['userBets', marketId.toString(), address],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['market', marketId.toString()],
+      });
     }
-  }, [hash, isSuccess]);
+    showConfirmedTransactionToast(hash, 'Bet placed', 'place-bet');
+  }, [hash, isSuccess, queryClient, marketId, address]);
 
   const yesOdds = oddsPercent(market.yesTotal, market.noTotal, 'yes');
   const noOdds = oddsPercent(market.yesTotal, market.noTotal, 'no');

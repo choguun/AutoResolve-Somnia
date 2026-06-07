@@ -166,7 +166,7 @@ const SUBMITTED_TOPICS_FILE = process.env.SUBMITTED_TOPICS_FILE
 // 1/tick = up to 2880 topic submissions/day, well above any demo cadence.
 const TOPIC_FEED_MAX_PER_TICK = Number(process.env.TOPIC_FEED_MAX_PER_TICK ?? 1);
 
-console.log('[relayer] starting (v37)');
+console.log('[relayer] starting (v45)');
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
@@ -1305,7 +1305,7 @@ async function drainTopicFeed() {
       );
     } catch (err) {
       console.error(
-        `[relayer] requestMarketGeneration("${topic.slice(0, 40)}…") failed:`,
+        `[relayer] requestMarketGeneration("${topic.slice(0, 40)}${topic.length > 40 ? '…' : ''}") failed:`,
         err.shortMessage ?? err.message,
       );
       // Pre-flight RPC blip (readInferenceTopUp): topic NOT in Set — retried

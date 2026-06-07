@@ -45,10 +45,10 @@ if kill -0 "$PID" 2>/dev/null; then
   kill -9 "$PID" 2>/dev/null
   # Look for the v37 startup line — the H0 fix is specifically about
   # getting this log to print without a TDZ throw.
-  if grep -q "starting (v37)" /tmp/relayer-smoke.log; then
-    echo "[relayer-smoke] OK: v37 startup line printed"
+  if grep -q "starting (v45)" /tmp/relayer-smoke.log; then
+    echo "[relayer-smoke] OK: v45 startup line printed"
   else
-    echo "[relayer-smoke] WARN: v37 startup line missing — relayer may be running an older version"
+    echo "[relayer-smoke] WARN: v45 startup line missing — relayer may be running an older version"
     cat /tmp/relayer-smoke.log
   fi
   exit 0

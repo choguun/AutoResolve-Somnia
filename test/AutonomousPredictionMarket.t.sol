@@ -1722,10 +1722,23 @@ contract AutonomousPredictionMarketTest is Test {
         // v19 surfaces: hoisted marketParseResult cleanup in handleInferenceCallback
         // (the v19 H1 fix), and the version bump itself.
         string memory manifest = market.agentManifest();
-        assertTrue(_contains(manifest, "v19"), "manifest advertises v19");
+        assertTrue(_contains(manifest, "v19") || _contains(manifest, "v40"), "manifest advertises v19+");
         assertTrue(
             _contains(manifest, "handleInferenceCallback"),
             "manifest documents the v19 H1 cleanup site"
+        );
+    }
+
+    function testAgentManifestAdvertisesV40() public {
+        // v40 surfaces: getUserMarkets(address) → uint256[] view, and the
+        // version bump itself. The body text still mentions v19 (the H1
+        // cleanup site) but the version label at the top of the string is
+        // the current v40.
+        string memory manifest = market.agentManifest();
+        assertTrue(_contains(manifest, "v40"), "manifest advertises v40");
+        assertTrue(
+            _contains(manifest, "getUserMarkets"),
+            "manifest documents the v40 user-position view"
         );
     }
 

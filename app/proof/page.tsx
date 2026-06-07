@@ -78,11 +78,16 @@ const frontendVersion = getAutoResolveAgentManifest().version;
 
 function parseContractVersion(manifest: string | null): { version: string; note: string } {
   if (!manifest) return { version: 'detecting…', note: '' };
-  // The live contract returns e.g. "AutoResolve agent interface v19. …".
+  // The live contract returns e.g. "AutoResolve agent interface v40. …".
   // The regex is permissive on trailing content (whitespace, periods,
   // newline-separated sections) so a future v100 or a body rewrite
   // doesn't silently fall through to the failure branch.
-  const match = manifest.match(/AutoResolve agent interface v(\d+)/);
+  // v45 (L4): relaxed the integer-only `\d+` to `\d+(?:\.\d+)?` so a
+  // future patch bump like v40.1 doesn't silently fall through to the
+  // "detecting…" placeholder — the pre-v45 regex would have matched
+  // "v40" but stopped at the ".1" because `match` only captures the
+  // first group.
+  const match = manifest.match(/AutoResolve agent interface v(\d+(?:\.\d+)?)/);
   if (!match) return { version: 'detecting…', note: '' };
   return { version: `v${match[1]}`, note: '' };
 }

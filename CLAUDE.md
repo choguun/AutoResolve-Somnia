@@ -425,6 +425,41 @@ Quick reference for "what shipped when":
   path (the common case for `GenerateMarketForm`) was unaffected.
   Same `decodeAbiParameters` fix. 105/105 Foundry tests pass
   (no contract change).
+- **v45 polish (4 MEDIUM + 3 LOW real, 1 subagent misread)** —
+  M1 the on-chain `agentManifest()` string was bumped v19→v40
+  with a new "USER POSITION DISCOVERY (v40)" block documenting
+  `getUserMarkets(address user) → uint256[]` and the
+  "claimWinnings does NOT remove from the set" invariant. The
+  v40 L0 contract view was live but the on-chain string still
+  said v19, so the `/proof` "Contract vN" pill would have
+  rendered v19 after deploy while exposing v40 surface. M2
+  `BetPanel` adds the same `queryClient.invalidateQueries`
+  pattern (myBets / userBets / market) that v19 H2 + v43 L1
+  applied to PayoutClaim — pre-v45 the My Bets tab was stale for
+  up to 10s after a bet because BetPanel fired only a toast on
+  success with no React Query invalidation. M3 the
+  `drainTopicFeed` catch log unconditional `…` is replaced with
+  the v36 M0 conditional `${topic.length > 40 ? '…' : ''}`
+  pattern. L1 the relayer startup banner v37→v45 and the smoke
+  grep follow. L2 the `scripts/deploy.sh` prefund comment typo
+  "~6 resolution cycles" → "~3" (real math: 0.62 STT per cycle,
+  2 STT prefund ≈ 3.2 cycles). L3 the `Dockerfile` dead
+  duplicate `COPY scripts/relayer.mjs` (L40) is deleted —
+  shadowed by the `COPY scripts/ ./scripts/` on the next line.
+  L4 the proof page regex `v(\d+)` → `v(\d+(?:\.\d+)?)` so a
+  future patch bump like v40.1 doesn't fall through to the
+  "detecting…" placeholder. M4 was a subagent misread —
+  `tryRetryInferenceFromCache` at `scripts/relayer.mjs:835` does
+  add to the per-tick `alreadySubmitted` Set unconditionally,
+  before the cap check at L838-843. The v28 H1 drain-order
+  invariant ("drain-order swap + per-tick Set prevents the
+  wasteful re-parse") holds. 113/113 Foundry tests pass
+  (112 prior + 1 new for `testAgentManifestAdvertisesV40`).
+  No contract behavior change (string content only); no
+  relayer behavior change (M3 is purely cosmetic for short
+  topics). The first Foundry-rejected non-ASCII em-dash (`—`)
+  in the v40 block was caught at compile time and replaced
+  with `--`.
 - **v40 contract+frontend-only** (this audit cycle) — L0 the
   pre-existing `app/page.tsx:34` `TODO(v24)` is closed: a
   contract-side `getUserMarkets(address) → uint256[]` view
