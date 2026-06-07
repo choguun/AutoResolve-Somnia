@@ -1296,10 +1296,12 @@ contract AutonomousPredictionMarketTest is Test {
         assertGt(inferenceId, 0, "inference request created");
 
         // Pre-populate the parse-result cache at the mapping's storage slot.
-        // marketParseResult sits at slot 12 in the contract's storage layout
-        // (the _status uint256 from ReentrancyGuard takes slot 0; 12 vars
-        // come before marketParseResult in the contract's declaration order).
-        bytes32 slot = keccak256(abi.encode(marketId, uint256(12)));
+        // marketParseResult sits at slot 14 in the contract's storage layout
+        // (the _status uint256 from ReentrancyGuard takes slot 0; 14 vars
+        // come before marketParseResult in the contract's declaration order —
+        // v40 L0 added userMarketIds and _userMarketIndex, shifting the slot
+        // from 12 to 14).
+        bytes32 slot = keccak256(abi.encode(marketId, uint256(14)));
         // Encode "x" (length 1) inline: last byte = 1 * 2 = 0x02, byte 1 = 'x' = 0x78.
         bytes32 stored = bytes32(uint256(0x7800000000000000000000000000000000000000000000000000000000000002));
         vm.store(address(market), slot, stored);
@@ -1334,8 +1336,8 @@ contract AutonomousPredictionMarketTest is Test {
         market.handleAgentResponse(1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest());
         uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
 
-        // Pre-populate the cache.
-        bytes32 slot = keccak256(abi.encode(marketId, uint256(12)));
+        // Pre-populate the cache. See slot comment in testInferenceOverlongBranch.
+        bytes32 slot = keccak256(abi.encode(marketId, uint256(14)));
         bytes32 stored = bytes32(uint256(0x7800000000000000000000000000000000000000000000000000000000000002));
         vm.store(address(market), slot, stored);
         assertEq(bytes(market.marketParseResult(marketId)).length, 1, "cache pre-populated");
@@ -1365,8 +1367,8 @@ contract AutonomousPredictionMarketTest is Test {
         market.handleAgentResponse(1, _successfulResponse("Paris is the capital of France."), ResponseStatus.Success, _emptyRequest());
         uint256 inferenceId = market.getMarket(marketId).inferenceRequestId;
 
-        // Pre-populate the cache.
-        bytes32 slot = keccak256(abi.encode(marketId, uint256(12)));
+        // Pre-populate the cache. See slot comment in testInferenceOverlongBranch.
+        bytes32 slot = keccak256(abi.encode(marketId, uint256(14)));
         bytes32 stored = bytes32(uint256(0x7800000000000000000000000000000000000000000000000000000000000002));
         vm.store(address(market), slot, stored);
         assertEq(bytes(market.marketParseResult(marketId)).length, 1, "cache pre-populated");
@@ -2399,6 +2401,155 @@ contract AutonomousPredictionMarketTest is Test {
 
         vm.expectRevert(AutonomousPredictionMarket.InsufficientContractBalance.selector);
         market.retryInferenceFromCache(marketId);
+    }
+
+    // -----------------------------------------------------------------------
+    // v40 (L0): per-user market enumeration for the My Bets tab.
+    //
+    // The frontend used to require loading every market page (O(N) RPC
+    // round-trips) and reading userYesBets + userNoBets for each to find
+    // the user's positions. The new getUserMarkets(address) view + the
+    // userMarketIds storage populated by bet() lets useMyBets do a single
+    // targeted read in O(K) where K = the user's position count.
+    // -----------------------------------------------------------------------
+
+    function testGetUserMarketsEmptyForFreshUser() public {
+        // Address with no bets returns an empty array, not a revert.
+        assertEq(market.getUserMarkets(alice).length, 0, "fresh user should have empty array");
+    }
+
+    function testGetUserMarketsReturnsBettedMarkets() public {
+        uint256 m1 = market.createMarket("Q1?", "https://a.example", 300);
+        uint256 m2 = market.createMarket("Q2?", "https://b.example", 300);
+        uint256 m3 = market.createMarket("Q3?", "https://c.example", 300);
+
+        vm.deal(alice, 1 ether);
+        vm.startPrank(alice);
+        market.bet{value: 0.1 ether}(m1, AutonomousPredictionMarket.BetOption.Yes);
+        market.bet{value: 0.1 ether}(m2, AutonomousPredictionMarket.BetOption.No);
+        market.bet{value: 0.1 ether}(m3, AutonomousPredictionMarket.BetOption.Yes);
+        vm.stopPrank();
+
+        uint256[] memory aliceMarkets = market.getUserMarkets(alice);
+        assertEq(aliceMarkets.length, 3, "alice should have 3 markets");
+        assertEq(aliceMarkets[0], m1, "first bet first");
+        assertEq(aliceMarkets[1], m2, "second bet second");
+        assertEq(aliceMarkets[2], m3, "third bet third");
+    }
+
+    function testGetUserMarketsNoDuplicatesOnRebet() public {
+        // Re-betting on the same market increments the bet amount but does
+        // NOT push a duplicate into userMarketIds. The 0-sentinel check in
+        // _addUserMarketIfAbsent handles dedup; if it regresses, the array
+        // would grow unboundedly with re-bets.
+        uint256 m1 = market.createMarket("Q1?", "https://a.example", 300);
+        vm.deal(alice, 1 ether);
+
+        vm.startPrank(alice);
+        market.bet{value: 0.1 ether}(m1, AutonomousPredictionMarket.BetOption.Yes);
+        market.bet{value: 0.2 ether}(m1, AutonomousPredictionMarket.BetOption.Yes);
+        market.bet{value: 0.15 ether}(m1, AutonomousPredictionMarket.BetOption.Yes);
+        vm.stopPrank();
+
+        uint256[] memory aliceMarkets = market.getUserMarkets(alice);
+        assertEq(aliceMarkets.length, 1, "re-bets should not duplicate");
+        assertEq(aliceMarkets[0], m1, "should still be market 1");
+        assertEq(market.userYesBets(alice, m1), 0.45 ether, "amounts aggregate normally");
+    }
+
+    function testGetUserMarketsIsolatesUsers() public {
+        // Alice and Bob bet on disjoint sets of markets. Each user's
+        // getUserMarkets call returns only their own — no cross-leakage.
+        uint256 m1 = market.createMarket("Q1?", "https://a.example", 300);
+        uint256 m2 = market.createMarket("Q2?", "https://b.example", 300);
+        uint256 m3 = market.createMarket("Q3?", "https://c.example", 300);
+
+        vm.deal(alice, 1 ether);
+        vm.deal(bob, 1 ether);
+
+        vm.prank(alice);
+        market.bet{value: 0.1 ether}(m1, AutonomousPredictionMarket.BetOption.Yes);
+        vm.prank(alice);
+        market.bet{value: 0.1 ether}(m2, AutonomousPredictionMarket.BetOption.No);
+
+        vm.prank(bob);
+        market.bet{value: 0.1 ether}(m3, AutonomousPredictionMarket.BetOption.Yes);
+
+        uint256[] memory aliceMarkets = market.getUserMarkets(alice);
+        uint256[] memory bobMarkets = market.getUserMarkets(bob);
+
+        assertEq(aliceMarkets.length, 2, "alice has 2");
+        assertEq(aliceMarkets[0], m1, "alice: m1 first");
+        assertEq(aliceMarkets[1], m2, "alice: m2 second");
+        assertEq(bobMarkets.length, 1, "bob has 1");
+        assertEq(bobMarkets[0], m3, "bob: m3");
+    }
+
+    function testGetUserMarketsHandlesBothYesAndNoBets() public {
+        // A user can bet YES on one market and NO on another; both are
+        // tracked. Same user betting both sides of the SAME market is
+        // unusual but legal (the contract allows it) and both are tracked
+        // as a single entry.
+        uint256 m1 = market.createMarket("Q1?", "https://a.example", 300);
+        uint256 m2 = market.createMarket("Q2?", "https://b.example", 300);
+
+        vm.deal(alice, 1 ether);
+        vm.startPrank(alice);
+        market.bet{value: 0.1 ether}(m1, AutonomousPredictionMarket.BetOption.Yes);
+        market.bet{value: 0.1 ether}(m2, AutonomousPredictionMarket.BetOption.No);
+        vm.stopPrank();
+
+        uint256[] memory aliceMarkets = market.getUserMarkets(alice);
+        assertEq(aliceMarkets.length, 2, "both YES and NO bets tracked");
+    }
+
+    function testGetUserMarketsIgnoresMarketsUserHasNotBetOn() public {
+        // Three markets exist; the user only bets on one. The other two
+        // don't appear in the user's array.
+        uint256 m1 = market.createMarket("Q1?", "https://a.example", 300);
+        uint256 m2 = market.createMarket("Q2?", "https://b.example", 300);
+        uint256 m3 = market.createMarket("Q3?", "https://c.example", 300);
+
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        market.bet{value: 0.1 ether}(m2, AutonomousPredictionMarket.BetOption.Yes);
+
+        uint256[] memory aliceMarkets = market.getUserMarkets(alice);
+        assertEq(aliceMarkets.length, 1, "only bet market is tracked");
+        assertEq(aliceMarkets[0], m2, "m2 only");
+        assertTrue(aliceMarkets[0] != m1, "m1 absent");
+        assertTrue(aliceMarkets[0] != m3, "m3 absent");
+    }
+
+    function testGetUserMarketsAfterClaimWinnings() public {
+        // After claimWinnings, the bet amounts (userYesBets / userNoBets)
+        // are zeroed. The market id STAYS in userMarketIds — the array
+        // tracks "user has bet on this market at some point" not "user
+        // has an active position". The frontend reads yes/no amounts to
+        // distinguish active positions from history. A claimed-and-zeroed
+        // position would be filtered out by the frontend's
+        // `if (yes === 0n && no === 0n) return null` check.
+        uint256 m1 = market.createMarket("Q1?", "https://a.example", 300);
+
+        vm.deal(alice, 2 ether);
+        vm.deal(bob, 2 ether);
+
+        vm.prank(alice);
+        market.bet{value: 0.6 ether}(m1, AutonomousPredictionMarket.BetOption.Yes);
+        vm.prank(bob);
+        market.bet{value: 0.4 ether}(m1, AutonomousPredictionMarket.BetOption.No);
+
+        market.forceResolve(m1, true);  // YES wins
+        vm.prank(alice);
+        market.claimWinnings(m1);
+
+        // Amounts zeroed, market id still in array.
+        assertEq(market.userYesBets(alice, m1), 0, "amount zeroed after claim");
+        assertEq(market.userNoBets(alice, m1), 0, "other side still zero");
+
+        uint256[] memory aliceMarkets = market.getUserMarkets(alice);
+        assertEq(aliceMarkets.length, 1, "market id retained after claim");
+        assertEq(aliceMarkets[0], m1, "still the same market");
     }
 
     function _assertGenerationFailed(uint256 requestId, string memory expectedReason) internal {

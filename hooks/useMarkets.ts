@@ -87,8 +87,8 @@ export function useMarkets() {
       // of the 9 reads). Order is preserved because Promise.all resolves
       // inputs in order; the marketIds array is also built in order so the
       // `markets.push` below walks the highest-id-first page identically
-      // to the pre-v37 sequential path. Same pattern as useMyBetsMarkets
-      // (L162) and useUserBets (L212).
+      // to the pre-v37 sequential path. Same pattern as useMyBets
+      // (L165) and useUserBets (L228).
       const ids: bigint[] = [];
       for (let id = startId; id >= endId; id--) {
         ids.push(BigInt(id));
@@ -156,29 +156,49 @@ export function useResolutionDeposit() {
   });
 }
 
-export function useMyBetsMarkets(
-  markets: Array<{ id: bigint; market: Market }> | undefined,
-  address?: `0x${string}`
-) {
+export function useMyBets() {
+  const { address } = useAccount();
   const publicClient = useSomniaPublicClient();
 
-  return useQuery({
-    // v25 (M1): the joined `id,id,id,...` key made any new market creation
-    // invalidate the cache and force a full O(N) re-read of every position.
-    // With useMarkets polling every 10s and the My Bets tab active, this
-    // was an O(2N) read (userYesBets + userNoBets) per market creation event.
-    // Use the market count as a stable structural fingerprint instead —
-    // TanStack Query will still re-run when the markets array changes shape
-    // (new pages via fetchNextPage), but a fresh market id within the same
-    // page count won't bust the cache. The markets array itself is captured
-    // in the query closure, so the queryFn reads positions for whatever
-    // markets are currently loaded.
-    queryKey: ['myBetsMarkets', address, markets?.length ?? 0],
-    enabled: !!address && !!markets?.length,
-    queryFn: async () => {
-      const positions = await Promise.all(
-        markets!.map(async ({ id, market }) => {
-          const [yes, no] = await Promise.all([
+  return useQuery<UserMarketPosition[]>({
+    // v40 (L0): the contract now exposes `getUserMarkets(address)` which
+    // returns the list of market ids the user has bet on, in O(K) time
+    // where K = the user's position count. Pre-v40, this hook had to
+    // (1) load every market page via useMarkets (the v23 M2 tab-switch
+    // trigger in app/page.tsx fanned out O(N) RPCs to find the user's
+    // positions), and (2) read userYesBets + userNoBets for each loaded
+    // market. The new key is just (address) — no dependency on the
+    // markets array, no tab-switch trigger, no O(N) scan. The polling
+    // interval is 10s, same as the pre-v40 useMyBets, so the user sees
+    // new positions and resolved outcomes without manual tab switching.
+    queryKey: ['myBets', address],
+    enabled: !!address,
+    queryFn: async (): Promise<UserMarketPosition[]> => {
+      // Step 1: one read to get the user's market IDs.
+      const marketIds = (await publicClient!.readContract({
+        address: CONTRACT_ADDRESS,
+        abi: CONTRACT_ABI,
+        functionName: 'getUserMarkets',
+        args: [address!],
+      })) as bigint[];
+
+      if (marketIds.length === 0) return [];
+
+      // Step 2: read market + position amounts in parallel for each id.
+      // Each entry is a Promise.all of (getMarket, userYesBets, userNoBets)
+      // — same per-market read shape as the pre-v40 useMyBetsMarkets loop,
+      // but with all markets in parallel. Promise.all preserves input
+      // order, so the output array mirrors userMarketIds[address] (which
+      // is the order the user first bet on each market).
+      const reads = await Promise.all(
+        marketIds.map(async (id): Promise<UserMarketPosition | null> => {
+          const [market, yes, no] = await Promise.all([
+            publicClient!.readContract({
+              address: CONTRACT_ADDRESS,
+              abi: CONTRACT_ABI,
+              functionName: 'getMarket',
+              args: [id],
+            }) as Promise<Market>,
             publicClient!.readContract({
               address: CONTRACT_ADDRESS,
               abi: CONTRACT_ABI,
@@ -192,31 +212,20 @@ export function useMyBetsMarkets(
               args: [address!, id],
             }) as Promise<bigint>,
           ]);
-
+          // The contract's userMarketIds tracks "user has bet on this
+          // market at some point" — after a claim, the amounts are
+          // zeroed but the market id stays. Filter out claimed/zeroed
+          // positions so the My Bets list shows "active position" only
+          // (the same semantics as the pre-v40 useMyBetsMarkets filter).
           if (yes === 0n && no === 0n) return null;
-          return { id, market, yes, no } satisfies UserMarketPosition;
-        })
+          return { id, market: market as Market, yes, no };
+        }),
       );
 
-      return positions.filter((p): p is UserMarketPosition => p !== null);
+      return reads.filter((p): p is UserMarketPosition => p !== null);
     },
     refetchInterval: 10_000,
   });
-}
-
-export function useMyBets() {
-  const { address } = useAccount();
-  const { data: marketsData, isLoading: marketsLoading, error: marketsError } = useMarkets();
-  
-  const allMarkets = marketsData?.pages.flat();
-  const query = useMyBetsMarkets(allMarkets, address);
-
-  return {
-    ...query,
-    isLoading: marketsLoading || query.isLoading,
-    error: marketsError || query.error,
-    isConnected: !!address,
-  };
 }
 
 export function useUserBets(marketId: bigint | undefined, address?: `0x${string}`) {

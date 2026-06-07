@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import { useAccount } from 'wagmi';
 import { MarketCard } from '@/components/markets/MarketCard';
 import { MarketCardSkeleton } from '@/components/shared/Skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
-import { useMarkets, useMyBetsMarkets } from '@/hooks/useMarkets';
+import { useMarkets, useMyBets } from '@/hooks/useMarkets';
 import { MarketStatus } from '@/lib-web/contract';
 
 type Tab = 'active' | 'resolved' | 'my-bets';
@@ -19,24 +19,15 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function HomePage() {
   const [tab, setTab] = useState<Tab>('active');
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
   const { data: marketsData, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } = useMarkets();
   const allMarkets = marketsData?.pages.flat();
-  const { data: myBets, isLoading: myBetsLoading } = useMyBetsMarkets(allMarkets, address);
-
-  // v23 (M2): when the user opens the "My Bets" tab, fetch all market
-  // pages so positions on late-id markets are visible without scrolling.
-  // useMyBetsMarkets re-runs as allMarkets grows, so the user's positions
-  // stream in as pages load. Cost: O(N) reads once per tab switch (and
-  // again on the next tick if the user navigated away and back). The
-  // "Active" / "Resolved" tabs still use the lazy Load More button so
-  // they don't pay this cost.
-  // TODO(v24): a contract-side getUserMarkets(address) view would replace
-  // the O(N) RPCs with a single targeted read.
-  useEffect(() => {
-    if (tab !== 'my-bets' || !hasNextPage || isFetchingNextPage) return;
-    fetchNextPage();
-  }, [tab, hasNextPage, isFetchingNextPage, fetchNextPage]);
+  // v40 (L0): useMyBets now calls getUserMarkets(address) directly —
+  // one read to enumerate the user's market ids, then parallel reads
+  // for position amounts. The pre-v40 useMyBetsMarkets + tab-switch
+  // trigger fan-out (v23 M2) is gone; the My Bets tab updates on the
+  // hook's 10s polling cadence regardless of tab state.
+  const { data: myBets, isLoading: myBetsLoading } = useMyBets();
 
   const myBetsById = new Map(
     myBets?.map(({ id, yes, no }) => [id.toString(), { yes, no }]) ?? []

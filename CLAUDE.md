@@ -21,7 +21,7 @@ hard constraints that are easy to break.
   build-ready). v19 is fully tested (104/104 Foundry) and ready for
   `./scripts/deploy.sh` to ship a fresh contract address on Somnia Shannon
   Testnet (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
-- **Live app (v38)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
+- **Live app (v40)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
   agent manifest at `/api/agent-manifest` and
   `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof (v2)**: market #1 on the v2 contract resolved `YES`
@@ -36,7 +36,7 @@ hard constraints that are easy to break.
 ### Version history
 
 The contract has been hardened through v8–v19 (Foundry) and the frontend /
-relayer through v22–v38. Each version's full diff lives in the
+relayer through v22–v40. Each version's full diff lives in the
 `auto-resolve-v*-hardening` memory files in
 `~/.claude/projects/-Users-choguun-Documents-workspaces-hackathon-AutoResolve-Somnia/memory/`.
 Memory pointer list at the bottom of this file (`[[...]]`).
@@ -425,6 +425,32 @@ Quick reference for "what shipped when":
   path (the common case for `GenerateMarketForm`) was unaffected.
   Same `decodeAbiParameters` fix. 105/105 Foundry tests pass
   (no contract change).
+- **v40 contract+frontend-only** (this audit cycle) — L0 the
+  pre-existing `app/page.tsx:34` `TODO(v24)` is closed: a
+  contract-side `getUserMarkets(address) → uint256[]` view
+  replaces the O(N) "load every market page and check each for a
+  position" with a single targeted read. Adds the
+  `userMarketIds[user] / _userMarketIndex[user][marketId]`
+  storage pair (manual EnumerableSet pattern with the 0-sentinel
+  convention) and a `_addUserMarketIfAbsent` helper that
+  `bet()` calls after the existing `userYesBets` / `userNoBets`
+  writes. The frontend's `useMyBets` (the old `useMyBetsMarkets` +
+  `useMyBets` pair is consolidated into one hook) calls
+  `getUserMarkets` once, then `Promise.all`s the per-market
+  `(getMarket, userYesBets, userNoBets)` triple. The pre-v40 O(N)
+  tab-switch trigger in `app/page.tsx` (the v23 M2
+  `useEffect` + `fetchNextPage` loop) and the TODO comment are
+  both deleted. `claimWinnings` does NOT remove from
+  `userMarketIds` — the array tracks "user has bet on this market
+  at some point" and the frontend's `if (yes === 0n && no === 0n)
+  return null` filter keeps the active-only display semantics
+  from the pre-v40 hook. The 3 pre-existing
+  `Inference*Cache` tests were updated to use the new storage
+  slot (12 → 14) since the two new mappings shifted
+  `marketParseResult`'s slot in the layout. 112/112 Foundry
+  tests pass (105 prior + 7 new for `getUserMarkets`).
+  Contract-only change on the v19 ABI; v40 contract pending
+  deploy.
 - **v15–v18 contract (all share the v15 address — none deployed)** — the
   Foundry-tested sequence that adds the relayer + recovery pipeline
   (`forceResetMarket`, `scanStuckMarkets`, `STALE_REQUEST_TIMEOUT`,

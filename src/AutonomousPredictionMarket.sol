@@ -194,6 +194,21 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     mapping(uint256 => Bet[]) public marketBets;
     mapping(address => mapping(uint256 => uint256)) public userYesBets;
     mapping(address => mapping(uint256 => uint256)) public userNoBets;
+    // v40 (L0): per-user enumeration of markets the user has bet on. The My
+    // Bets tab on the frontend used to require loading every market page and
+    // reading both userYesBets and userNoBets for each to filter for "user
+    // has any position". This set lets `getUserMarkets(address)` return the
+    // same list in O(K) time where K = the user's position count, eliminating
+    // the O(N) tab-switch trigger in app/page.tsx and the corresponding
+    // O(N) RPC round-trips on every tab open. The _userMarketIndex uses the
+    // 0-sentinel pattern (1-based indices) so the storage cost is 1 SSTORE
+    // on first bet, 1 SLOAD on subsequent bets — much cheaper than a linear
+    // search through the user's existing positions. claimWinnings does NOT
+    // remove from this set; the array tracks "user has bet on this market
+    // at some point" and the frontend reads yes/no amounts to determine
+    // "active position" vs "history" (a claimed position is yes=0, no=0).
+    mapping(address => uint256[]) public userMarketIds;
+    mapping(address => mapping(uint256 => uint256)) private _userMarketIndex;
     mapping(uint256 => uint256) public requestToMarket;
     mapping(uint256 => RequestStage) public requestStage;
     mapping(uint256 => address) public generationProposer;
@@ -325,6 +340,18 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         return c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D;
     }
 
+    // v40 (L0): push (user, marketId) into userMarketIds if not already
+    // present. The 0-sentinel pattern in _userMarketIndex lets us check
+    // "is present" in O(1) (one SLOAD); the push is also O(1). Re-betting
+    // on the same market is a no-op (the user's bet amount is incremented
+    // by userYesBets/userNoBets as before, but the set isn't duplicated).
+    function _addUserMarketIfAbsent(address user, uint256 marketId) internal {
+        if (_userMarketIndex[user][marketId] == 0) {
+            userMarketIds[user].push(marketId);
+            _userMarketIndex[user][marketId] = userMarketIds[user].length;
+        }
+    }
+
     function bet(uint256 marketId, BetOption option) external payable nonReentrant {
         if (!marketExists(marketId)) revert MarketNotFound();
         Market storage market = markets[marketId];
@@ -339,6 +366,12 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
             market.noTotal += msg.value;
             userNoBets[msg.sender][marketId] += msg.value;
         }
+
+        // v40 (L0): track (msg.sender, marketId) in userMarketIds so the
+        // My Bets tab can enumerate the user's positions without iterating
+        // every market. No-op on re-bet (the index sentinel at L195 handles
+        // dedup). See getUserMarkets below.
+        _addUserMarketIfAbsent(msg.sender, marketId);
 
         marketBets[marketId].push(Bet({better: msg.sender, amount: msg.value, option: option}));
 
@@ -986,6 +1019,18 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
         requiredDeposit = getParseDeposit() + getInferenceDeposit();
         contractBalance = address(this).balance;
         topUpNeeded = contractBalance >= requiredDeposit ? 0 : requiredDeposit - contractBalance;
+    }
+
+    // v40 (L0): enumerate the markets a user has bet on, in the order they
+    // were first bet on (push order into userMarketIds[user]). The My Bets
+    // tab uses this to replace an O(N) "load every market page and check
+    // each for a position" with an O(K) "load the user's markets and check
+    // only those". After a claim, the position amounts (userYesBets /
+    // userNoBets) are zeroed but the market id stays in the array — the
+    // frontend reads the amounts to distinguish "active position" from
+    // "history".
+    function getUserMarkets(address user) external view returns (uint256[] memory) {
+        return userMarketIds[user];
     }
 
     function getAgentMarketContext(uint256 marketId) external view returns (AgentMarketContext memory context) {
