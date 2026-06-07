@@ -21,7 +21,7 @@ hard constraints that are easy to break.
   build-ready). v19 is fully tested (104/104 Foundry) and ready for
   `./scripts/deploy.sh` to ship a fresh contract address on Somnia Shannon
   Testnet (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
-- **Live app (v37)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
+- **Live app (v38)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
   agent manifest at `/api/agent-manifest` and
   `/.well-known/autoresolve-agent.json`.
 - **Historical E2E proof (v2)**: market #1 on the v2 contract resolved `YES`
@@ -36,7 +36,7 @@ hard constraints that are easy to break.
 ### Version history
 
 The contract has been hardened through v8–v19 (Foundry) and the frontend /
-relayer through v22–v37. Each version's full diff lives in the
+relayer through v22–v38. Each version's full diff lives in the
 `auto-resolve-v*-hardening` memory files in
 `~/.claude/projects/-Users-choguun-Documents-workspaces-hackathon-AutoResolve-Somnia/memory/`.
 Memory pointer list at the bottom of this file (`[[...]]`).
@@ -405,6 +405,26 @@ Quick reference for "what shipped when":
   window (~500ms, the slowest of the 9 reads). Same pattern as
   `useMyBetsMarkets` (L162) and `useUserBets` (L212). 105/105
   Foundry tests pass (no contract change).
+- **v38 frontend+manifest-only** (this audit cycle) — H0 the
+  `ResolutionPanel` component's `ResolutionRequested` log decode
+  read `log.topics[2]` for the `requestId`, but the contract event
+  `ResolutionRequested(uint256 indexed marketId, uint256 requestId, RequestStage stage)`
+  only has `marketId` indexed. The pre-v38 `if (!log.topics[2]) continue;`
+  guard at L51 made the bug silent — every log was skipped, so the
+  "Watch live parse receipt (request #N)" deep link at L145-155
+  never rendered for any resolution. The decode now reads
+  `requestId` from `log.data` via `decodeAbiParameters` (same
+  pattern as `useGenerationFailures:104` and the v37 H0
+  `logResolvedMarkets` fix). The L48 docstring (the v19 L1 comment)
+  was also wrong — it claimed `requestId` was indexed; the v38
+  fix corrects that too. M0 the `/api/receipt/by-tx/[hash]`
+  endpoint's `ResolutionRequested` branch had the same bug —
+  read `log.topics[2]` for `requestId` (undefined), with a L90
+  null-guard that prevented a throw but silently dropped the
+  resolution requestId from mixed txs. The pure-GenerationRequested
+  path (the common case for `GenerateMarketForm`) was unaffected.
+  Same `decodeAbiParameters` fix. 105/105 Foundry tests pass
+  (no contract change).
 - **v15–v18 contract (all share the v15 address — none deployed)** — the
   Foundry-tested sequence that adds the relayer + recovery pipeline
   (`forceResetMarket`, `scanStuckMarkets`, `STALE_REQUEST_TIMEOUT`,

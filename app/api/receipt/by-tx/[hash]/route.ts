@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createPublicClient, http, keccak256, toHex } from 'viem';
+import { createPublicClient, decodeAbiParameters, http, keccak256, toHex } from 'viem';
 import { somniaTestnet } from '@/lib-web/somnia-chain';
 
 export const dynamic = 'force-dynamic';
@@ -85,9 +85,26 @@ export async function GET(
       if (!log.topics[0]) continue;
       const topic0 = log.topics[0];
       if (topic0 === RESOLUTION_REQUESTED_TOPIC) {
-        // topics: [sig, marketId (indexed), requestId (indexed)]
-        const requestIdTopic = log.topics[2];
-        if (requestIdTopic) resolutionRequestIds.push(BigInt(requestIdTopic));
+        // topics: [sig, marketId (indexed)]
+        // data: abi.encode(uint256 requestId, uint8 stage)
+        // v38 (M0): only marketId is indexed in the contract event
+        // `ResolutionRequested(uint256 indexed marketId, uint256 requestId, RequestStage stage)`.
+        // Pre-v38, this read `log.topics[2]` (undefined) and the L90
+        // null-guard prevented a throw but silently dropped the
+        // requestId from mixed txs (GenerationRequested +
+        // ResolutionRequested in the same receipt). Decode the
+        // requestId from log.data via decodeAbiParameters — same
+        // pattern as useGenerationFailures:104 and the v37 H0
+        // logResolvedMarkets fix.
+        try {
+          const decoded = decodeAbiParameters(
+            [{ type: 'uint256' }, { type: 'uint8' }],
+            log.data,
+          );
+          if (decoded[0]) resolutionRequestIds.push(decoded[0]);
+        } catch {
+          // Malformed log (truncated, wrong shape) — skip this entry.
+        }
       } else if (topic0 === GENERATION_REQUESTED_TOPIC) {
         // topics: [sig, requestId (indexed)]
         const requestIdTopic = log.topics[1];

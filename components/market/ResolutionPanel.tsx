@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt, useBalance } from 'wagmi';
-import { keccak256, toHex } from 'viem';
+import { decodeAbiParameters, keccak256, toHex } from 'viem';
 import { toast } from 'sonner';
 import { Bot, Info, Activity, ExternalLink } from 'lucide-react';
 import { Tooltip } from '@/components/shared/Tooltip';
@@ -19,6 +19,15 @@ import { TransactionStatus } from '@/components/shared/TransactionStatus';
 // that mirrors the schema) would be matched by accident and surface a
 // wrong requestId. Same constant is computed in app/api/receipt/by-tx;
 // keeping it in sync is a one-line copy.
+// v38 (H0): the v19 (L1) comment was actually wrong — the contract event
+// `ResolutionRequested(uint256 indexed marketId, uint256 requestId, RequestStage stage)`
+// has ONLY marketId indexed. The requestId and stage are in log.data, not
+// in topics. The pre-v38 decode read `log.topics[2]` for requestId and a
+// `if (!log.topics[2]) continue;` guard at L51 made the bug silent —
+// every log was skipped, so the "Watch live parse receipt" deep link
+// never rendered for any resolution. The correct fix is to decode
+// requestId from log.data via decodeAbiParameters (same pattern as
+// useGenerationFailures:104 and the v37 H0 logResolvedMarkets fix).
 const RESOLUTION_REQUESTED_TOPIC = keccak256(
   toHex('ResolutionRequested(uint256,uint256,uint8)'),
 );
@@ -45,10 +54,16 @@ export function ResolutionPanel({
 
   useEffect(() => {
     if (!isSuccess || !receipt) return;
-    // Decode ResolutionRequested(uint256 indexed marketId, uint256 indexed requestId, uint8 stage)
+    // Decode ResolutionRequested(uint256 indexed marketId, uint256 requestId, RequestStage stage)
     // from the receipt logs so we can deep-link to /receipt/[requestId].
+    // v38 (H0): only marketId is indexed. requestId is the first non-
+    // indexed arg, decoded from log.data. Pre-v38, this read
+    // `log.topics[2]` (undefined) and the L51 `!log.topics[2]` guard
+    // made the bug silent — the "Watch live parse receipt" link
+    // never rendered for any resolution. The docstring above the
+    // effect was also wrong (claimed requestId was indexed; it isn't).
     for (const log of receipt.logs) {
-      if (!log.topics[0] || !log.topics[1] || !log.topics[2]) continue;
+      if (!log.topics[0] || !log.topics[1]) continue;
       if (log.address.toLowerCase() !== CONTRACT_ADDRESS.toLowerCase()) continue;
       // v19 (L1): require the topic[0] to be ResolutionRequested — a future
       // event from the contract that also has a marketId at topic[1] would
@@ -56,8 +71,18 @@ export function ResolutionPanel({
       if (log.topics[0].toLowerCase() !== RESOLUTION_REQUESTED_TOPIC.toLowerCase()) continue;
       const loggedMarketId = BigInt(log.topics[1]);
       if (loggedMarketId !== marketId) continue;
-      setParseRequestId(BigInt(log.topics[2]));
-      return;
+      try {
+        const decoded = decodeAbiParameters(
+          [{ type: 'uint256' }, { type: 'uint8' }],
+          log.data,
+        );
+        if (decoded[0]) {
+          setParseRequestId(decoded[0]);
+          return;
+        }
+      } catch {
+        // Malformed log (truncated, wrong shape) — skip silently.
+      }
     }
   }, [isSuccess, receipt, marketId]);
 
