@@ -1,5 +1,6 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useWriteContract, useWaitForTransactionReceipt, useBalance } from 'wagmi';
 import { decodeAbiParameters, keccak256, toHex } from 'viem';
@@ -41,6 +42,7 @@ export function ResolutionPanel({
   canResolve: boolean;
   isResolving: boolean;
 }) {
+  const queryClient = useQueryClient();
   const { data: deposit } = useResolutionDeposit();
   const { data: contractBalance } = useBalance({ address: CONTRACT_ADDRESS });
   const { writeContract, data: hash, isPending } = useWriteContract();
@@ -107,10 +109,23 @@ export function ResolutionPanel({
   };
 
   useEffect(() => {
-    if (isSuccess) {
-      showConfirmedTransactionToast(hash, 'Resolution requested - agents are working', 'request-resolution');
-    }
-  }, [hash, isSuccess]);
+    if (!isSuccess) return;
+    // v46 (L2): mirror the v45 M2 BetPanel pattern on a successful
+    // requestResolution. The market's status flips from Open to
+    // Resolving server-side, but the cached ['market', marketId] read
+    // (hooks/useMarkets.ts:50) still says Open for up to 5s. The
+    // parent canResolve/isResolving derived state stays in the
+    // "Request Autonomous Resolution" branch (L136-181) until the
+    // next refetch — a confused user could click "Request Resolution"
+    // twice in the stale window and burn a second STT top-up that
+    // reverts MarketNotOpen. No address gate: requestResolution is
+    // permissionless per the contract and the market read is
+    // address-agnostic.
+    queryClient.invalidateQueries({
+      queryKey: ['market', marketId.toString()],
+    });
+    showConfirmedTransactionToast(hash, 'Resolution requested - agents are working', 'request-resolution');
+  }, [hash, isSuccess, queryClient, marketId]);
 
   if (isResolving) {
     return (

@@ -460,6 +460,30 @@ Quick reference for "what shipped when":
   topics). The first Foundry-rejected non-ASCII em-dash (`—`)
   in the v40 block was caught at compile time and replaced
   with `--`.
+- **v46 frontend+docs-only** (this audit cycle) — L1
+  `CreateMarketForm` adds `queryClient.invalidateQueries(['nextMarketId'])`
+  + `['markets']` on success (mirrors v45 M2 BetPanel + v19 H2 /
+  v43 L1 PayoutClaim pattern) — pre-v46 the just-created market
+  didn't appear on `/` for the full 10s `useMarkets`
+  refetchInterval; the toast fired but no React Query
+  invalidation was issued. L2 `ResolutionPanel` adds
+  `queryClient.invalidateQueries(['market', marketId.toString()])`
+  on success (same v45 M2 pattern) — pre-v46 a confused user
+  could double-click "Request Resolution" in the 5s stale window
+  and burn a second STT top-up that reverts `MarketNotOpen`; the
+  parent `canResolve` / `isResolving` derived state stayed in
+  the "Request Autonomous Resolution" branch until the next
+  refetch. L3+L4 `PITCH_DECK.md` drift cleanup: the v2 contract
+  address `0xE81F…2380` → v15 `0x764Dc…2022b` (both occurrences
+  on L13 and L152), the v3 contract reference on L81 → v15 (live)
+  / v19+v40+v45 (pending deploy), the test count on L144: "19
+  contract tests" → "113 Foundry tests". L5 was a subagent
+  misread — `GenerateMarketForm` was already fixed in v23 H1
+  (the `?kind=generation` query param threads to
+  `AgentReceiptViewer`) and v29 H2 (the `useMarketCreatedByRequestId`
+  hook auto-redirects to `/market/[id]` on success). No contract,
+  no relayer, no manifest, no Foundry test changes. 113/113
+  Foundry tests pass.
 - **v40 contract+frontend-only** (this audit cycle) — L0 the
   pre-existing `app/page.tsx:34` `TODO(v24)` is closed: a
   contract-side `getUserMarkets(address) → uint256[]` view

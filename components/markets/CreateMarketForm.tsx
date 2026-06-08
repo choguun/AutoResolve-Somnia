@@ -1,5 +1,6 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
@@ -24,6 +25,7 @@ function isValidSourceUrl(value: string): boolean {
 
 export function CreateMarketForm() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { isConnected } = useAccount();
   const [question, setQuestion] = useState('');
   const [source, setSource] = useState('');
@@ -33,11 +35,21 @@ export function CreateMarketForm() {
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
 
   useEffect(() => {
-    if (isSuccess) {
-      showConfirmedTransactionToast(hash, 'Market created!', 'create-market');
-      router.push('/');
-    }
-  }, [hash, isSuccess, router]);
+    if (!isSuccess) return;
+    // v46 (L1): mirror the v45 M2 BetPanel pattern on a successful
+    // createMarket. The home page reads ['markets'] (keyed by
+    // nextMarketId, see hooks/useMarkets.ts:71) and ['nextMarketId']
+    // (L34). Without this invalidate, the just-created market doesn't
+    // appear on `/` until the 10s useMarkets refetchInterval fires.
+    // The router.push('/') below navigates the user but doesn't
+    // refetch the cached query — the destination renders with the
+    // stale list until the next poll. No address gate: createMarket
+    // is a public write and the markets list is address-agnostic.
+    queryClient.invalidateQueries({ queryKey: ['nextMarketId'] });
+    queryClient.invalidateQueries({ queryKey: ['markets'] });
+    showConfirmedTransactionToast(hash, 'Market created!', 'create-market');
+    router.push('/');
+  }, [hash, isSuccess, queryClient, router]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

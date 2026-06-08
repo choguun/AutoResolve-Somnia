@@ -10,7 +10,7 @@ No human oracle. No backend resolver. Validator-executed agent receipts for ever
 
 Live app: https://autoresolve-somnia.vercel.app  
 Proof page: https://autoresolve-somnia.vercel.app/proof  
-Contract: `0xE81F6D33057a9872efdFC881e031b325F13d682c`
+Contract: `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` (v15 live; v19+v40+v45 contract pending deploy)
 
 ---
 
@@ -78,7 +78,7 @@ With Somnia, the resolver becomes part of the on-chain settlement flow.
 
 AutoResolve is built so autonomous agents can interact with it directly.
 
-The v3 contract exposes:
+The v15 (live) / v19+v40+v45 (pending deploy) contract exposes:
 
 | Function | Purpose |
 |---|---|
@@ -141,7 +141,7 @@ Verification:
 | Frontend | Next.js app with wallet connect, markets, create, detail, receipts |
 | Proof UI | Live Agent Command Center on `/proof` |
 | Deployment | Somnia Shannon + Vercel production |
-| Tests | 19 contract tests covering market mechanics and agent callback lifecycle |
+| Tests | 113 Foundry tests covering market mechanics and agent callback lifecycle |
 
 ---
 
@@ -149,7 +149,7 @@ Verification:
 
 Current deployment:
 
-- Contract: `0xE81F6D33057a9872efdFC881e031b325F13d682c`
+- Contract: `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` (v15 live)
 - Contract balance: `1.0 STT`
 - Resolution deposit: `0.66 STT`
 - Seeded markets: `#1`, `#2`
