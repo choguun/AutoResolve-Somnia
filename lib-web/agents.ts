@@ -193,6 +193,16 @@ export function extractGenerationToolCall(entry?: RawReceiptEntry): GenerationTo
       hex,
     );
   } catch {
+    // v51 (L1): extended the v49 L2 silent-return attribution pattern
+    // to this server-side decode. decodeAbiParameters throws on a
+    // malformed log (truncated, wrong shape, or an event signature
+    // that doesn't match the typed tuple). Caller falls through to
+    // null; AgentReceiptViewer shows "couldn't extract generation
+    // tool call" copy. A console.warn would be the v47 L1 server-side
+    // pattern, but this is a helper function (not a route handler)
+    // and the warn is the route's responsibility — the receipt
+    // proxy already console.warns on the upstream fetch + normalize
+    // failures (v49 L1).
     return null;
   }
   const pendingToolCalls = decoded[5] as readonly `0x${string}`[] | undefined;
@@ -222,7 +232,11 @@ export function extractGenerationToolCall(entry?: RawReceiptEntry): GenerationTo
         rawCalldata: call as `0x${string}`,
       };
     } catch {
-      // Malformed createMarket calldata; try the next tool call.
+      // v51 (L1): extended the v49 L2 silent-return attribution
+      // pattern. Malformed createMarket calldata; try the next
+      // tool call. The loop iterates through all `pendingToolCalls`
+      // looking for the one with the createMarket selector; a
+      // single bad decode shouldn't poison the rest of the matches.
       continue;
     }
   }

@@ -83,7 +83,11 @@ export function ResolutionPanel({
           return;
         }
       } catch {
-        // Malformed log (truncated, wrong shape) — skip silently.
+        // v51 (L1): extended the v49 L2 silent-return attribution
+        // pattern to this site. Malformed log (truncated, wrong shape)
+        // — skip silently. The outer for-loop iterates through all
+        // `ResolutionRequested` event logs in the receipt; a single
+        // bad decode shouldn't poison the rest of the matches.
       }
     }
   }, [isSuccess, receipt, marketId]);

@@ -147,6 +147,16 @@ export function AgentReceiptViewer({
     try {
       return BigInt(requestId);
     } catch {
+      // v51 (L1): silent return is intentional — BigInt() throws on
+      // non-numeric input (e.g. a stale deep link with a non-numeric
+      // requestId). The parent `useMarketCreatedByRequestId` hook is
+      // gated on `requestIdBig != null` (the `enabled` flag in the
+      // hook's call site) so a null return short-circuits the call
+      // rather than submitting a query for an invalid id. Same
+      // "intentional silent return" pattern v49 L2 applied to the
+      // 8 client-side TanStack Query hooks; v51 L1 extends it to
+      // the 2 client-side useMemo call sites that wrap the same
+      // BigInt() call.
       return null;
     }
   }, [requestId]);

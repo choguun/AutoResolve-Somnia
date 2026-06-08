@@ -57,7 +57,13 @@ const ROOT = join(__dirname, '..');
 // to TOPICS_FILE / SUBMITTED_TOPICS_FILE / TOPIC_FEED_MAX_PER_TICK).
 // The smoke test at scripts/relayer-smoke.sh greps for this string
 // verbatim — update both files in sync on every relayer version bump.
-const RELAYER_VERSION = 'v48';
+// v51: bumped v48 -> v50 to track the v49 (docs sweep) + v50 (DEPLOYED
+// body changelog + judgingAlignment sentence) polish cycles. The
+// relayer's own behavior is unchanged in v49/v50 (no new relayer
+// code paths, no new log lines, no new ENV vars), but the version
+// constant tracks the shipped audit surface so the smoke grep
+// continues to be the test of record.
+const RELAYER_VERSION = 'v50';
 const SHANNON_RPC_URL = process.env.SHANNON_RPC_URL ?? 'https://dream-rpc.somnia.network';
 const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
 const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';

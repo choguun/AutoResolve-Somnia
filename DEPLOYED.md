@@ -3,7 +3,7 @@
 | Contract | Address | Explorer |
 |---|---|---|
 | **AutonomousPredictionMarket (v15 — current, 1 v14-audit HIGH + 6 MEDIUM + 1 LOW closed: parseRequestedAt rollback cleanup in all 3 handleInferenceCallback branches, relayer parse-failure URL LRU + exponential backoff, recovery panel invalidates market queries, receipt proxy fallback host, receipt by-tx endpoint, generation prompt template getter, SPOF doc + verbose gate)** | `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` | [View](https://shannon-explorer.somnia.network/address/0x764Dc86246D242382c7619Fc715d0E3A64B2022b) |
-| **Frontend (v47 — pending contract deploy (v19 + v40 + v45) on the v15 address family: 1 HIGH + 7 new tests for the v40 `getUserMarkets` view; 8 v16-v19 audit cycles (requestResolution cache clear, receipt proxy `NEXT_PUBLIC_CONTRACT_ADDRESS`, _describeCreateRevert `DurationTooLong`, handleInferenceCallback overlong+invalid+non-success clear, formatStt/formatCountdown precision safety, PayoutClaim useUserBets invalidation); v45 on-chain `agentManifest()` string bump v19 → v40 (no new function selectors); 26 frontend v22-v48 hardening cycles (relayer drainTopicFeed + 30+ log.topics[N] decoders, useAgentReceipt 404 polling cap, SSR contract version, My Bets tab claimable chip, BetPanel myBets invalidation, CreateMarketForm + ResolutionPanel + GenerateMarketForm auto-redirect invalidation, deploy.sh portable sed, AgentCommandCenter pendingInvoke Map, /api/topics console.warn, DEPLOYED.md "Next deploy" callout, manifest version v40 → v47, relayer RELAYER_VERSION constant, etc.))** | n/a (frontend) | [Live app](https://autoresolve-somnia.vercel.app) |
+| **Frontend (v50 — pending contract deploy (v19 + v40 + v45) on the v15 address family: 1 HIGH + 7 new tests for the v40 `getUserMarkets` view; 8 v16-v19 audit cycles (requestResolution cache clear, receipt proxy `NEXT_PUBLIC_CONTRACT_ADDRESS`, _describeCreateRevert `DurationTooLong`, handleInferenceCallback overlong+invalid+non-success clear, formatStt/formatCountdown precision safety, PayoutClaim useUserBets invalidation); v45 on-chain `agentManifest()` string bump v19 → v40 (no new function selectors); 29 frontend v22-v50 hardening cycles (relayer drainTopicFeed + 30+ log.topics[N] decoders, useAgentReceipt 404 polling cap, SSR contract version, My Bets tab claimable chip, BetPanel myBets invalidation, CreateMarketForm + ResolutionPanel + GenerateMarketForm auto-redirect invalidation, deploy.sh portable sed, AgentCommandCenter pendingInvoke Map, /api/topics console.warn, DEPLOYED.md "Next deploy" callout, manifest version v40 → v47, relayer RELAYER_VERSION constant, v49 docs sweep + proof-page Tooltip + 4 server-side console.warns + 8 client-side bare-catch comments, v50 DEPLOYED body changelog sweep + judgingAlignment autonomousPerformance v45-v48 sentence + useQueryClient import fix, v51 manifest version v47 → v50 + RELAYER_VERSION v48 → v50 + smoke grep + public docs sweep, etc.))** | n/a (frontend) | [Live app](https://autoresolve-somnia.vercel.app) |
 | AutonomousPredictionMarket (v14 — 9 v13-audit gaps closed: NO-outcome parser, AgentMarketContext timestamps, DuplicateToolCall advisory, relayer reset attempt cap, receipt-kind branch, status passthrough, stuck-gen doc comment, manifest v14 bump, exact YES/NO manifest correction) | `0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9` | [View](https://shannon-explorer.somnia.network/address/0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9) |
 | AutonomousPredictionMarket (v13 — 5 v12-audit gaps closed: stuck-generation recovery, agent output length cap, relayer GenerationFailed visibility + recovery, non-reverting callbacks on over-long output, `lastGenerationRequestId` high-water mark) | `0x37822751E5ab0688344135797ee8FFCFa76443fB` | [View](https://shannon-explorer.somnia.network/address/0x37822751E5ab0688344135797ee8FFCFa76443fB) |
 | AutonomousPredictionMarket (v12 — 3 v11-audit gaps closed: `MarketReset.stuckRequestId`, `useAgentReceipt` recovery flag reset, 502 cache removed) | `0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5` | [View](https://shannon-explorer.somnia.network/address/0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5) |
@@ -19,7 +19,7 @@
 | AutonomousPredictionMarket (v2) | `0x1631303A748076648a0AbbE077a657Ad7812834F` | [View](https://shannon-explorer.somnia.network/address/0x1631303A748076648a0AbbE077a657Ad7812834F) |
 | AgentSmokeTest | `0x6e1dfB44AEc5c52dE3b12753726ea57207862F65` | [View](https://shannon-explorer.somnia.network/address/0x6e1dfB44AEc5c52dE3b12753726ea57207862F65) |
 
-> **Next deploy:** v19 + v40 + v45 (Foundry-tested, frontend-shipped, pending a single `forge create` onto the v15 address family). v40 adds the `getUserMarkets(address) → uint256[]` view; v45 bumps the on-chain `agentManifest()` string to v40 + the relayer smoke/ellipsis/comment-typo polish. v46/v47/v48 are frontend + relayer + tooling only (no new function selectors, no on-chain string change). Total ABI change since v15: zero new function selectors in v45/v46/v47/v48 (string content + relayer + frontend + tooling only), v40's `getUserMarkets` view, and v19's `getGenerationPromptTemplate` view + the 3 generation-pipeline functions.
+> **Next deploy:** v19 + v40 + v45 (Foundry-tested, frontend-shipped, pending a single `forge create` onto the v15 address family). v40 adds the `getUserMarkets(address) → uint256[]` view; v45 bumps the on-chain `agentManifest()` string to v40 + the relayer smoke/ellipsis/comment-typo polish. v46-v51 are frontend + relayer + tooling only (no new function selectors, no on-chain string change). Total ABI change since v15: zero new function selectors in v45/v46/v47/v48/v49/v50/v51 (string content + relayer + frontend + tooling only), v40's `getUserMarkets` view, and v19's `getGenerationPromptTemplate` view + the 3 generation-pipeline functions.
 
 ## Latest deployment (v15 — 1 HIGH + 6 MEDIUM + 1 LOW audit gaps closed) — completed
 
@@ -155,20 +155,20 @@ coverage — the repo has no JS test framework for the relayer (single-file
 `node` script) and no Next.js test framework. They are defended by the
 code change itself, the matching hook changes, and manual review.
 
-## Latest frontend (v48 hardening — manifest endpoint v47) — pending contract deploy (v19 + v40 + v45) on the v15 address family — completed
+## Latest frontend (v51 hardening — manifest endpoint v50) — pending contract deploy (v19 + v40 + v45) on the v15 address family — completed
 
-The frontend at `autoresolve-somnia.vercel.app` is on v47 (the v22-v48 audit
-sequence — 30+ audit cycles, 27 shipped versions; v39 was skipped after v38
+The frontend at `autoresolve-somnia.vercel.app` is on v50 (the v22-v50 audit
+sequence — 30+ audit cycles, 29 shipped versions; v39 was skipped after v38
 went straight to v40). The contract on-chain is still v15 (the v15 audit at
 the top of this file). v16, v17, v18, v19, v40, and v45 contract changes
 are all Foundry-tested and merge-ready but have not been deployed to a new
 address; the next contract deploy will land them on top of the live v15
 address family in a single `forge create`. v45 only changes the compiled
 bytecode (the on-chain `agentManifest()` string content was bumped v19 → v40
-to advertise the user-position-discovery surface); v46/v47/v48 are frontend
+to advertise the user-position-discovery surface); v46-v51 are frontend
 + relayer + tooling only.
 
-This section is the v8-v48 changelog for the next deploy. The bytecode diff
+This section is the v8-v50 changelog for the next deploy. The bytecode diff
 vs the live v15 is additive (new storage slots + new public functions + new
 events; the existing functions and the resolution/generation pipeline are
 unchanged). After the next deploy, this section becomes the new "Latest
@@ -404,6 +404,82 @@ deployment" and the v15 section above moves to "Previous deployment".
   sibling path); hoists `const RELAYER_VERSION = 'v48'` to top of
   `relayer.mjs` so the smoke grep + startup log share a single source
   of truth.
+- v49 — public docs (README.md:22-23, 142-145 / DEPLOYED.md:6, 22 /
+  PITCH_DECK.md:13, 81) headline version sweep — all 5 file/line
+  references to the live frontend bumped v40 → v47 (per the v48 M1
+  manifest version bump); "v19+v40 contract pending deploy" lists
+  extended to v19+v40+v45 (per the v45 M1 on-chain string bump,
+  which changes compiled bytecode even though it's not an ABI
+  change); v46-v48 explicitly noted as frontend + relayer +
+  tooling-only; `app/proof/page.tsx:187-195` Tooltip rewritten to
+  explain the new dual-pill invariant (the on-chain label v40 and
+  the frontend label v47 intentionally drift — the gap is the
+  count of frontend-only audit cycles since the last ABI change,
+  not a bug); 4 server-side bare `catch {}` blocks in
+  `app/api/receipt/[requestId]/route.ts` (fetch-threw at L90,
+  normalize-threw at L120, fallback-fetch-threw at L158) and
+  `app/api/receipt/by-tx/[hash]/route.ts` (malformed log at L105)
+  gained `console.warn` per the v47 L1 `/api/topics` pattern
+  (operators hitting a 502/599/malformed-log can now read the
+  dev-server logs); 8 client-side bare `catch {}` blocks in
+  `hooks/useAgentReceipt.ts:54`, `hooks/useMarketCreatedByRequestId.ts:53,72`,
+  `hooks/useGenerationFailures.ts:55,72`, `hooks/useRpcHealth.ts:75`
+  gained `// v49 (L2) silent-return is intentional` attribution
+  comments (the pre-existing comments on
+  `useGenerationFailures.ts:104,121` were left alone — they already
+  explain the local rationale). No contract, no relayer behavior,
+  no Foundry test changes.
+- v50 — `DEPLOYED.md` body changelog sweep (5 surfaces: L158 section
+  header bumped v40 → v48 hardening, L160-165 body text bumped
+  v22-v40 → v22-v48 / 19 shipped → 27 shipped / v45 string bump
+  annotation, L167 changelog title bumped v8-v40 → v8-v48, L249-396
+  "Frontend-only v22-v40" section extended with v41 (README drift),
+  v42 (proof-page copy asymmetry), v43 (PayoutClaim myBets +
+  readInferenceTopUp), v44 (Dockerfile + .env.example + pnpm
+  deploy), v45 (manifest version + BetPanel invalidation), v46
+  (CreateMarketForm + ResolutionPanel invalidation + PITCH_DECK
+  drift), v47 (deploy.sh portable + AgentCommandCenter pendingInvoke
+  + /api/topics console.warn + DEPLOYED.md "Next deploy" callout),
+  v48 (manifest version bump + relayer log clarity + GenerateMarketForm
+  auto-redirect invalidation + RELAYER_VERSION constant) entries,
+  L398-399 test count bumped 112/112 → 113/113);
+  `lib-web/agentManifest.ts:354` `judgingAlignment.autonomousPerformance`
+  field appended a v45+v46+v47+v48 sentence (the existing
+  per-version narration ended at v40, so an external agent reading
+  the manifest would conclude the project stopped at v40);
+  `components/markets/GenerateMarketForm.tsx:5` `useQueryClient`
+  import path fixed (was `wagmi`, should be `@tanstack/react-query` —
+  the v48 L2 ship used the wrong package; caught by `pnpm build`
+  for v50 since the v48 audit only ran `pnpm lint`, which doesn't
+  type-check). No contract, no relayer behavior, no Foundry test
+  changes.
+- v51 — `lib-web/agentManifest.ts:251` `version: 'v47'` → `'v50'`
+  (the v48 M1 manifest version bump pattern said the field should
+  bump on every `git push` to Vercel; v49 + v50 polish shipped
+  without a corresponding bump); `scripts/relayer.mjs:60`
+  `RELAYER_VERSION = 'v48'` → `'v50'` (the v48 L3 invariant said
+  "smoke grep + startup log share a single source of truth" — the
+  constant was stuck at v48 even though the manifest bumped to
+  v47); `scripts/relayer-smoke.sh:51,52,54` grep + echo lines
+  updated to match; `app/proof/page.tsx:196` Tooltip content
+  bumped "v47, bumped by v48 M1" → "v50, bumped by v51 M1" (the
+  v49 M2 Tooltip explainer now correctly credits v51 as the
+  latest bump); `app/proof/page.tsx:187-195` comment block gap
+  explanation advanced from "v45+v46+v47+v48" to
+  "v45+v46+v47+v48+v49+v50"; `README.md:22-23, 145` headline
+  version + changelog title bumped (v47 → v50 / v22-v48 →
+  v22-v50 / v48 hardening → v51 hardening); `PITCH_DECK.md:13, 81`
+  bumped (v46-v48 → v46-v51). The v49 L2 attribution comment
+  pattern extended to 4 sites it originally missed:
+  `components/receipts/AgentReceiptViewer.tsx:149` gains a
+  v51 attribution comment (no comment at all pre-v51);
+  `components/market/ResolutionPanel.tsx:85` gains a v51
+  attribution line on top of the pre-existing malformed-log
+  comment; `lib-web/agents.ts:195` gains a v51 attribution
+  comment (no comment at all pre-v51); `lib-web/agents.ts:224`
+  gains a v51 attribution line on top of the pre-existing
+  createMarket-decode comment. No contract, no relayer behavior,
+  no Foundry test changes.
 
 **Test count: 113/113 Foundry tests pass** (105 prior + 7 new for
 v40 `getUserMarkets` + 1 new for v45 `testAgentManifestAdvertisesV40`).

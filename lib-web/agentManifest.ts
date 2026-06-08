@@ -247,8 +247,13 @@ export function getAutoResolveAgentManifest() {
     // bump support; v46 L1+L2 CreateMarketForm + ResolutionPanel cache
     // invalidation; v47 M1 deploy.sh portable sed; v47 M2
     // AgentCommandCenter pendingInvoke Map; v47 L1 /api/topics
-    // console.warn; v47 L2 DEPLOYED.md "Next deploy" callout.
-    version: 'v47',
+    // console.warn; v47 L2 DEPLOYED.md "Next deploy" callout. v48 M1
+    // bumped the field v40 -> v47 to reflect the v45-v47 frontend
+    // surface. v49 (docs sweep) + v50 (DEPLOYED body changelog +
+    // judgingAlignment sentence + useQueryClient import fix) shipped
+    // additional frontend surface without a corresponding bump; v51
+    // bumps v47 -> v50 to close the gap.
+    version: 'v50',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {

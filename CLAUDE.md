@@ -625,6 +625,41 @@ Quick reference for "what shipped when":
   AgentCommandCenter / now GenerateMarketForm) import it from
   `@tanstack/react-query`. No contract, no relayer behavior, no
   Foundry test changes. 113/113 Foundry tests pass.
+- **v51 polish (1 MEDIUM + 1 LOW real, 0 misreads, 0 skips)**
+  — M1 the v48 polish cycle shipped without bumping the vN
+  surface. `lib-web/agentManifest.ts:251` `version: 'v47'` →
+  `'v50'` (the v48 M1 manifest version bump pattern said the
+  field should bump on every `git push` to Vercel; v49 + v50
+  polish shipped without honoring the invariant). `scripts/relayer.mjs:60`
+  `RELAYER_VERSION = 'v48'` → `'v50'` (the v48 L3 invariant
+  said "smoke grep + startup log share a single source of truth"
+  — the constant was stuck at v48 even though the manifest
+  bumped to v47). `scripts/relayer-smoke.sh:51,52,54` grep +
+  echo lines synced. `app/proof/page.tsx:196` Tooltip content
+  bumped "v47, bumped by v48 M1" → "v50, bumped by v51 M1" (the
+  v49 M2 Tooltip explainer now correctly credits v51 as the
+  latest bump). `app/proof/page.tsx:187-195` comment block gap
+  explanation advanced from "v45+v46+v47+v48" to
+  "v45+v46+v47+v48+v49+v50". Public docs (README.md:22-23, 145 /
+  PITCH_DECK.md:13, 81) bumped to v50 / v51 hardening / v22-v50
+  / v46-v51 / 29 shipped. `DEPLOYED.md:6, 22, 158, 160, 167, 168,
+  171, 391-510` swept (headline summary + "Next deploy" callout
+  + section header + body text + changelog title + v49 / v50 /
+  v51 changelog entries appended after the v48 entry). L1 the
+  v49 L2 attribution comment pattern extended to 4 sites it
+  originally missed: `components/receipts/AgentReceiptViewer.tsx:149`
+  (no comment at all pre-v51, gains v51 attribution explaining
+  the BigInt() throw on non-numeric input + the
+  `enabled: requestIdBig != null` gate in
+  `useMarketCreatedByRequestId`'s call site);
+  `components/market/ResolutionPanel.tsx:85` (had a local
+  malformed-log comment, extended with v51 attribution line);
+  `lib-web/agents.ts:195` (no comment at all pre-v51, gains
+  v51 attribution explaining the decodeAbiParameters throw on
+  malformed inferToolsChat result tuples); `lib-web/agents.ts:224`
+  (had a local createMarket-decode comment, extended with v51
+  attribution line). No contract, no relayer behavior, no
+  Foundry test changes. 113/113 Foundry tests pass.
 - **v40 contract+frontend-only** (this audit cycle) — L0 the
   pre-existing `app/page.tsx:34` `TODO(v24)` is closed: a
   contract-side `getUserMarkets(address) → uint256[]` view
