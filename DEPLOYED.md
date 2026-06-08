@@ -19,6 +19,8 @@
 | AutonomousPredictionMarket (v2) | `0x1631303A748076648a0AbbE077a657Ad7812834F` | [View](https://shannon-explorer.somnia.network/address/0x1631303A748076648a0AbbE077a657Ad7812834F) |
 | AgentSmokeTest | `0x6e1dfB44AEc5c52dE3b12753726ea57207862F65` | [View](https://shannon-explorer.somnia.network/address/0x6e1dfB44AEc5c52dE3b12753726ea57207862F65) |
 
+> **Next deploy:** v19 + v40 + v45 + v46 + v47 (Foundry-tested, frontend-shipped, pending a single `forge create` onto the v15 address family). v40 adds the `getUserMarkets(address) → uint256[]` view; v45 bumps the on-chain `agentManifest()` string to v40 + the relayer smoke/ellipsis/comment-typo polish; v46 closes the two remaining write-flow cache-invalidation gaps; v47 fixes `deploy.sh` portability + the AgentCommandCenter per-tx (id→hash) pattern. Total ABI change since v15: zero new function selectors in v45/v46/v47 (string content + relayer + frontend + tooling only), v40's `getUserMarkets` view, and v19's `getGenerationPromptTemplate` view + the 3 generation-pipeline functions.
+
 ## Latest deployment (v15 — 1 HIGH + 6 MEDIUM + 1 LOW audit gaps closed) — completed
 
 v15 is the current live contract at `0x764Dc86246D242382c7619Fc715d0E3A64B2022b`.

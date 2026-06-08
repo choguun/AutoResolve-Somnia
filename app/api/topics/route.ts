@@ -25,7 +25,15 @@ export async function GET() {
       // load.
       { headers: { 'Cache-Control': 'public, max-age=5' } },
     );
-  } catch {
+  } catch (err) {
+    // v47 (L1): surface the missing-file case to operators. The relayer
+    // reads scripts/topics.txt from disk separately, so a missing file
+    // doesn't break the relayer — but the in-app "Topics in queue" pill
+    // silently renders as zero. A bare `catch {}` left the user unable
+    // to tell "no topics yet" from "file missing" (fresh clone, CI
+    // container). The warn fires on every poll while the file is missing,
+    // so a deploy hook that creates the file is the recovery.
+    console.warn('[api/topics] read failed:', err);
     return NextResponse.json({ topics: [] });
   }
 }

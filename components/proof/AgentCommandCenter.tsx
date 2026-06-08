@@ -112,6 +112,22 @@ export function AgentCommandCenter() {
   const [pendingReset, setPendingReset] = useState<
     Map<`0x${string}`, { kind: 'market' | 'generation'; id: bigint }>
   >(() => new Map());
+  // v47 (M2): per-tx tracking for the happy-path invocations
+  // (requestResolution / requestMarketGeneration). The pre-v47 design
+  // captured the success toast only — a judge double-clicking "Invoke
+  // Resolver" on market #1 then market #2 saw the same generic toast for
+  // whichever hash confirmed first, and the second tx reverted
+  // MarketNotOpen. Mirror the v33 H3 pendingReset pattern with a sibling
+  // Map: capture the relevant id (marketId for resolve, topic for
+  // generate) keyed by the eventual tx hash in onSuccess, then look up
+  // by hash in the success effect to invalidate the right query. A
+  // separate Map (vs extending pendingReset's kind enum) keeps the
+  // reset/invoke responsibilities cleanly separated — the reset path
+  // maps id→bigint for both kinds, the invoke path is heterogeneous
+  // (resolve: marketId, generate: topic).
+  const [pendingInvoke, setPendingInvoke] = useState<
+    Map<`0x${string}`, { kind: 'resolve'; marketId: bigint } | { kind: 'generate'; topic: string }>
+  >(() => new Map());
 
   const {
     data,
@@ -259,12 +275,21 @@ export function AgentCommandCenter() {
         value: context.topUpNeeded,
       },
       {
-        onSuccess: (txHash) =>
+        // v47 (M2): capture (txHash, marketId) in pendingInvoke so the
+        // success effect can invalidate the right per-market query even
+        // on rapid double-click. Mirrors the v33 H3 pendingReset pattern.
+        onSuccess: (txHash) => {
+          setPendingInvoke((prev) => {
+            const next = new Map(prev);
+            next.set(txHash, { kind: 'resolve', marketId: context.marketId });
+            return next;
+          });
           showSubmittedTransactionToast(
             txHash,
             `Invoking resolver for market #${context.marketId.toString()}...`,
             'agent-resolver'
-          ),
+          );
+        },
         onError: (err) => toast.error(err.message.slice(0, 140)),
       }
     );
@@ -291,12 +316,22 @@ export function AgentCommandCenter() {
         value: genData.topUpNeeded,
       },
       {
-        onSuccess: (txHash) =>
+        // v47 (M2): capture (txHash, topic) so the success effect can
+        // refetch the generation panel for the specific topic on rapid
+        // double-click. Pre-v47, the second click's topic was lost in the
+        // shared `activePipeline` state.
+        onSuccess: (txHash) => {
+          setPendingInvoke((prev) => {
+            const next = new Map(prev);
+            next.set(txHash, { kind: 'generate', topic: cleanTopic });
+            return next;
+          });
           showSubmittedTransactionToast(
             txHash,
             `Invoking AI generator for "${cleanTopic.slice(0, 30)}..."`,
             'agent-generator'
-          ),
+          );
+        },
         onError: (err) => toast.error(err.message.slice(0, 140)),
       }
     );
@@ -365,8 +400,47 @@ export function AgentCommandCenter() {
     if (!isSuccess || !hash) return;
     if (activePipeline === 'resolve') {
       showConfirmedTransactionToast(hash, 'Resolver invoked - agents are working', 'agent-resolver');
+      // v47 (M2): look up the (marketId) by the actual hash that confirmed,
+      // not by the shared `activePipeline` state. Rapid double-click on
+      // two different markets would otherwise invalidate the wrong
+      // per-market query (the one captured at effect render time). The
+      // /market/[id] page reads `['market', marketId]` and stays stale for
+      // up to 5s otherwise — same race the v46 L2 ResolutionPanel close
+      // already addressed for the single-market panel view.
+      const invoke = pendingInvoke.get(hash);
+      if (invoke?.kind === 'resolve') {
+        queryClient.invalidateQueries({ queryKey: ['market', invoke.marketId.toString()] });
+        // The proof page's scan is also keyed off nextMarketId, so a fresh
+        // refetch of the agent-command-center query picks up the status
+        // flip on the next render.
+        queryClient.invalidateQueries({ queryKey: ['agent-command-center'] });
+      }
+      setPendingInvoke((prev) => {
+        if (!prev.has(hash)) return prev;
+        const next = new Map(prev);
+        next.delete(hash);
+        return next;
+      });
     } else if (activePipeline === 'generate') {
       showConfirmedTransactionToast(hash, 'Generation request submitted - agent is thinking', 'agent-generator');
+      // v47 (M2): refetch the generation panel for this specific topic
+      // on rapid double-click. The generation callback is async (LLM
+      // runs, calls back, then createMarket calldata executes), so no
+      // market exists yet at tx-success time — invalidating
+      // ['agent-command-center-generation'] just makes the 10s polling
+      // window feel snappier. The pre-v47 shared `activePipeline` state
+      // was single-valued, so the second click's topic was lost.
+      const invoke = pendingInvoke.get(hash);
+      if (invoke?.kind === 'generate') {
+        queryClient.invalidateQueries({ queryKey: ['agent-command-center-generation'] });
+        queryClient.invalidateQueries({ queryKey: ['agent-command-center'] });
+      }
+      setPendingInvoke((prev) => {
+        if (!prev.has(hash)) return prev;
+        const next = new Map(prev);
+        next.delete(hash);
+        return next;
+      });
     } else {
       showConfirmedTransactionToast(hash, 'Stuck request reset - pipeline is unblocked', 'agent-recovery');
       refetchRecovery();
@@ -388,7 +462,7 @@ export function AgentCommandCenter() {
         return next;
       });
     }
-  }, [hash, isSuccess, activePipeline, refetchRecovery, queryClient, pendingReset]);
+  }, [hash, isSuccess, activePipeline, refetchRecovery, queryClient, pendingReset, pendingInvoke]);
 
   const resolveSteps = [
     {

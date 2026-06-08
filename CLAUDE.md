@@ -484,6 +484,41 @@ Quick reference for "what shipped when":
   hook auto-redirects to `/market/[id]` on success). No contract,
   no relayer, no manifest, no Foundry test changes. 113/113
   Foundry tests pass.
+- **v47 frontend+ops+docs-only** (this audit cycle) — M1
+  `scripts/deploy.sh:64` BSD-sed `sed -i ''` rewritten portable
+  (`mktemp + sed + mv`); the pre-v47 form is BSD-sed only and
+  errors out on GNU sed (Linux / CI / Vercel runner) with
+  `sed: -i may not be used with stdin`, which under `set -euo
+  pipefail` aborts the deploy BEFORE `pnpm export-abi` runs —
+  the contract deploys successfully but `.env` is never updated
+  and the frontend binds to the placeholder `0x0000…0000`. M2
+  `AgentCommandCenter` adds a sibling `pendingInvoke: Map<hash,
+  {kind: 'resolve', marketId} | {kind: 'generate', topic}>`
+  mirroring the v33 H3 `pendingReset` pattern — `requestResolution`
+  / `requestMarketGeneration` previously captured the success
+  toast only; a judge double-clicking "Invoke Resolver" on market
+  #1 then #2 (both resolvable, both visible in the panel) saw the
+  same generic toast for whichever hash confirmed first and
+  burned a second STT top-up that reverted `MarketNotOpen`. The
+  resolve branch invalidates `['market', marketId]` +
+  `['agent-command-center']`; the generate branch invalidates
+  `['agent-command-center-generation']` + `['agent-command-center']`;
+  both clean up their Map entry on success. L1
+  `app/api/topics/route.ts:28-30` bare `catch {}` adds
+  `console.warn('[api/topics] read failed:', err)` so a fresh
+  clone without `scripts/topics.txt` (or a CI container) no
+  longer silently renders the "Topics in queue" pill as zero.
+  L2 `DEPLOYED.md:21` adds a "Next deploy" blockquote callout
+  below the address table for new maintainers — v46 L3+L4
+  closed the v2-address drift in PITCH_DECK.md but missed
+  DEPLOYED.md. No contract, no relayer, no manifest, no Foundry
+  test changes. 113/113 Foundry tests pass. The two `Map<hash, …>`
+  structures (`pendingReset` and `pendingInvoke`) are intentionally
+  separate, not one discriminated union — the reset path's id is
+  uniformly bigint, but the invoke path is heterogeneous
+  (`resolve` → marketId, `generate` → topic). v47 L4 was a subagent
+  misread (`lucide-react@^1.17.0` is the current latest, not a
+  2022 release — `npm view lucide-react dist-tags` confirms).
 - **v40 contract+frontend-only** (this audit cycle) — L0 the
   pre-existing `app/page.tsx:34` `TODO(v24)` is closed: a
   contract-side `getUserMarkets(address) → uint256[]` view

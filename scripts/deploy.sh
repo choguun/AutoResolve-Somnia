@@ -61,7 +61,15 @@ cast send "$CONTRACT" "createMarket(string,string,uint256)" \
   --rpc-url "$SHANNON_RPC_URL" --private-key "$PRIVATE_KEY" --legacy
 
 if grep -q "^NEXT_PUBLIC_CONTRACT_ADDRESS=" .env 2>/dev/null; then
-  sed -i '' "s|^NEXT_PUBLIC_CONTRACT_ADDRESS=.*|NEXT_PUBLIC_CONTRACT_ADDRESS=$CONTRACT|" .env
+  # v47 (M1): portable .env rewrite. The pre-v47 `sed -i '' ...` is BSD-sed
+  # syntax (empty arg = no backup extension); on GNU sed (Linux / CI /
+  # Vercel runner) it errors with "sed: -i may not be used with stdin" and
+  # deploy.sh exits before pnpm export-abi runs, leaving .env pointing at
+  # the placeholder 0x0000…0000. The mktemp + mv rewrite is portable on
+  # BSD sed, GNU sed, and BusyBox sed.
+  TMP_ENV=$(mktemp) && \
+    sed "s|^NEXT_PUBLIC_CONTRACT_ADDRESS=.*|NEXT_PUBLIC_CONTRACT_ADDRESS=$CONTRACT|" .env > "$TMP_ENV" && \
+    mv "$TMP_ENV" .env
 else
   echo "NEXT_PUBLIC_CONTRACT_ADDRESS=$CONTRACT" >> .env
 fi
