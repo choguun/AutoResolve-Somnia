@@ -660,6 +660,26 @@ Quick reference for "what shipped when":
   (had a local createMarket-decode comment, extended with v51
   attribution line). No contract, no relayer behavior, no
   Foundry test changes. 113/113 Foundry tests pass.
+- **v52 ops-only** (this audit cycle) — M1
+  `~/.claude/projects/-Users-choguun-Documents-workspaces-hackathon-AutoResolve-Somnia/memory/MEMORY.md`
+  was 30.7KB / 31,485 bytes — over the 24.4KB harness limit by
+  ~6KB; the harness warning "Only part of it was loaded" was
+  already firing in the v52 audit session itself. All 12
+  v40–v51 index entries trimmed from a ~1.5KB average
+  (often 3–8× the 200-char ceiling) to ~190 chars each;
+  detail lives in the unchanged per-version memory files
+  (auto-resolve-v40-hardening.md … auto-resolve-v51-hardening.md)
+  which are the source of truth. MEMORY.md size 31,485 → 10,098
+  bytes (-68%). No contract, no relayer behavior, no
+  Foundry test changes. The trimmed entries preserve the
+  invariant attributions (vN-bump from v48, bare-catch
+  attribution from v49, ship-bug catch from v50, vN surface
+  restore from v51) so a future cycle's audit can re-derive
+  the pattern from the index alone if the per-version memory
+  files aren't loaded. 0 product findings (the v51 ship was
+  thorough — vN surface, bare-catch pattern, query
+  invalidation, on-chain string, TODO scan all came back
+  clean). 113/113 Foundry tests pass.
 - **v40 contract+frontend-only** (this audit cycle) — L0 the
   pre-existing `app/page.tsx:34` `TODO(v24)` is closed: a
   contract-side `getUserMarkets(address) → uint256[]` view
