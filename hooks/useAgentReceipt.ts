@@ -52,6 +52,13 @@ export function useAgentReceipt(requestId?: string | bigint, kind: ReceiptKind =
           const body = (await response.json()) as { upstreamStatus?: number };
           upstreamStatus = typeof body?.upstreamStatus === 'number' ? body.upstreamStatus : undefined;
         } catch {
+          // v49 (L2): silent return is intentional — upstreamStatus
+          // defaults to undefined if the 502/404 body is malformed
+          // (the route handler already returned a Cache-Control header
+          // so a downstream CDN can't latch onto a 502, and the hook's
+          // outer err.status branch at L67 still routes correctly).
+          // A console.warn here would spam the dev console on every
+          // 404 polling tick.
           upstreamStatus = undefined;
         }
         const err = new Error(

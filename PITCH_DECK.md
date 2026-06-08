@@ -10,7 +10,7 @@ No human oracle. No backend resolver. Validator-executed agent receipts for ever
 
 Live app: https://autoresolve-somnia.vercel.app  
 Proof page: https://autoresolve-somnia.vercel.app/proof  
-Contract: `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` (v15 live; v19+v40+v45 contract pending deploy)
+Contract: `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` (v15 live; v19+v40+v45 contract pending deploy; v46-v48 frontend/relayer/tooling only)
 
 ---
 
@@ -78,7 +78,7 @@ With Somnia, the resolver becomes part of the on-chain settlement flow.
 
 AutoResolve is built so autonomous agents can interact with it directly.
 
-The v15 (live) / v19+v40+v45 (pending deploy) contract exposes:
+The v15 (live) / v19+v40+v45 (pending deploy; v46-v48 frontend + relayer + tooling only) contract exposes:
 
 | Function | Purpose |
 |---|---|

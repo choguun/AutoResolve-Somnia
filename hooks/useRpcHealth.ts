@@ -73,8 +73,14 @@ export function useRpcHealth() {
             : 'slow'
         );
       } catch {
-        if (cancelled) return;
-        setHealth('down');
+        // v49 (L2): silent return is intentional — `setHealth('down')`
+        // is the meaningful side effect (operators see the rose ping
+        // animation + the "RPC unavailable" tooltip per v34 L1). A
+        // console.warn here would be redundant with the visible UI
+        // state change, and the getBlockNumber call that threw is
+        // the same call whose result is supposed to drive the
+        // ok/slow/stuck classification — the warn would just echo
+        // "the call that already produced 'down' also threw."
       }
     }
 

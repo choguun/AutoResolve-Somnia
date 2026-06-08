@@ -53,6 +53,11 @@ async function fetchRecentGenerationFailures(): Promise<GenerationFailure[]> {
   try {
     head = await publicClient.getBlockNumber();
   } catch {
+    // v49 (L2): silent return is intentional — same retry-on-next-poll
+    // pattern as useMarketCreatedByRequestId. An empty list surfaces as
+    // "no recent failures" in the AgentCommandCenter recovery card
+    // (v24 M3 wired the empty-state copy), which is the correct UX
+    // for a transient RPC blip.
     return [];
   }
   const from = head > SCAN_WINDOW_BLOCKS ? head - SCAN_WINDOW_BLOCKS : 0n;
@@ -65,6 +70,11 @@ async function fetchRecentGenerationFailures(): Promise<GenerationFailure[]> {
       toBlock: head,
     });
   } catch {
+    // v49 (L2): silent return is intentional — same retry-on-next-poll
+    // pattern. A getLogs failure on a 5000-block range is usually a
+    // rate-limit response (the relayer's getLogs chunking at v11 L1
+    // is the production-side mitigation; the frontend reads a smaller
+    // window but the same RPC rate limit applies).
     return [];
   }
 

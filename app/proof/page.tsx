@@ -184,7 +184,16 @@ export default async function ProofPage() {
                   <span className="ml-1.5 text-violet-300/70">({contractVersionNote})</span>
                 ) : null}
               </span>
-              <Tooltip content="Read either label programmatically: GET /api/agent-manifest (frontend) or call agentManifest() on the live contract (contract). Both should agree once v19 ships.">
+              {/* v49 (M2): the prior copy said "Both should agree once v19
+                  ships" — stale. v45 (M1) bumped the on-chain agentManifest()
+                  string to v40, and v48 (M1) bumped the JSON manifest's
+                  `version` field to v47. The two labels will never agree
+                  after the next contract deploy because v45+v46+v47+v48 is
+                  purely frontend + relayer + tooling (no new function
+                  selectors, no on-chain string change). The gap = the
+                  count of frontend-only audit cycles since the last ABI
+                  change. v49 documents the new invariant. */}
+              <Tooltip content="Frontend label = JSON manifest's `version` field (v47, bumped by v48 M1 to reflect frontend/relayer/tooling hardening that doesn't change the on-chain ABI). Contract label = live on-chain `agentManifest()` view (v40, bumped by v45 M1 to advertise the user-position-discovery surface). The gap is the count of frontend-only audit cycles since the last ABI change.">
                 <span className="cursor-help text-zinc-500 underline-offset-2 hover:underline">why two?</span>
               </Tooltip>
             </div>

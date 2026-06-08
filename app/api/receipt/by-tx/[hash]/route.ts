@@ -102,7 +102,18 @@ export async function GET(
             log.data,
           );
           if (decoded[0]) resolutionRequestIds.push(decoded[0]);
-        } catch {
+        } catch (err) {
+          // v49 (L1): surface the malformed-log case to operators. The
+          // v38 (M0) fix moved the requestId decode from log.topics[2]
+          // to log.data via decodeAbiParameters — a malformed log
+          // (truncated, wrong shape) would throw. A bare `catch {}` left
+          // the dev-server logs empty; an operator hitting a 404
+          // ("No AutoResolve request events found in this transaction")
+          // on a real AutoResolve tx couldn't tell "the tx has no
+          // AutoResolve events" from "the events were malformed and we
+          // silently dropped them." Matches the v47 (L1) /api/topics
+          // console.warn pattern.
+          console.warn(`[api/receipt/by-tx] ResolutionRequested log decode threw for tx=${hash}:`, err);
           // Malformed log (truncated, wrong shape) — skip this entry.
         }
       } else if (topic0 === GENERATION_REQUESTED_TOPIC) {

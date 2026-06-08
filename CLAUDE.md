@@ -519,6 +519,112 @@ Quick reference for "what shipped when":
   (`resolve` → marketId, `generate` → topic). v47 L4 was a subagent
   misread (`lucide-react@^1.17.0` is the current latest, not a
   2022 release — `npm view lucide-react dist-tags` confirms).
+- **v48 frontend+relayer+docs-only** (this audit cycle) — M1
+  `lib-web/agentManifest.ts:239` had `version: 'v40'` hardcoded
+  since v25 H1. v45 (M1) bumped the on-chain `agentManifest()`
+  string v19→v40, and v34 (M1) wired the `/proof` "Contract vN"
+  pill to read from the on-chain string (5-min `unstable_cache`).
+  The two pills are now: "Contract vN" reads the live on-chain
+  string (will say v40 after the next deploy); "Frontend vN"
+  reads this hardcoded `version: 'v40'` field. v45–v47 didn't
+  change the contract ABI but they did ship user-facing behavior
+  (deploy.sh portability, AgentCommandCenter pendingInvoke Map,
+  /api/topics console.warn, DEPLOYED.md "Next deploy" callout).
+  v48 bumps v40 → v47 to reflect the shipped frontend surface.
+  M2 `scripts/relayer.mjs:1307-1310` catch log adds
+  `value=${formatEther(topUp)} STT` so operators can tell
+  "top-up needed exceeds relayer's cap" from "RPC rejecting
+  writes" without cross-referencing `getGenerationFundingStatus`
+  manually. L1 `drainTopicFeed`'s `if (fresh.length === 0) return;`
+  was silent — the common case once all topics are in
+  `submittedTopics` was no per-tick output. v48 adds a
+  conditional empty-state log (branches on topics.txt empty vs
+  all-already-submitted) so VERBOSE=1 operators see the feed
+  is being polled. Closes the silent-return pattern that hid
+  the v29 TDZ bug. L2 `components/markets/GenerateMarketForm.tsx:155-158`
+  auto-redirect useEffect invalidates `['nextMarketId']` +
+  `['markets']` so a user who hits Back from the auto-redirect
+  sees the just-created market (mirrors the v46 L1
+  CreateMarketForm onSuccess pattern for the agent-created
+  sibling path). L3 hoists `const RELAYER_VERSION = 'v48';` to
+  the top of `relayer.mjs` (before `SHANNON_RPC_URL` at L55)
+  and interpolates it in the startup log. The smoke grep
+  stays hardcoded — it's the test of record, a typo would
+  be caught by the smoke WARN. No contract, no relayer
+  behavior, no Foundry test changes. 113/113 Foundry tests
+  pass.
+- **v49 docs+ops-only** (this audit cycle) — M1
+  `README.md:22-23, 142-145` + `DEPLOYED.md:6, 22, 158-171` +
+  `PITCH_DECK.md:13, 81` all said "v40" / "v45" as the live
+  frontend version, not v47 (the JSON manifest's `version`
+  field was bumped v40 → v47 in v48 M1). The "v19+v40 contract
+  pending deploy" lists missed v45's on-chain string bump (a
+  compiled bytecode change even though it's not an ABI change).
+  v49 sweeps all 5 file/line references: live frontend → v47;
+  pending contract → v19+v40+v45; v46-v48 explicitly noted as
+  frontend/relayer/tooling-only. M2 `app/proof/page.tsx:187`
+  Tooltip said "Both should agree once v19 ships" — stale
+  after v45 M1 + v48 M1 made the on-chain label (v40) and
+  the frontend label (v47) intentionally drift. v49 rewrites
+  the Tooltip to explain the new invariant: gap = count of
+  frontend-only audit cycles since the last ABI change.
+  L1 4 server-side bare `catch {}` blocks (app/api/receipt/
+  [requestId]/route.ts:90, 120, 158 + app/api/receipt/by-tx/
+  [hash]/route.ts:105) gained `console.warn` per the v47 L1
+  /api/topics pattern — operators hitting a 502/599/malformed-
+  log can read the dev-server logs. L2 8 client-side bare
+  catches in hooks/useAgentReceipt.ts:54, useMarketCreatedByRequestId.ts:53,66,
+  useGenerationFailures.ts:55,67, useRpcHealth.ts:75 gained
+  `// v49 (L2) silent-return is intentional` comments so future
+  maintainers don't mistake them for bugs and spam the dev
+  console. The pre-existing comments on useGenerationFailures.ts:94,111
+  were left alone (they already explain the local rationale).
+  No contract, no relayer behavior, no Foundry test changes.
+  113/113 Foundry tests pass.
+- **v50 polish (1 MEDIUM + 1 LOW real, 0 misreads, 1 v48 L2
+  ship-bug catch)** — M1 `DEPLOYED.md` L158 header / L160-165 body /
+  L167 changelog title / L249-396 v22-v40 section / L398-399 test
+  count all still said v40 as the live frontend. v50 sweeps all
+  five surfaces: L158 "Latest frontend (v40) — pending contract
+  deploy (v19 + v40) on the v15 address family — completed" →
+  "Latest frontend (v48 hardening — manifest endpoint v47) — pending
+  contract deploy (v19 + v40 + v45) on the v15 address family —
+  completed"; L160-165 body text from "on v40 (the v22-v40 audit
+  sequence — 30+ audit cycles, 19 shipped versions)" to "on v47
+  (the v22-v48 audit sequence — 30+ audit cycles, 27 shipped
+  versions; v39 was skipped after v38 went straight to v40)";
+  L167 changelog title "v8-v40" → "v8-v48"; L249-396 "Frontend-only
+  v22-v40" section extended with v41 (README drift), v42 (proof-page
+  copy asymmetry), v43 (PayoutClaim myBets + readInferenceTopUp),
+  v44 (Dockerfile + .env.example + pnpm deploy), v45 (manifest
+  version + BetPanel invalidation), v46 (CreateMarketForm +
+  ResolutionPanel invalidation + PITCH_DECK drift), v47 (deploy.sh
+  portable + AgentCommandCenter pendingInvoke + /api/topics
+  console.warn + DEPLOYED.md "Next deploy" callout), v48 (manifest
+  version bump + relayer log clarity + GenerateMarketForm
+  auto-redirect invalidation + RELAYER_VERSION constant) entries;
+  L398-399 test count "112/112" → "113/113". L1
+  `lib-web/agentManifest.ts:354` `judgingAlignment.autonomousPerformance`
+  field ended at v40 ("The pre-v40 O(N) tab-switch trigger in
+  app/page.tsx and the useMyBetsMarkets filter loop are gone.") and
+  didn't mention the v45+v46+v47+v48 audit cycles. v50 appends a
+  single sentence that summarizes all four cycles with the same
+  per-version cause/effect shape the v29-v40 narration uses. v48 L2
+  ship-bug catch: `components/markets/GenerateMarketForm.tsx:5` had
+  `import { ..., useQueryClient, ... } from 'wagmi'` from the v48
+  L2 ship. `useQueryClient` is exported from `@tanstack/react-query`,
+  not `wagmi`. The wrong import was caught when `pnpm build` ran
+  for v50 (the v48 audit only ran `pnpm lint` and `pnpm
+  relayer:smoke` — `pnpm build` is what catches type errors). v50
+  fixes the import path (moves `useQueryClient` to its own
+  `import { useQueryClient } from '@tanstack/react-query';` line,
+  matching the v46 L1 CreateMarketForm pattern) and updates the
+  v48 L2 comment block to call out the v50 catch. All 6 other
+  consumers of `useQueryClient` in the codebase
+  (CreateMarketForm / PayoutClaim / ResolutionPanel / BetPanel /
+  AgentCommandCenter / now GenerateMarketForm) import it from
+  `@tanstack/react-query`. No contract, no relayer behavior, no
+  Foundry test changes. 113/113 Foundry tests pass.
 - **v40 contract+frontend-only** (this audit cycle) — L0 the
   pre-existing `app/page.tsx:34` `TODO(v24)` is closed: a
   contract-side `getUserMarkets(address) → uint256[]` view

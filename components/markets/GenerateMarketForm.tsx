@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAccount, useConfig, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
 import { readContract } from 'wagmi/actions';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   CONTRACT_ABI,
@@ -24,6 +25,17 @@ const MAX_TOPIC = 200;
 export function GenerateMarketForm() {
   const { isConnected } = useAccount();
   const config = useConfig();
+  // v48 (L2): needed to invalidate ['nextMarketId'] + ['markets'] on
+  // auto-redirect so the user doesn't see a stale home-page list on
+  // Back. Mirrors the v46 L1 CreateMarketForm pattern (useQueryClient
+  // imported + destructured + included in deps — react-hooks/exhaustive-
+  // deps would otherwise flip between "unnecessary" and "missing" on
+  // different code paths; the project's chosen shape is to include it).
+  // v50: useQueryClient moved from `wagmi` to `@tanstack/react-query` —
+  // the v48 import path was wrong (wagmi re-exports a narrower surface in
+  // this version) and was caught by `pnpm build` after the v50 manifest
+  // edit.
+  const queryClient = useQueryClient();
   const router = useRouter();
   const [topic, setTopic] = useState('');
   const [topUpNeeded, setTopUpNeeded] = useState<bigint | null>(null);
@@ -154,8 +166,21 @@ export function GenerateMarketForm() {
   // they came from (typically /proof or /), not to a stale /create form.
   useEffect(() => {
     if (newMarketId == null) return;
+    // v48 (L2): invalidate the home-page market list so a user who hits
+    // Back from the auto-redirect sees the just-created market in the
+    // 10s useMarkets refetchInterval window. Pre-v48, the redirect
+    // carried the new marketId in the URL but the underlying
+    // ['nextMarketId'] / ['markets'] queries were stale — Back landed
+    // on /, and the user saw a list of N-1 markets (the just-created
+    // one missing) until the 10s polling interval caught up. The user
+    // would re-navigate to /create and assume the creation hadn't
+    // landed. Same pattern as v46 L1 CreateMarketForm onSuccess
+    // (which fires for human-created markets) — the auto-redirect
+    // path is the agent-created sibling.
+    queryClient.invalidateQueries({ queryKey: ['nextMarketId'] });
+    queryClient.invalidateQueries({ queryKey: ['markets'] });
     router.replace(`/market/${newMarketId.toString()}`);
-  }, [newMarketId, router]);
+  }, [newMarketId, router, queryClient]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

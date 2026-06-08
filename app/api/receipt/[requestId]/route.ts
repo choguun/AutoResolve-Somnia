@@ -87,7 +87,14 @@ export async function GET(
       let res: Response;
       try {
         res = await fetchUpstream(receiptServiceUrl(requestId, 'minimal', contractAddress));
-      } catch {
+      } catch (err) {
+        // v49 (L1): surface the fetch-threw case to operators. Pre-v49,
+        // the bare `catch {}` left the dev-server logs empty for a network
+        // error on the primary host — operators hitting a 599 had to
+        // dig into the network tab to distinguish "platform DNS is
+        // down" from "platform rejected our request." Matches the v47
+        // (L1) /api/topics console.warn pattern.
+        console.warn('[api/receipt] primary host fetch threw:', err);
         primaryStatus = 599;
         continue;
       }
@@ -117,7 +124,16 @@ export async function GET(
         const data = (await primary.json()) as RawMinimalReceiptResponse;
         const receipt = normalizeMinimalReceipt(data);
         return NextResponse.json(receipt);
-      } catch {
+      } catch (err) {
+        // v49 (L1): surface the normalize-threw case to operators. The
+        // platform returned 200, but the body wasn't usable — the 502
+        // response with upstreamStatus:200 is the honest signal to the
+        // client, but operators reading the dev-server logs get no
+        // diagnostic. v34 (H2) added an AgentReceiptViewer branch on
+        // upstreamStatus === 200 ("we couldn't parse the response")
+        // for the user-facing path; this warn is the operator-facing
+        // complement.
+        console.warn(`[api/receipt] normalizeMinimalReceipt threw for requestId=${requestId}:`, err);
         primaryStatus = 200;
         // fall through to the 502 branch below
       }
@@ -155,7 +171,14 @@ export async function GET(
             _source: 'fallback',
           });
         }
-      } catch {
+      } catch (err) {
+        // v49 (L1): surface the fallback-fetch-threw case to operators.
+        // The primary host's normalize threw (or returned 5xx), so we
+        // tried the alternate host; if THAT also threw, we fall through
+        // to the 502. A bare `catch {}` left the dev-server logs empty
+        // for the case where BOTH hosts are network-unreachable —
+        // operators had to infer that from the 502 with no diagnostic.
+        console.warn(`[api/receipt] fallback host fetch threw for requestId=${requestId}:`, err);
         // Fall through to the 502 below.
       }
     }

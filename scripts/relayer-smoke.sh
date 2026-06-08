@@ -6,8 +6,11 @@
 # in the verification triangle: `pnpm lint` + `pnpm build` + `forge test`
 # never execute the relayer, so a runtime crash like the v29 TDZ bug
 # (#162) shipped silently.
-# v31-v37: the grep below tracks the v37 startup label. Update the grep
-# string on every relayer version bump.
+# v31-v48: the grep below tracks the RELAYER_VERSION constant at the top
+# of relayer.mjs (single source of truth — the relayer.mjs:169 startup
+# log interpolates the same constant, so they cannot drift). v48 (L3)
+# collapsed the two prior hardcoded strings (v37 / v45) into the
+# constant. Update the constant on every relayer version bump.
 #
 # The contract address is the zero address because we don't want to
 # actually poll a real chain — we just want the relayer to get past the
@@ -43,12 +46,12 @@ sleep 1.5
 if kill -0 "$PID" 2>/dev/null; then
   echo "[relayer-smoke] OK: relayer survived startup (pid=$PID, log at /tmp/relayer-smoke.log)"
   kill -9 "$PID" 2>/dev/null
-  # Look for the v37 startup line — the H0 fix is specifically about
-  # getting this log to print without a TDZ throw.
-  if grep -q "starting (v45)" /tmp/relayer-smoke.log; then
-    echo "[relayer-smoke] OK: v45 startup line printed"
+  # Look for the RELAYER_VERSION-prefixed startup line — the H0 fix is
+  # specifically about getting this log to print without a TDZ throw.
+  if grep -q "starting (v48)" /tmp/relayer-smoke.log; then
+    echo "[relayer-smoke] OK: v48 startup line printed"
   else
-    echo "[relayer-smoke] WARN: v45 startup line missing — relayer may be running an older version"
+    echo "[relayer-smoke] WARN: v48 startup line missing — relayer may be running an older version"
     cat /tmp/relayer-smoke.log
   fi
   exit 0

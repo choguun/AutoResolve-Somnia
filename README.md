@@ -19,8 +19,8 @@ The important part: the AI output is not just displayed in the UI. It changes on
 | Proof page | [autoresolve-somnia.vercel.app/proof](https://autoresolve-somnia.vercel.app/proof) |
 | Agent manifest | [autoresolve-somnia.vercel.app/api/agent-manifest](https://autoresolve-somnia.vercel.app/api/agent-manifest) |
 | Well-known agent JSON | [/.well-known/autoresolve-agent.json](https://autoresolve-somnia.vercel.app/.well-known/autoresolve-agent.json) |
-| Current contract (v15 live on-chain, v19+v40 contract pending deploy on the same v15 address family — the v16/v17/v18/v19/v40 source changes are fully Foundry-tested and merge-ready but have not been deployed yet; the live bytecode is the v15 build at `0x764D…2022b`; see `DEPLOYED.md` "Latest frontend (v40)" for the full v8-v40 changelog and the next deploy plan) | [0x764D…2022b](https://shannon-explorer.somnia.network/address/0x764Dc86246D242382c7619Fc715d0E3A64B2022b) |
-| Live frontend (v40 — `getUserMarkets(address)` O(K) My Bets view; v22-v39 frontend + manifest hardening; `useAgentReceipt` 404 polling cap; SSR contract version; v7 E2E proof section on `/proof`) | [autoresolve-somnia.vercel.app](https://autoresolve-somnia.vercel.app) |
+| Current contract (v15 live on-chain, v19+v40+v45 contract pending deploy on the same v15 address family — the v16/v17/v18/v19/v40 source changes are fully Foundry-tested and merge-ready; v45 also bumps the on-chain `agentManifest()` string content (no new function selectors, but the compiled bytecode changes); the live bytecode is the v15 build at `0x764D…2022b`; see `DEPLOYED.md` "Latest frontend (v48 hardening — manifest endpoint v47)" for the full v8-v48 changelog and the next deploy plan) | [0x764D…2022b](https://shannon-explorer.somnia.network/address/0x764Dc86246D242382c7619Fc715d0E3A64B2022b) |
+| Live frontend (v47 — `getUserMarkets(address)` O(K) My Bets view; v22-v48 frontend + manifest hardening; v45 on-chain string bump; v46 L1+L2 write-flow cache invalidation; v47 M1 portable deploy.sh + M2 AgentCommandCenter per-tx Map; v48 M1 manifest version bump + M2 relayer catch log value + L1 empty-state log + L2 GenerateMarketForm auto-redirect invalidation + L3 RELAYER_VERSION constant; `useAgentReceipt` 404 polling cap; SSR contract version; v7 E2E proof section on `/proof`) | [autoresolve-somnia.vercel.app](https://autoresolve-somnia.vercel.app) |
 | **v7** AI-created market → AI-resolved end-to-end (parse) | [4254170](https://agents.testnet.somnia.network/receipts/4254170) |
 | **v7** AI-created market → AI-resolved end-to-end (inference) | [4254291](https://agents.testnet.somnia.network/receipts/4254291) |
 | v2 historical proof (parse) | [2400421](https://agents.testnet.somnia.network/receipts/2400421) |
@@ -139,10 +139,10 @@ AutoResolve is the first prediction-market primitive that lets a contract ask an
 Current deployment:
 
 ```text
-AutonomousPredictionMarket (v15 live on-chain at 0x764Dc86246D242382c7619Fc715d0E3A64B2022b; v19+v40 contract pending deploy on the same address family)
+AutonomousPredictionMarket (v15 live on-chain at 0x764Dc86246D242382c7619Fc715d0E3A64B2022b; v19+v40+v45 contract pending deploy on the same address family)
 Live bytecode = v15 (the v8-v15 audit hardening sequence — parseRequestedAt rollback cleanup, parse-failure URL LRU, receipt proxy fallback host, by-tx endpoint, generation prompt template getter, SPOF doc + verbose gate).
-Pending deploy = v19 (8 v16-audit + 7 v17-audit + 8 v18-audit + 8 v19-audit gap closures — requestResolution cache clear, receipt proxy NEXT_PUBLIC_CONTRACT_ADDRESS, _describeCreateRevert DurationTooLong, handleInferenceCallback overlong+invalid+non-success clear, formatStt/formatCountdown precision safety, PayoutClaim useUserBets invalidation) + v40 (`getUserMarkets(address) → uint256[]` O(K) My Bets enumeration view — replaces the O(N) tab-switch trigger in the frontend with a single targeted read).
-See DEPLOYED.md "Latest frontend (v40)" for the full v8-v40 changelog.
+Pending deploy = v19 (8 v16-audit + 7 v17-audit + 8 v18-audit + 8 v19-audit gap closures — requestResolution cache clear, receipt proxy NEXT_PUBLIC_CONTRACT_ADDRESS, _describeCreateRevert DurationTooLong, handleInferenceCallback overlong+invalid+non-success clear, formatStt/formatCountdown precision safety, PayoutClaim useUserBets invalidation) + v40 (`getUserMarkets(address) → uint256[]` O(K) My Bets enumeration view — replaces the O(N) tab-switch trigger in the frontend with a single targeted read) + v45 (on-chain `agentManifest()` string bumped v19 → v40 to advertise the user-position-discovery surface — no new function selectors, but the compiled bytecode changes).
+See DEPLOYED.md "Latest frontend (v48 hardening)" for the full v8-v48 changelog.
 ```
 
 Core functions:

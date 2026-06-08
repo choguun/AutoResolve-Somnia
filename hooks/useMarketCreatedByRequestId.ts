@@ -51,6 +51,12 @@ export function useMarketCreatedByRequestId(
       try {
         head = await publicClient.getBlockNumber();
       } catch {
+        // v49 (L2): silent return is intentional — a transient RPC
+        // blip on getBlockNumber means the next 5s poll will retry.
+        // The hook's enabled flag flips to false once the agent
+        // receipt is a terminal failure (useMarketCreatedByRequestId
+        // consumer in GenerateMarketForm.tsx), so we don't keep
+        // retrying forever on a sustained outage.
         return null;
       }
       const from = head > SCAN_WINDOW_BLOCKS ? head - SCAN_WINDOW_BLOCKS : 0n;
@@ -64,6 +70,12 @@ export function useMarketCreatedByRequestId(
           toBlock: head,
         });
       } catch {
+        // v49 (L2): silent return is intentional — same retry-on-
+        // next-poll pattern. A getLogs failure usually means the
+        // RPC rate-limited us, the platform is overloaded, or the
+        // SCAN_WINDOW_BLOCKS range is malformed for the current
+        // head. All three cases are transient and self-heal on the
+        // next 5s tick.
         return null;
       }
       if (logs.length === 0) return null;

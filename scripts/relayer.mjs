@@ -52,6 +52,12 @@ import { privateKeyToAccount } from 'viem/accounts';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 
+// v48 (L3): hoisted to the top of the file so the startup log at L169
+// can reference it without a TDZ throw (the same lesson v30 H0 applied
+// to TOPICS_FILE / SUBMITTED_TOPICS_FILE / TOPIC_FEED_MAX_PER_TICK).
+// The smoke test at scripts/relayer-smoke.sh greps for this string
+// verbatim — update both files in sync on every relayer version bump.
+const RELAYER_VERSION = 'v48';
 const SHANNON_RPC_URL = process.env.SHANNON_RPC_URL ?? 'https://dream-rpc.somnia.network';
 const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
 const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';
@@ -166,7 +172,7 @@ const SUBMITTED_TOPICS_FILE = process.env.SUBMITTED_TOPICS_FILE
 // 1/tick = up to 2880 topic submissions/day, well above any demo cadence.
 const TOPIC_FEED_MAX_PER_TICK = Number(process.env.TOPIC_FEED_MAX_PER_TICK ?? 1);
 
-console.log('[relayer] starting (v45)');
+console.log(`[relayer] starting (${RELAYER_VERSION})`);
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
 console.log(`  contract:    ${CONTRACT}`);
 console.log(`  relayer eoa: ${account.address}`);
@@ -1205,7 +1211,22 @@ async function drainTopicFeed() {
   const topics = await readTopicFeed();
   if (topics === null) return; // read error; already logged
   const fresh = topics.filter((t) => !submittedTopics.has(t));
-  if (fresh.length === 0) return;
+  if (fresh.length === 0) {
+    // v48 (L1): log the empty case once per tick so VERBOSE=1 operators
+    // can see the feed is being polled. The pre-v48 silent return made a
+    // healthy relayer's main-loop look identical to a relayer where
+    // drainTopicFeed was never called — i.e. the v29 TDZ bug pattern.
+    // Cheap conditional log (one line per 30s tick); no rate limiting
+    // needed at TOPIC_FEED_MAX_PER_TICK cadence.
+    if (topics.length === 0) {
+      console.log(`[relayer] topic feed: ${TOPICS_FILE} empty (no topics submitted)`);
+    } else {
+      console.log(
+        `[relayer] topic feed: ${topics.length} total, ${fresh.length} new (all already submitted); skipping`,
+      );
+    }
+    return;
+  }
   console.log(
     `[relayer] topic feed: ${topics.length} total, ${fresh.length} new, ` +
       `submitting up to ${TOPIC_FEED_MAX_PER_TICK}`,
@@ -1304,8 +1325,17 @@ async function drainTopicFeed() {
         `→ ${hash} (value=${formatEther(topUp)} STT, block ${receipt.blockNumber})`,
       );
     } catch (err) {
+      // v48 (M2): include value=${formatEther(topUp)} STT so the operator
+      // can tell "top-up needed exceeds relayer's cap" (topUp > maxWei is
+      // the line above; this catch fires on a writeContract RPC error,
+      // which can also surface if the platform is rate-limiting or the
+      // relayer EOA is out of gas) from "RPC rejecting writes" without
+      // cross-referencing getGenerationFundingStatus manually. Same
+      // conditional-ellipsis pattern as the sibling success/reverted/cap
+      // logs at L1245/L1268/L1276/L1303.
       console.error(
-        `[relayer] requestMarketGeneration("${topic.slice(0, 40)}${topic.length > 40 ? '…' : ''}") failed:`,
+        `[relayer] requestMarketGeneration("${topic.slice(0, 40)}${topic.length > 40 ? '…' : ''}") ` +
+        `failed (value=${formatEther(topUp)} STT):`,
         err.shortMessage ?? err.message,
       );
       // Pre-flight RPC blip (readInferenceTopUp): topic NOT in Set — retried

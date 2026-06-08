@@ -3,7 +3,7 @@
 | Contract | Address | Explorer |
 |---|---|---|
 | **AutonomousPredictionMarket (v15 — current, 1 v14-audit HIGH + 6 MEDIUM + 1 LOW closed: parseRequestedAt rollback cleanup in all 3 handleInferenceCallback branches, relayer parse-failure URL LRU + exponential backoff, recovery panel invalidates market queries, receipt proxy fallback host, receipt by-tx endpoint, generation prompt template getter, SPOF doc + verbose gate)** | `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` | [View](https://shannon-explorer.somnia.network/address/0x764Dc86246D242382c7619Fc715d0E3A64B2022b) |
-| **Frontend (v40 — pending contract deploy (v19 + v40) on the v15 address family: 1 HIGH + 7 new tests for the v40 `getUserMarkets` view; 8 v16-v19 audit cycles (requestResolution cache clear, receipt proxy `NEXT_PUBLIC_CONTRACT_ADDRESS`, _describeCreateRevert `DurationTooLong`, handleInferenceCallback overlong+invalid+non-success clear, formatStt/formatCountdown precision safety, PayoutClaim useUserBets invalidation); 19 frontend v22-v40 hardening cycles (relayer drainTopicFeed + 30+ log.topics[N] decoders, useAgentReceipt 404 polling cap, SSR contract version, My Bets tab claimable chip, etc.))** | n/a (frontend) | [Live app](https://autoresolve-somnia.vercel.app) |
+| **Frontend (v47 — pending contract deploy (v19 + v40 + v45) on the v15 address family: 1 HIGH + 7 new tests for the v40 `getUserMarkets` view; 8 v16-v19 audit cycles (requestResolution cache clear, receipt proxy `NEXT_PUBLIC_CONTRACT_ADDRESS`, _describeCreateRevert `DurationTooLong`, handleInferenceCallback overlong+invalid+non-success clear, formatStt/formatCountdown precision safety, PayoutClaim useUserBets invalidation); v45 on-chain `agentManifest()` string bump v19 → v40 (no new function selectors); 26 frontend v22-v48 hardening cycles (relayer drainTopicFeed + 30+ log.topics[N] decoders, useAgentReceipt 404 polling cap, SSR contract version, My Bets tab claimable chip, BetPanel myBets invalidation, CreateMarketForm + ResolutionPanel + GenerateMarketForm auto-redirect invalidation, deploy.sh portable sed, AgentCommandCenter pendingInvoke Map, /api/topics console.warn, DEPLOYED.md "Next deploy" callout, manifest version v40 → v47, relayer RELAYER_VERSION constant, etc.))** | n/a (frontend) | [Live app](https://autoresolve-somnia.vercel.app) |
 | AutonomousPredictionMarket (v14 — 9 v13-audit gaps closed: NO-outcome parser, AgentMarketContext timestamps, DuplicateToolCall advisory, relayer reset attempt cap, receipt-kind branch, status passthrough, stuck-gen doc comment, manifest v14 bump, exact YES/NO manifest correction) | `0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9` | [View](https://shannon-explorer.somnia.network/address/0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9) |
 | AutonomousPredictionMarket (v13 — 5 v12-audit gaps closed: stuck-generation recovery, agent output length cap, relayer GenerationFailed visibility + recovery, non-reverting callbacks on over-long output, `lastGenerationRequestId` high-water mark) | `0x37822751E5ab0688344135797ee8FFCFa76443fB` | [View](https://shannon-explorer.somnia.network/address/0x37822751E5ab0688344135797ee8FFCFa76443fB) |
 | AutonomousPredictionMarket (v12 — 3 v11-audit gaps closed: `MarketReset.stuckRequestId`, `useAgentReceipt` recovery flag reset, 502 cache removed) | `0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5` | [View](https://shannon-explorer.somnia.network/address/0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5) |
@@ -19,7 +19,7 @@
 | AutonomousPredictionMarket (v2) | `0x1631303A748076648a0AbbE077a657Ad7812834F` | [View](https://shannon-explorer.somnia.network/address/0x1631303A748076648a0AbbE077a657Ad7812834F) |
 | AgentSmokeTest | `0x6e1dfB44AEc5c52dE3b12753726ea57207862F65` | [View](https://shannon-explorer.somnia.network/address/0x6e1dfB44AEc5c52dE3b12753726ea57207862F65) |
 
-> **Next deploy:** v19 + v40 + v45 + v46 + v47 (Foundry-tested, frontend-shipped, pending a single `forge create` onto the v15 address family). v40 adds the `getUserMarkets(address) → uint256[]` view; v45 bumps the on-chain `agentManifest()` string to v40 + the relayer smoke/ellipsis/comment-typo polish; v46 closes the two remaining write-flow cache-invalidation gaps; v47 fixes `deploy.sh` portability + the AgentCommandCenter per-tx (id→hash) pattern. Total ABI change since v15: zero new function selectors in v45/v46/v47 (string content + relayer + frontend + tooling only), v40's `getUserMarkets` view, and v19's `getGenerationPromptTemplate` view + the 3 generation-pipeline functions.
+> **Next deploy:** v19 + v40 + v45 (Foundry-tested, frontend-shipped, pending a single `forge create` onto the v15 address family). v40 adds the `getUserMarkets(address) → uint256[]` view; v45 bumps the on-chain `agentManifest()` string to v40 + the relayer smoke/ellipsis/comment-typo polish. v46/v47/v48 are frontend + relayer + tooling only (no new function selectors, no on-chain string change). Total ABI change since v15: zero new function selectors in v45/v46/v47/v48 (string content + relayer + frontend + tooling only), v40's `getUserMarkets` view, and v19's `getGenerationPromptTemplate` view + the 3 generation-pipeline functions.
 
 ## Latest deployment (v15 — 1 HIGH + 6 MEDIUM + 1 LOW audit gaps closed) — completed
 
@@ -155,16 +155,20 @@ coverage — the repo has no JS test framework for the relayer (single-file
 `node` script) and no Next.js test framework. They are defended by the
 code change itself, the matching hook changes, and manual review.
 
-## Latest frontend (v40) — pending contract deploy (v19 + v40) on the v15 address family — completed
+## Latest frontend (v48 hardening — manifest endpoint v47) — pending contract deploy (v19 + v40 + v45) on the v15 address family — completed
 
-The frontend at `autoresolve-somnia.vercel.app` is on v40 (the v22-v40 audit
-sequence — 30+ audit cycles, 19 shipped versions). The contract on-chain is
-still v15 (the v15 audit at the top of this file). v16, v17, v18, v19, and
-v40 contract changes are all Foundry-tested and merge-ready but have not
-been deployed to a new address; the next contract deploy will land them on
-top of the live v15 address family in a single `forge create`.
+The frontend at `autoresolve-somnia.vercel.app` is on v47 (the v22-v48 audit
+sequence — 30+ audit cycles, 27 shipped versions; v39 was skipped after v38
+went straight to v40). The contract on-chain is still v15 (the v15 audit at
+the top of this file). v16, v17, v18, v19, v40, and v45 contract changes
+are all Foundry-tested and merge-ready but have not been deployed to a new
+address; the next contract deploy will land them on top of the live v15
+address family in a single `forge create`. v45 only changes the compiled
+bytecode (the on-chain `agentManifest()` string content was bumped v19 → v40
+to advertise the user-position-discovery surface); v46/v47/v48 are frontend
++ relayer + tooling only.
 
-This section is the v8-v40 changelog for the next deploy. The bytecode diff
+This section is the v8-v48 changelog for the next deploy. The bytecode diff
 vs the live v15 is additive (new storage slots + new public functions + new
 events; the existing functions and the resolution/generation pipeline are
 unchanged). After the next deploy, this section becomes the new "Latest
@@ -323,9 +327,86 @@ deployment" and the v15 section above moves to "Previous deployment".
 - v40 — `getUserMarkets(address) → uint256[]` (above). Closes the
   pre-existing `app/page.tsx:34` `TODO(v24)` and the O(N) tab-switch
   trigger in `useMyBetsMarkets`.
+- v41 — README + DEPLOYED version-label drift cleanup (v18/v15/v40
+  references collapsed to "v15 live, v19+v40 pending deploy on the v15
+  address family"); surfaces `pnpm relayer:smoke` in the public Testing
+  section and v40 `getUserMarkets(address)` in Core functions + Step 6
+  cast calls; surfaces relayer `drainTopicFeed` + `scripts/auto-generate.sh`
+  in Demo Flow. No contract/relayer/frontend code changes.
+- v42 — proof-page copy asymmetry: the 4 `criteria` rows in
+  `app/proof/page.tsx` now mention BOTH creation and resolution (the
+  pre-v42 rows were resolution-only, silently dropping the headline
+  capability); "Machine-Readable Agent Interface" section adds the 3
+  creation methods (`getGenerationFundingStatus`, `requestMarketGeneration`,
+  `scanAgentCreatedMarkets`) alongside the 3 resolution methods. No
+  contract/relayer code changes.
+- v43 — `PayoutClaim` now invalidates BOTH the per-market `userBets`
+  query AND the `myBets` My Bets tab query (v19 H2 missed the second
+  key); relayer `readInferenceTopUp` collapses the two-call local
+  mirror (`getInferenceDeposit` + `getBalance` + local arithmetic) into
+  a single `getGenerationFundingStatus` read returning `status[2]`. No
+  contract change, no main-loop behavior change.
+- v44 — `.env.example` adds a "# Relayer (optional — ...)" block listing
+  the 9 env vars `scripts/relayer.mjs` reads (all commented out with
+  sensible defaults); `package.json:14` `pnpm deploy` now runs
+  `bash scripts/deploy.sh` (was the stale v10 `forge script` that
+  prefunded only 0.5 STT and was missing .env write + pnpm export-abi
+  + verify) + stale `script/Deploy.s.sol` deleted; new `Dockerfile`
+  (Node 20 Alpine + corepack + pnpm install --prod --frozen-lockfile +
+  /app/state volume) + new README "Relayer hosting" subsection.
+- v45 — on-chain `agentManifest()` string bumped v19 → v40 (advertises
+  the user-position-discovery surface; no new function selectors, but
+  the compiled bytecode changes); `BetPanel` adds the same
+  `queryClient.invalidateQueries` pattern (myBets / userBets / market)
+  that v19 H2 + v43 L1 applied to PayoutClaim; relayer catch log
+  unconditional `…` → conditional `${topic.length > 40 ? '…' : ''}`
+  (matches v36 M0 sibling pattern); relayer startup banner v37 → v45 +
+  smoke grep; `scripts/deploy.sh` prefund comment typo "~6 cycles" →
+  "~3" (real math: 0.62 STT per cycle, 2 STT prefund ≈ 3.2 cycles);
+  Dockerfile dead duplicate `COPY scripts/relayer.mjs` deleted; proof
+  page regex `v(\d+)` → `v(\d+(?:\.\d+)?)` so future patch bumps like
+  v40.1 don't fall through to the "detecting…" placeholder.
+- v46 — `CreateMarketForm` adds `queryClient.invalidateQueries(['nextMarketId'])`
+  + `['markets']` on success (mirrors v45 M2 BetPanel + v19 H2 / v43 L1
+  PayoutClaim pattern) — pre-v46 the just-created market didn't appear
+  on `/` for the full 10s `useMarkets` refetchInterval; `ResolutionPanel`
+  adds `queryClient.invalidateQueries(['market', marketId.toString()])`
+  on success (same v45 M2 pattern) — pre-v46 a confused user could
+  double-click "Request Resolution" in the 5s stale window and burn a
+  second STT top-up that reverts `MarketNotOpen`; `PITCH_DECK.md` drift
+  cleanup: v2 contract address → v15 (both occurrences), v3 contract
+  reference → v15/v19+v40+v45, test count 19 → 113.
+- v47 — `scripts/deploy.sh:64` BSD-sed `sed -i ''` rewritten portable
+  (`mktemp + sed + mv`) — would have broken a Linux judge container
+  run silently (deploys but `.env` not updated, frontend binds to
+  placeholder address); `AgentCommandCenter` adds per-tx `(id → hash)`
+  Map for `requestResolution` + `requestMarketGeneration` (sibling
+  `pendingInvoke` Map mirrors the v33 H3 `pendingReset` pattern) — pre-
+  v47 a judge double-clicking "Invoke Resolver" on market #1 then #2
+  saw the same generic toast and burned a wasted second STT top-up that
+  reverted `MarketNotOpen`; `app/api/topics/route.ts` bare `catch {}`
+  adds `console.warn` so operators can tell "no topics yet" from "file
+  missing"; `DEPLOYED.md` adds "Next deploy" blockquote callout below
+  the address table for new maintainers.
+- v48 — `lib-web/agentManifest.ts` `version: 'v40'` → `'v47'` (closes
+  the on-chain "Contract vN" pill / frontend "Frontend vN" pill drift
+  from v45–v47 — the contract pill reads the live on-chain string, the
+  frontend pill reads this hardcoded field); `scripts/relayer.mjs`
+  `drainTopicFeed` catch log adds `value=${formatEther(topUp)} STT` so
+  operators can tell "top-up needed exceeds relayer's cap" from "RPC
+  rejecting writes" without cross-referencing `getGenerationFundingStatus`
+  manually; `drainTopicFeed` empty-state log so VERBOSE=1 operators
+  see the feed is being polled (closes the silent-return pattern that
+  hid the v29 TDZ bug); `GenerateMarketForm` auto-redirect useEffect
+  invalidates `['nextMarketId']` + `['markets']` so a user who hits
+  Back from the auto-redirect sees the just-created market (mirrors
+  the v46 L1 CreateMarketForm onSuccess pattern for the agent-created
+  sibling path); hoists `const RELAYER_VERSION = 'v48'` to top of
+  `relayer.mjs` so the smoke grep + startup log share a single source
+  of truth.
 
-**Test count: 112/112 Foundry tests pass** (105 prior + 7 new for
-`getUserMarkets`).
+**Test count: 113/113 Foundry tests pass** (105 prior + 7 new for
+v40 `getUserMarkets` + 1 new for v45 `testAgentManifestAdvertisesV40`).
 
 **The next deploy is `./scripts/deploy.sh`** — single `forge create`
 against Shannon, prefund 2 STT, seed 2 markets, update
