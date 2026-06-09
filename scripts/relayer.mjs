@@ -736,6 +736,14 @@ async function drainFailureEvents(alreadySubmitted) {
 // to Open BEFORE the former can be emitted under v16).
 let lastScannedInferenceBlock = await publicClient.getBlockNumber();
 
+// v56 (L0): paginated cursor for scanStuckGenerationRequests. The contract
+// walks [1, lastGenerationRequestId] in 50-id steps, so on a long-lived
+// chain with ~5.85M generation requests, a full walk is ~117k readContract
+// calls. We cap each tick to 1000 ids and resume from the saved cursor
+// on the next tick — same shape as the existing event-drain cursor
+// pattern (`lastScannedBlock`, `lastScannedInferenceBlock`).
+let drainGenerationRequestsScanCursor = 0n;
+
 async function drainInferenceUnderfundedEvents(alreadySubmitted) {
   const head = await publicClient.getBlockNumber();
   if (head < lastScannedInferenceBlock) {
@@ -1063,10 +1071,12 @@ async function scanStuckGenerationRequests(alreadySubmitted) {
   // fired on a healthy chain because the contract returns
   // `nextCursor = cursor + limit` on every call. On the live v45
   // contract lastGenerationRequestId is ~5.85M, so the relayer
-  // made ~117,000 sequential readContract calls before the
-  // healthcheck probe timed out. Mirror the scanStuckMarkets
-  // pattern: read the high-water mark, terminate when cursor
-  // passes it.
+  // would otherwise make ~117,000 sequential readContract calls per
+  // tick (~3 hours at 100ms/call). Hard-cap the per-tick scan budget
+  // to SCAN_BUDGET ids and resume from the saved cursor on the next
+  // tick (see `drainGenerationRequestsScanCursor` below). The cap
+  // guarantees each tick finishes in seconds, not hours.
+  const SCAN_BUDGET = 1000;
   const lastId = await publicClient.readContract({
     address: CONTRACT,
     abi: ABI,
@@ -1074,10 +1084,14 @@ async function scanStuckGenerationRequests(alreadySubmitted) {
   });
   if (lastId === 0n) return;
 
+  const startCursor = drainGenerationRequestsScanCursor > 0n
+    ? drainGenerationRequestsScanCursor
+    : 1n;
   const allIds = [];
-  let cursor = 1n;
+  let cursor = startCursor;
   const limit = 50n;
-  while (cursor <= lastId) {
+  let scanned = 0n;
+  while (cursor <= lastId && scanned < SCAN_BUDGET) {
     const [ids, nextCursor] = await publicClient.readContract({
       address: CONTRACT,
       abi: ABI,
@@ -1087,7 +1101,11 @@ async function scanStuckGenerationRequests(alreadySubmitted) {
     allIds.push(...ids);
     if (nextCursor <= cursor) break;
     cursor = nextCursor;
+    scanned += limit;
   }
+  // Persist the cursor for the next tick. If we finished the walk
+  // (cursor > lastId), reset to 0n so the next tick starts fresh.
+  drainGenerationRequestsScanCursor = cursor > lastId ? 0n : cursor;
 
   if (allIds.length > 0) {
     console.log(`[relayer] found ${allIds.length} stuck generation request(s); force-resetting each`);
