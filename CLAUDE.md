@@ -18,7 +18,7 @@ hard constraints that are easy to break.
   `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` is the **v15** address (also
   represents v16/v17/v18 — all four contracts share the same v15 address
   family because none have been deployed; only the v19 contract is
-  build-ready). v19 is fully tested (104/104 Foundry) and ready for
+  build-ready). v19 is fully tested (113/113 Foundry — 104 pre-v40 + 7 v40 `getUserMarkets` + 1 v45 `agentManifest()`, all test names listed in `test/AutonomousPredictionMarket.t.sol`) and ready for
   `./scripts/deploy.sh` to ship a fresh contract address on Somnia Shannon
   Testnet (chain id `50312`, RPC `https://dream-rpc.somnia.network`).
 - **Live app (v40)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
@@ -680,6 +680,28 @@ Quick reference for "what shipped when":
   thorough — vN surface, bare-catch pattern, query
   invalidation, on-chain string, TODO scan all came back
   clean). 113/113 Foundry tests pass.
+- **v53 docs-only** (this audit cycle) — L1
+  `CLAUDE.md:21` (Overview "v19 is fully tested (104/104
+  Foundry)") + `CLAUDE.md:984` (Test / lint / build
+  section "# 104 tests in
+  test/AutonomousPredictionMarket.t.sol") both still
+  cited the pre-v40 count; actual `function test` count
+  is 113 (104 pre-v40 + 7 v40 `getUserMarkets` + 1 v45
+  `agentManifest()`, matches the 113/113 figure cited in
+  v45-v51 changelog entries). Both lines updated: L21
+  Overview now says "v19 is fully tested (113/113
+  Foundry — 104 pre-v40 + 7 v40 `getUserMarkets` + 1 v45
+  `agentManifest()`, all test names listed in
+  `test/AutonomousPredictionMarket.t.sol`)"; L984 Test /
+  lint / build section now says "# 113 tests in
+  test/AutonomousPredictionMarket.t.sol". v52 was
+  memory-only and shipped no new behavior, so the v53
+  audit's code-surface scan returned 0 product findings
+  (vN surface, bare-catch attribution, query invalidation,
+  proof page Tooltip, public docs, on-chain string, TODO
+  scan, .env.example relayer block all came back clean).
+  No contract, no relayer behavior, no Foundry test
+  changes. 113/113 Foundry tests pass.
 - **v40 contract+frontend-only** (this audit cycle) — L0 the
   pre-existing `app/page.tsx:34` `TODO(v24)` is closed: a
   contract-side `getUserMarkets(address) → uint256[]` view
@@ -981,7 +1003,7 @@ Notes:
 ```bash
 # Solidity (Foundry)
 forge build                       # compile
-forge test -vv                    # 104 tests in test/AutonomousPredictionMarket.t.sol
+forge test -vv                    # 113 tests in test/AutonomousPredictionMarket.t.sol
 
 # Frontend
 pnpm lint                         # eslint --max-warnings=0
