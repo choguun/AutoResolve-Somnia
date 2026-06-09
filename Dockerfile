@@ -43,10 +43,9 @@ RUN pnpm install --prod --frozen-lockfile
 COPY lib-web/abi.json ./lib-web/abi.json
 COPY scripts/ ./scripts/
 
-# State directory for parse-failure LRU + submitted-topics Set.
-# Persist with a volume mount; otherwise a container restart wipes both.
+# Railway rejects `VOLUME ["/app/state"]` ("docker VOLUME not supported, use
+# Railway Volumes") — the volume is attached via the dashboard/CLI instead.
 RUN mkdir -p /app/state
-VOLUME ["/app/state"]
 
 # Healthcheck: assert the relayer process is still running. The relayer
 # logs `[relayer] loop error: ...` on every main-loop tick that throws
