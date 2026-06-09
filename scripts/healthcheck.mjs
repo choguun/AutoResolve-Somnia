@@ -38,6 +38,11 @@ if (child.pid != null) {
 
 child.on('exit', (code, signal) => {
   console.error(`[healthcheck] relayer exited code=${code} signal=${signal}`);
+  try {
+    server.close();
+  } catch {
+    // already closed
+  }
 });
 
 function isAlive() {
@@ -51,18 +56,33 @@ function isAlive() {
   }
 }
 
+// Reply to GET /health with 200 if relayer is alive, 503 otherwise.
+// Accept both GET and HEAD — Railway's HTTP probe uses GET by
+// default but the service-level health_check_path setting can be
+// configured to use HEAD; we don't know which one. We always set
+// Content-Length explicitly so the HTTP response parser doesn't
+// block waiting for connection close to determine body length.
 const server = createServer((req, res) => {
-  if (req.method === 'GET' && (req.url === '/health' || req.url === '/')) {
+  if ((req.method === 'GET' || req.method === 'HEAD') && (req.url === '/health' || req.url === '/')) {
     if (isAlive()) {
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.writeHead(200, {
+        'Content-Type': 'text/plain',
+        'Content-Length': 3,
+      });
       res.end('OK\n');
     } else {
-      res.writeHead(503, { 'Content-Type': 'text/plain' });
+      res.writeHead(503, {
+        'Content-Type': 'text/plain',
+        'Content-Length': 18,
+      });
       res.end('relayer not alive\n');
     }
     return;
   }
-  res.writeHead(404, { 'Content-Type': 'text/plain' });
+  res.writeHead(404, {
+    'Content-Type': 'text/plain',
+    'Content-Length': 10,
+  });
   res.end('not found\n');
 });
 

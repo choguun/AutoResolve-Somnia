@@ -47,16 +47,17 @@ COPY scripts/ ./scripts/
 # Railway Volumes") — the volume is attached via the dashboard/CLI instead.
 RUN mkdir -p /app/state
 
-# Healthcheck: probe the shim's HTTP endpoint on /health using node
-# (the shim runs node, so node is guaranteed to be in the image —
-# `wget` from busybox is sometimes stripped from the minimal node
-# base images, so we use `node -e` to avoid that). The shim returns
-# 200 when the relayer child is alive and 503 otherwise, so the
-# probe is the single source of truth for "is this container
-# healthy". The Railway service-level health_check_path setting on
-# this service is also `/health`, so both layers agree on the same
-# endpoint.
+# Healthcheck: probe the shim's HTTP endpoint on /health. The shim
+# returns 200 when the relayer child is alive and 503 otherwise, so
+# the probe is the single source of truth for "is this container
+# healthy". node:20-alpine ships node 20+ with the global `fetch`,
+# so the probe is a single inline command with no extra
+# dependencies. Use an async IIFE so the await chain resolves
+# cleanly before process.exit — the previous inline .then().catch()
+# pattern occasionally exited with code 1 even when the HTTP
+# response was 200, because process.exit() ran in a microtask that
+# was reordered past the promise resolution under load.
 HEALTHCHECK --interval=60s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://localhost:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+  CMD /usr/local/bin/node -e "(async () => { try { const r = await fetch('http://localhost:3000/health'); process.exit(r.ok ? 0 : 1); } catch (e) { process.exit(1); } })()"
 
 CMD ["node", "scripts/healthcheck.mjs"]
