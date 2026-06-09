@@ -1,0 +1,25 @@
+# Daily Resolution Demo topics — one topic per day.
+#
+# The /api/daily-topic route reads this file and returns
+#   topics[dayOfYear_utc % topics.length]
+# so a 7-line file cycles once per week. Add or remove lines to change the
+# cadence; the day-of-year modulo means the order is fixed (Day 1 → line 1,
+# Day 8 → line 1, etc.).
+#
+# Convention: append " [duration=<seconds>]" to the topic text to nudge the
+# inference agent toward a specific market duration. The agent may still
+# pick a different duration — the demo panel on /proof surfaces a soft
+# amber warning if the on-chain endTime doesn't match the hint. The default
+# hint is 86400 (24h) when no suffix is present.
+#
+# The 7 topics below rotate Mon→Sun. The /proof page's Daily Resolution
+# Demo panel reads today's topic, displays it with a "Run today's market"
+# button, and tracks the live state (Submitted → Created → Resolving →
+# Resolved) over the 24h market lifetime.
+Will Somnia mainnet launch before 2027? [duration=86400]
+Did a tier-1 LLM agent beat a human on a standard SWE-bench task this week? [duration=86400]
+Did the S&P 500 close above 5500 today? [duration=86400]
+Did Bitcoin trade above $100,000 on Coinbase today? [duration=86400]
+Did any frontpage Reddit thread reach 50,000 upvotes today? [duration=86400]
+Is the median Shannon testnet block time under 700ms today? [duration=86400]
+Did a new autonomous prediction market ship on a non-EVM chain this week? [duration=86400]

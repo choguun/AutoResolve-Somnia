@@ -257,9 +257,14 @@ export function getAutoResolveAgentManifest() {
     // change the field value — the post-deploy public-doc sweep
     // (README/DEPLOYED/PITCH_DECK/CLAUDE.md, /proof Tooltip, this
     // comment) is purely a documentation refresh that doesn't touch
-    // the surface the field describes. The shipped invariant is
-    // Contract (on-chain agentManifest) = v40, Frontend (this field) = v50.
-    version: 'v50',
+    // the surface the field describes. v56 (H0) bumps the field
+    // v50 -> v56 to advertise the new Daily Resolution Demo section
+    // on /proof (one AI-created market per day, 24h duration, fully
+    // autonomous resolution) + the new /api/daily-topic endpoint +
+    // the new scripts/daily-topics.txt operator-curated feed. The
+    // shipped invariant is Contract (on-chain agentManifest) = v40,
+    // Frontend (this field) = v56.
+    version: 'v56',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
@@ -353,6 +358,25 @@ export function getAutoResolveAgentManifest() {
           'Prefer a SHORT duration in [300, 600] seconds so the market can resolve quickly.',
       },
       creatorSentinel: '0x00000000000000000000000000000000000000A1',
+      // v56 (H0): the daily-cadence autonomous-creation pattern. The
+      // /proof page renders a DailyResolutionDemo section that calls
+      // requestMarketGeneration with a curated topic from
+      // scripts/daily-topics.txt (rotated by dayOfYear % topics.length)
+      // and a [duration=N] suffix that hints the agent at a specific
+      // endTime. The /api/daily-topic endpoint is the topic-feed; the
+      // panel tracks Submitted → Created → Resolving → Resolved over
+      // the 24h market lifetime. This is documentation only — no
+      // contract change, no relayer change.
+      dailyResolution: {
+        description:
+          'Operator-curated topic rotation: one autonomous market per day, 24h duration by default. ' +
+          'Topics sourced from scripts/daily-topics.txt (one line per day, [duration=N] suffix supported); ' +
+          "the /api/daily-topic endpoint returns today's topic as topics[dayOfYear_utc % topics.length].",
+        topicFeed: '/api/daily-topic',
+        topicFile: 'scripts/daily-topics.txt',
+        durationHintConvention: '[duration=<seconds>] suffix in topic text',
+        demo: 'DailyResolutionDemo section on /proof',
+      },
     },
     judgingAlignment: {
       functionality:

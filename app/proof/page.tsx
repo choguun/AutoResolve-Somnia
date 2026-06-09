@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { AgentCommandCenter } from '@/components/proof/AgentCommandCenter';
+import { DailyResolutionDemo } from '@/components/proof/DailyResolutionDemo';
 import { CONTRACT_ADDRESS } from '@/lib-web/contract';
 import { getAutoResolveAgentManifest } from '@/lib-web/agentManifest';
 import { getCachedAgentManifest } from '@/lib-web/agentManifestServer';
@@ -184,20 +185,17 @@ export default async function ProofPage() {
                   <span className="ml-1.5 text-violet-300/70">({contractVersionNote})</span>
                 ) : null}
               </span>
-              {/* v55 (M1): post-deploy rewrite. The v49 (M2) → v51 (M1) copy
-                  described a "pending deploy" state ("Both should agree once
-                  v19 ships", "gap = count of frontend-only audit cycles
-                  since the last ABI change"). After the 2026-06-09
-                  v19+v40+v45 deploy, both labels are live: Contract = v40
-                  (read from on-chain `agentManifest()` at SSR), Frontend
-                  = v50 (read from the JSON manifest's `version` field).
-                  The gap of 10 (v40 → v50) is now a permanent artifact
-                  of the shipped v22-v51 frontend/relayer/tooling surface
-                  that landed without an ABI change — v40 was the last
-                  bytecode bump and v45 only changed the on-chain string
-                  content. The Tooltip below describes the *shipped*
-                  invariant, not the pre-deploy plan. */}
-              <Tooltip content="Frontend label = JSON manifest's `version` field (v50, the cumulative shipped v22-v51 frontend + relayer + tooling surface). Contract label = live on-chain `agentManifest()` view (v40, the last ABI change: `getUserMarkets(address)` view + the v45 on-chain string bump). The gap of 10 is the count of shipped frontend-only audit cycles since the last ABI change — v22-v39 + v41-v51 all touched the frontend, relayer, or tooling without changing the contract bytecode or on-chain string.">
+              {/* v56 (H0): the v55 (M1) post-deploy copy is now stale for
+                  the Frontend side — v56 adds the Daily Resolution Demo
+                  section. Frontend label = v56 (cumulative shipped
+                  v22-v56 surface including the new Daily Resolution
+                  Demo), Contract label = v40 (the last ABI change:
+                  `getUserMarkets(address)` view + the v45 on-chain
+                  string bump). The gap of 16 is the count of shipped
+                  frontend-only audit cycles since the last ABI change
+                  (v22-v39 + v41-v56). The shipped invariant hasn't
+                  changed — only the cumulative gap counter has. */}
+              <Tooltip content="Frontend label = JSON manifest's `version` field (v56, the cumulative shipped v22-v56 frontend + relayer + tooling surface — v56 adds the Daily Resolution Demo section that demos the daily-cadence autonomous-creation pattern). Contract label = live on-chain `agentManifest()` view (v40, the last ABI change: `getUserMarkets(address)` view + the v45 on-chain string bump). The gap of 16 is the count of shipped frontend-only audit cycles since the last ABI change — v22-v39 + v41-v56 all touched the frontend, relayer, or tooling without changing the contract bytecode or on-chain string.">
                 <span className="cursor-help text-zinc-500 underline-offset-2 hover:underline">why two?</span>
               </Tooltip>
             </div>
@@ -322,6 +320,8 @@ export default async function ProofPage() {
           />
         </div>
       </section>
+
+      <DailyResolutionDemo />
 
       <section className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 to-violet-500/5 p-6 backdrop-blur-md shadow-[0_0_30px_rgba(6,182,212,0.1)]">
         <h2 className="text-2xl font-bold text-cyan-100">Machine-Readable Agent Interface</h2>
