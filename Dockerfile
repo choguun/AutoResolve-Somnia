@@ -47,16 +47,14 @@ COPY scripts/ ./scripts/
 # Railway Volumes") — the volume is attached via the dashboard/CLI instead.
 RUN mkdir -p /app/state
 
-# Healthcheck: the service-level `health_check_path` on Railway is set to
-# GET /health on port 3000, which overrides the Dockerfile's HEALTHCHECK
-# directive with an HTTP probe. pgrep doesn't speak HTTP, so the probe
-# times out and the container is marked unhealthy after 5 minutes of
-# retries — even though the relayer process is alive and running. The
-# fix: scripts/healthcheck.mjs is a tiny Node HTTP shim that listens on
-# 0.0.0.0:3000, returns 200 OK when the relayer child process is alive,
-# 503 otherwise. The pgrep-based HEALTHCHECK stays as a defense-in-depth
-# fallback (ignored by Railway but respected by a plain `docker run`).
+# Healthcheck: probe the shim's HTTP endpoint on /health. The shim
+# returns 200 when the relayer child is alive and 503 otherwise, so
+# the probe is the single source of truth for "is this container
+# healthy". node:20-alpine ships busybox's wget; the --spider flag
+# does a HEAD-style probe without writing the response body. The
+# Railway service-level health_check_path setting on this service
+# is also `/health`, so both layers agree on the same endpoint.
 HEALTHCHECK --interval=60s --timeout=5s --start-period=10s --retries=3 \
-  CMD pgrep -f "node scripts/relayer.mjs" >/dev/null || exit 1
+  CMD wget -q --spider http://localhost:3000/health || exit 1
 
 CMD ["node", "scripts/healthcheck.mjs"]
