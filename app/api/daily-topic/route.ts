@@ -25,9 +25,10 @@ function parseTopicLine(line: string): DailyTopic {
 }
 
 // Day-of-year in UTC so the daily-topics cycle is identical across timezones.
-// Matches the relayer's "one topic per tick" cadence; the relayer's 30s
-// polling against a 5-min cache means the day-of-year index can shift at
-// most 4 times in 24h (00:00 UTC, plus the next 3 revalidations).
+// The day-of-year index changes exactly once per day, at 00:00 UTC. The
+// 5-min Cache-Control on the response means a stale read is at most 5 min
+// long — the panel's `refetchInterval: 60_000` on /proof picks up the
+// rollover within the next 60s without a hard reload.
 function dayOfYear(): number {
   const now = new Date();
   const start = Date.UTC(now.getUTCFullYear(), 0, 0);

@@ -38,7 +38,8 @@ import {
   showSubmittedTransactionToast,
 } from '@/lib-web/transactionToast';
 
-const STORAGE_KEY = 'autoresolve.dailyMarketId';
+const STORAGE_KEY_MARKET = 'autoresolve.dailyMarketId';
+const STORAGE_KEY_REQUEST = 'autoresolve.dailyRequestId';
 const MAX_TOPIC_FOR_AGENT = 200;
 
 type DailyTopicResponse = {
@@ -64,21 +65,21 @@ function formatDurationSeconds(seconds: number): string {
   return `${seconds}s`;
 }
 
-function safeSetLocalStorage(value: string | null): boolean {
+function safeSetLocalStorage(key: string, value: string | null): boolean {
   if (typeof window === 'undefined') return false;
   try {
-    if (value === null) window.localStorage.removeItem(STORAGE_KEY);
-    else window.localStorage.setItem(STORAGE_KEY, value);
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
     return true;
   } catch {
     return false;
   }
 }
 
-function safeGetLocalStorage(): bigint | null {
+function safeGetLocalStorage(key: string): bigint | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(key);
     if (!raw) return null;
     const n = BigInt(raw);
     return n > 0n ? n : null;
@@ -104,23 +105,40 @@ export function DailyResolutionDemo() {
   const [topUpNeeded, setTopUpNeeded] = useState<bigint | null>(null);
   const [fundingError, setFundingError] = useState<string | null>(null);
 
-  // Rehydrate persisted marketId on mount; try/catch covers private mode.
+  // Rehydrate persisted marketId + requestId on mount; try/catch covers
+  // private mode. v56 (L0) audit fix: persist requestId alongside
+  // marketId so the receipt link survives a reload — without this, a
+  // judge who hits /proof after the creation tx confirms sees the
+  // market card but no "View live inference receipt" link, because
+  // the by-tx recovery effect only runs against the current session's
+  // writeContract hash.
   useEffect(() => {
-    const id = safeGetLocalStorage();
-    if (id) {
-      setDailyMarketId(id);
-    } else {
+    const id = safeGetLocalStorage(STORAGE_KEY_MARKET);
+    const reqId = safeGetLocalStorage(STORAGE_KEY_REQUEST);
+    if (id) setDailyMarketId(id);
+    if (reqId) setRequestId(reqId);
+    if (!id) {
       // Probe localStorage to determine if it's available at all (vs. just empty).
-      setStorageAvailable(safeSetLocalStorage(null));
+      setStorageAvailable(safeSetLocalStorage(STORAGE_KEY_MARKET, null));
     }
   }, []);
 
   // Persist dailyMarketId whenever it changes.
   useEffect(() => {
     if (dailyMarketId == null) return;
-    const ok = safeSetLocalStorage(dailyMarketId.toString());
+    const ok = safeSetLocalStorage(STORAGE_KEY_MARKET, dailyMarketId.toString());
     if (!ok) setStorageAvailable(false);
   }, [dailyMarketId]);
+
+  // Persist requestId whenever it changes. Cleared alongside marketId
+  // by clearDailyMarketId.
+  useEffect(() => {
+    if (requestId == null) {
+      safeSetLocalStorage(STORAGE_KEY_REQUEST, null);
+      return;
+    }
+    safeSetLocalStorage(STORAGE_KEY_REQUEST, requestId.toString());
+  }, [requestId]);
 
   // One-time toast if storage is unavailable (private mode, etc.).
   useEffect(() => {
@@ -132,8 +150,13 @@ export function DailyResolutionDemo() {
     }
   }, [storageAvailable]);
 
-  // Read the generation funding status once on mount; refetch after a
-  // successful creation so the next operator sees an up-to-date top-up.
+  // Read the generation funding status on mount AND after each successful
+  // creation (when requestId flips from null to a value). v56 (L0) audit
+  // fix: the pre-L0 effect only had `[config]` as its dep, so the deposit
+  // figure displayed in the panel went stale after a successful creation
+  // (the contract spent 0.3 STT on the inference deposit; topUpNeeded
+  // changes accordingly). Adding requestId to the deps refetches the
+  // post-creation funding state.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -154,7 +177,7 @@ export function DailyResolutionDemo() {
     return () => {
       cancelled = true;
     };
-  }, [config]);
+  }, [config, requestId]);
 
   const { writeContract, data: hash, isPending } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
@@ -232,17 +255,22 @@ export function DailyResolutionDemo() {
   const stepResolved = status === MarketStatus.Resolved;
 
   // Soft-failure detection: agent ignored the [duration=86400] hint. The
-  // Market struct has no `createdAt` field, so we infer the chosen duration
-  // from `endTime - now` while the market is still Open. The 600s slack
+  // Market struct has no `createdAt` field, so we can't compute the actual
+  // chosen duration precisely — we infer it from `endTime - now` (Open) or
+  // show the endTime UTC (Resolving) as the source of truth. v56 (L0)
+  // audit fix: trigger the pill in BOTH Open and Resolving so a judge who
+  // reloads the page mid-resolution still sees the warning. The 600s slack
   // avoids flagging legitimate 24h markets during the first 10 minutes.
   const endTimeSec = dailyMarket?.endTime ? Number(dailyMarket.endTime) : null;
   const remainingSec = endTimeSec != null ? endTimeSec - Math.floor(Date.now() / 1000) : null;
   const actualDurationIsShort =
     dailyMarket != null &&
-    dailyMarket.status === MarketStatus.Open &&
+    (dailyMarket.status === MarketStatus.Open || dailyMarket.status === MarketStatus.Resolving) &&
     remainingSec != null &&
     remainingSec > 0 &&
     remainingSec < 86400 - 600;
+  const endTimeUtc =
+    endTimeSec != null ? new Date(endTimeSec * 1000).toUTCString() : null;
 
   const handleRun = () => {
     if (!isConnected) {
@@ -285,7 +313,8 @@ export function DailyResolutionDemo() {
   const clearDailyMarketId = () => {
     setDailyMarketId(null);
     setRequestId(null);
-    safeSetLocalStorage(null);
+    safeSetLocalStorage(STORAGE_KEY_MARKET, null);
+    safeSetLocalStorage(STORAGE_KEY_REQUEST, null);
     toast.info("Today's daily market cleared — you can re-run");
   };
 
@@ -371,9 +400,13 @@ export function DailyResolutionDemo() {
                 ? 'Submitting…'
                 : dailyMarketId != null
                   ? "Today's market is on-chain"
-                  : "Run today's market"}
+                  : requestId != null && isAgentFailure
+                    ? "Retry today's market"
+                    : requestId != null
+                      ? "Today's market is generating…"
+                      : "Run today's market"}
             </button>
-            {dailyMarketId != null && (
+            {(dailyMarketId != null || requestId != null) && (
               <button
                 type="button"
                 onClick={clearDailyMarketId}
@@ -440,10 +473,11 @@ export function DailyResolutionDemo() {
             />
           </div>
 
-          {actualDurationIsShort && remainingSec != null && (
+          {actualDurationIsShort && endTimeUtc && (
             <div className="mt-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-              Agent used ~{formatDurationSeconds(remainingSec)} instead of the requested 24h — the
-              market will resolve sooner. The on-chain endTime is the source of truth.
+              Agent picked a duration shorter than the requested 24h — the market will resolve
+              sooner. endTime: <code className="rounded bg-black/40 px-1">{endTimeUtc}</code>. The
+              on-chain endTime is the source of truth.
             </div>
           )}
 
