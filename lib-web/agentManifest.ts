@@ -245,14 +245,20 @@ export function getAutoResolveAgentManifest() {
     // + smoke grep; v45 L2 deploy.sh prefund comment typo; v45 L3
     // Dockerfile dead duplicate COPY; v45 L4 proof page regex patch-
     // bump support; v46 L1+L2 CreateMarketForm + ResolutionPanel cache
-    // invalidation; v47 M1 deploy.sh portable sed; v47 M2
-    // AgentCommandCenter pendingInvoke Map; v47 L1 /api/topics
-    // console.warn; v47 L2 DEPLOYED.md "Next deploy" callout. v48 M1
-    // bumped the field v40 -> v47 to reflect the v45-v47 frontend
-    // surface. v49 (docs sweep) + v50 (DEPLOYED body changelog +
-    // judgingAlignment sentence + useQueryClient import fix) shipped
+    // v55 (M1): post-deploy comment refresh. The v40 baseline came
+    // from the v45 on-chain string bump (M1) — the last ABI-affecting
+    // cycle. v45-v47 added portable deploy.sh + AgentCommandCenter
+    // pendingInvoke Map + /api/topics console.warn + DEPLOYED.md
+    // "Next deploy" callout; v48 (M1) bumped the field v40 -> v47
+    // to track them. v49 (docs sweep) + v50 (DEPLOYED body changelog
+    // + judgingAlignment sentence + useQueryClient import fix) shipped
     // additional frontend surface without a corresponding bump; v51
-    // bumps v47 -> v50 to close the gap.
+    // (M1) bumped v47 -> v50 to close the gap. v55 (M1) does NOT
+    // change the field value — the post-deploy public-doc sweep
+    // (README/DEPLOYED/PITCH_DECK/CLAUDE.md, /proof Tooltip, this
+    // comment) is purely a documentation refresh that doesn't touch
+    // the surface the field describes. The shipped invariant is
+    // Contract (on-chain agentManifest) = v40, Frontend (this field) = v50.
     version: 'v50',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',

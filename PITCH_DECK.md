@@ -10,7 +10,7 @@ No human oracle. No backend resolver. Validator-executed agent receipts for ever
 
 Live app: https://autoresolve-somnia.vercel.app  
 Proof page: https://autoresolve-somnia.vercel.app/proof  
-Contract: `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` (v15 live; v19+v40+v45 contract pending deploy; v46-v51 frontend/relayer/tooling only)
+Contract: `0x48556EA096F4abFFB569916a138Ec946B54A85dE` (v19+v40+v45 live; v22-v51 frontend/relayer/tooling shipped; deploy tx `0x7b7fec…002f8` on 2026-06-09)
 
 ---
 
@@ -78,7 +78,7 @@ With Somnia, the resolver becomes part of the on-chain settlement flow.
 
 AutoResolve is built so autonomous agents can interact with it directly.
 
-The v15 (live) / v19+v40+v45 (pending deploy; v46-v51 frontend + relayer + tooling only) contract exposes:
+The v19+v40+v45 live contract (deployed 2026-06-09 at `0x48556EA096F4abFFB569916a138Ec946B54A85dE`; v22-v51 frontend + relayer + tooling shipped alongside) exposes:
 
 | Function | Purpose |
 |---|---|
@@ -149,10 +149,10 @@ Verification:
 
 Current deployment:
 
-- Contract: `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` (v15 live)
-- Contract balance: `1.0 STT`
-- Resolution deposit: `0.66 STT`
-- Seeded markets: `#1`, `#2`
+- Contract: `0x48556EA096F4abFFB569916a138Ec946B54A85dE` (v19+v40+v45 live)
+- Contract balance: `0.72 STT` (2.0 STT prefunded − 0.62 STT spent on AI-created market #3's inference deposit + 2 × 0.01 STT prefund on the resolution pipeline for markets #1 and #2)
+- Resolution deposit: `0.66 STT` per resolution (parse 0.01 + inference 0.3 + 0.01 + 0.3)
+- Seeded markets: `#1` (Paris, parsing), `#2` (Bitcoin, parsing); AI-created market `#3` ("Will Somnia mainnet launch before 2027?", submitted by the Railway relayer within seconds of boot)
 
 Completed historical E2E proof:
 

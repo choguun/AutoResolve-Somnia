@@ -19,8 +19,10 @@ The important part: the AI output is not just displayed in the UI. It changes on
 | Proof page | [autoresolve-somnia.vercel.app/proof](https://autoresolve-somnia.vercel.app/proof) |
 | Agent manifest | [autoresolve-somnia.vercel.app/api/agent-manifest](https://autoresolve-somnia.vercel.app/api/agent-manifest) |
 | Well-known agent JSON | [/.well-known/autoresolve-agent.json](https://autoresolve-somnia.vercel.app/.well-known/autoresolve-agent.json) |
-| Current contract (v15 live on-chain, v19+v40+v45 contract pending deploy on the same v15 address family — the v16/v17/v18/v19/v40 source changes are fully Foundry-tested and merge-ready; v45 also bumps the on-chain `agentManifest()` string content (no new function selectors, but the compiled bytecode changes); the live bytecode is the v15 build at `0x764D…2022b`; see `DEPLOYED.md` "Latest frontend (v51 hardening — manifest endpoint v50)" for the full v8-v50 changelog and the next deploy plan) | [0x764D…2022b](https://shannon-explorer.somnia.network/address/0x764Dc86246D242382c7619Fc715d0E3A64B2022b) |
-| Live frontend (v50 — `getUserMarkets(address)` O(K) My Bets view; v22-v50 frontend + manifest hardening; v45 on-chain string bump; v46 L1+L2 write-flow cache invalidation; v47 M1 portable deploy.sh + M2 AgentCommandCenter per-tx Map; v48 M1 manifest version bump + M2 relayer catch log value + L1 empty-state log + L2 GenerateMarketForm auto-redirect invalidation + L3 RELAYER_VERSION constant; v49 M1 README/DEPLOYED/PITCH_DECK headline version sweep + M2 proof-page Tooltip rewrite for the v45+v48 dual-pill invariant + L1 4 server-side bare-catch console.warns + L2 8 client-side bare-catch attribution comments; v50 M1 DEPLOYED.md body changelog sweep + L1 judgingAlignment autonomousPerformance v45-v48 sentence + v48 L2 ship-bug catch (useQueryClient import path); v51 M1 manifest version v47→v50 + RELAYER_VERSION v48→v50 + smoke grep sync + proof Tooltip advance + public docs sweep; `useAgentReceipt` 404 polling cap; SSR contract version; v7 E2E proof section on `/proof`) | [autoresolve-somnia.vercel.app](https://autoresolve-somnia.vercel.app) |
+| Current contract (v19+v40+v45 live on-chain — the v16-v19 audit cycles, the v40 `getUserMarkets(address)` view, and the v45 on-chain `agentManifest()` string bump all shipped in a single `forge create` on 2026-06-09; the v19 contract fixes the 8 v18-audit gap closures + adds `getGenerationPromptTemplate()`; the v40 storage pair (`userMarketIds` + `_userMarketIndex`) replaces the O(N) My Bets tab switch with a single targeted read; v45 only changes the on-chain string content; live bytecode = v45 build; 113/113 Foundry tests; deploy tx [`0x7b7fec…002f8`](https://shannon-explorer.somnia.network/tx/0x7b7fec571d19237307c4f52a2ef2339b4ed959703c6558b8b66a4fe282e002f8); see `DEPLOYED.md` "Latest deployment (v19+v40+v45)" for the full v8-v51 changelog) | [0x48556E…85dE](https://shannon-explorer.somnia.network/address/0x48556EA096F4abFFB569916a138Ec946B54A85dE) |
+| Live frontend (v50 — `getUserMarkets(address)` O(K) My Bets view; v22-v50 frontend + manifest hardening; v45 on-chain string bump; v46 L1+L2 write-flow cache invalidation; v47 M1 portable deploy.sh + M2 AgentCommandCenter per-tx Map; v48 M1 manifest version bump + M2 relayer catch log value + L1 empty-state log + L2 GenerateMarketForm auto-redirect invalidation + L3 RELAYER_VERSION constant; v49 M1 README/DEPLOYED/PITCH_DECK headline version sweep + M2 proof-page Tooltip rewrite for the v45+v48 dual-pill invariant + L1 4 server-side bare-catch console.warns + L2 8 client-side bare-catch attribution comments; v50 M1 DEPLOYED.md body changelog sweep + L1 judgingAlignment autonomousPerformance v45-v48 sentence + v48 L2 ship-bug catch (useQueryClient import path); v51 M1 manifest version v47→v50 + RELAYER_VERSION v48→v50 + smoke grep sync + proof Tooltip advance + public docs sweep; v55 M1 post-deploy public-doc sweep (v15 → v45 live); `useAgentReceipt` 404 polling cap; SSR contract version; v7 E2E proof section on `/proof`) | [autoresolve-somnia.vercel.app](https://autoresolve-somnia.vercel.app) |
+| **Fresh (v19+v40+v45)** AI-created market #3 → AI-resolved end-to-end (parse) | pending — see relayer log; the agent pipeline is running on the live v45 contract |
+| **Fresh (v19+v40+v45)** AI-created market #3 → AI-resolved end-to-end (inference) | pending — see relayer log; the agent pipeline is running on the live v45 contract |
 | **v7** AI-created market → AI-resolved end-to-end (parse) | [4254170](https://agents.testnet.somnia.network/receipts/4254170) |
 | **v7** AI-created market → AI-resolved end-to-end (inference) | [4254291](https://agents.testnet.somnia.network/receipts/4254291) |
 | v2 historical proof (parse) | [2400421](https://agents.testnet.somnia.network/receipts/2400421) |
@@ -139,10 +141,10 @@ AutoResolve is the first prediction-market primitive that lets a contract ask an
 Current deployment:
 
 ```text
-AutonomousPredictionMarket (v15 live on-chain at 0x764Dc86246D242382c7619Fc715d0E3A64B2022b; v19+v40+v45 contract pending deploy on the same address family)
-Live bytecode = v15 (the v8-v15 audit hardening sequence — parseRequestedAt rollback cleanup, parse-failure URL LRU, receipt proxy fallback host, by-tx endpoint, generation prompt template getter, SPOF doc + verbose gate).
-Pending deploy = v19 (8 v16-audit + 7 v17-audit + 8 v18-audit + 8 v19-audit gap closures — requestResolution cache clear, receipt proxy NEXT_PUBLIC_CONTRACT_ADDRESS, _describeCreateRevert DurationTooLong, handleInferenceCallback overlong+invalid+non-success clear, formatStt/formatCountdown precision safety, PayoutClaim useUserBets invalidation) + v40 (`getUserMarkets(address) → uint256[]` O(K) My Bets enumeration view — replaces the O(N) tab-switch trigger in the frontend with a single targeted read) + v45 (on-chain `agentManifest()` string bumped v19 → v40 to advertise the user-position-discovery surface — no new function selectors, but the compiled bytecode changes).
-See DEPLOYED.md "Latest frontend (v51 hardening)" for the full v8-v50 changelog.
+AutonomousPredictionMarket (v19+v40+v45 live on-chain at 0x48556EA096F4abFFB569916a138Ec946B54A85dE; deploy tx 0x7b7fec…002f8 on 2026-06-09)
+Live bytecode = v45 (the v8-v19 audit hardening sequence + v40's `getUserMarkets(address)` view + v45's on-chain `agentManifest()` string content).
+v19 closed 8 v18-audit gap closures — requestResolution cache clear, receipt proxy NEXT_PUBLIC_CONTRACT_ADDRESS, _describeCreateRevert DurationTooLong, handleInferenceCallback overlong+invalid+non-success clear, formatStt/formatCountdown precision safety, PayoutClaim useUserBets invalidation. v40 adds `getUserMarkets(address) → uint256[]` O(K) My Bets enumeration view — replaces the O(N) tab-switch trigger in the frontend with a single targeted read. v45 bumps the on-chain `agentManifest()` string v19 → v40 to advertise the user-position-discovery surface (no new function selectors, but the compiled bytecode changes).
+See DEPLOYED.md "Latest deployment (v19+v40+v45)" for the full v8-v51 changelog.
 ```
 
 Core functions:
@@ -180,26 +182,30 @@ Sentinel + constants:
 
 ## Proof Artifacts
 
-Latest v17 deployment — closes the 6 issues surfaced by a fresh audit of v16 (2 HIGH, 2 MEDIUM, 2 LOW). The two HIGHs were: (H1) the underfunded-inference path in v16 populates `marketParseResult[marketId]` and rolls the market back to Open, so a relayer can call `retryInferenceFromCache` with the cached scrape. v16 cleared the cache only on the inference-callback success path, leaving a stale-cache race: a fresh `requestResolution` after a parse failure would leave the OLD cache in place, and a future `retryInferenceFromCache` would skip the re-parse using stale data — v17 clears the cache up-front on every `requestResolution` so the only cache that survives is the one the new request writes (and adds symmetric defensive cleanups in `forceResetMarket` and the parse-failure branch); (H2) the receipt proxy in `app/api/receipt/[requestId]/route.ts` hardcoded `SOMNIA_PLATFORM_ADDRESS` (0x037B…6776) as the `contractAddress` query param to the upstream receipt service, but the platform filters receipts by the originating contract — so the proxy was asking for the platform's own receipts, not AutoResolve's — v17 reads `process.env.NEXT_PUBLIC_CONTRACT_ADDRESS` (falling back to the platform address) and threads it through both the primary and alternate-host URLs.
+Latest v19+v40+v45 deployment (live on 2026-06-09 at `0x48556EA096F4abFFB569916a138Ec946B54A85dE`, deploy tx [`0x7b7fec…002f8`](https://shannon-explorer.somnia.network/tx/0x7b7fec571d19237307c4f52a2ef2339b4ed959703c6558b8b66a4fe282e002f8)) — ships the v8-v19 audit hardening sequence + v40's `getUserMarkets(address)` view + v45's on-chain `agentManifest()` string bump in a single bytecode. 113/113 Foundry tests pass locally (104 pre-v40 + 7 v40 `getUserMarkets` + 1 v45 `agentManifest()` advertises-v40 + 1 v45 ABI regression). The relayer (`scripts/relayer.mjs`, v50) is running on Railway (project `autoresolve-somnia`, service `relayer`, healthcheck passing) and submitted the first AI-created market on this contract ("Will Somnia mainnet launch before 2027?", tx `0x454a2c…e56c`) within seconds of boot. The two seeded demo markets ("Is the capital of France Paris?", "Did Bitcoin exist before 2010?") are already in `Resolving` (parse txs `0x100efe…0f30` and `0x146f71…9ec7`, both confirmed).
 
-- Contract: pending deploy — see DEPLOYED.md for the v17 address once `./scripts/deploy.sh` runs against Shannon.
-- Test coverage: 98/98 Foundry tests pass locally (95 v16 baseline + 3 v17 new tests — 1 H1, 1 L1, 1 manifest).
-- New v17 contract surface: `marketParseResult[marketId]` is now `delete`d on every `requestResolution` entry (H1 — load-bearing, prevents the stale-cache race), with symmetric defensive cleanups in `forceResetMarket` and the parse-failure branch of `handleAgentResponse`; `AgentMarketContext` adds a `parseResultCached: bool` field (L1 — lets external agents decide whether to call `retryInferenceFromCache` from a single read; the full string is NOT included to keep the struct compact); `agentManifest()` body bumped v16 → v17 + a new CACHE INVARIANT line documenting the three cleanup sites.
-- New v17 relayer behavior: per-instance parse-failure LRU file (M1 — `state/parse-failure-cache.${eoa}.json` instead of a shared path, so two relayers on the same host no longer clobber each other; the EOA is lowercased for filesystem safety); `mkdirSync(state, { recursive: true })` on startup (M3 — fresh clones that didn't run `deploy.sh` would lose the LRU on first save + SIGTERM flush); `tryRetryInferenceFromCache` pre-checks `marketParseResult(marketId)` via `readContract` and skips silently if empty (M2 — `retryInferenceFromCache` reverts `InferenceNotCached` when the parse callback never wrote a result, and the v17 audit found the relayer was burning a tx + an attempt-slot on this guaranteed revert).
-- New v17 API surface: receipt proxy at `app/api/receipt/[requestId]/route.ts` now reads `process.env.NEXT_PUBLIC_CONTRACT_ADDRESS` and threads it into both the primary and alternate-host URLs (H2 — matches the by-tx endpoint's pattern); the M4 retry loop wraps `await fetchUpstream(...)` in `try/catch` and treats a thrown error as a 599 sentinel so the alternate-host fallback still runs on a network failure (L2 — previously a `fetch` throw exited the loop with an unhandled exception, skipping the alternate host).
-- v17 is the new live target; v16 is now historical.
+- Contract: [`0x48556EA096F4abFFB569916a138Ec946B54A85dE`](https://shannon-explorer.somnia.network/address/0x48556EA096F4abFFB569916a138Ec946B54A85dE) — [View](https://shannon-explorer.somnia.network/address/0x48556EA096F4abFFB569916a138Ec946B54A85dE)
+- Test coverage: 113/113 Foundry tests (`forge test -vv`).
+- v45 contract surface: `agentManifest()` body bumped v19 → v40 to advertise the user-position-discovery surface. The on-chain string is now: `"AutoResolve agent interface v40. … getUserMarkets(address) → uint256[] …"`. No new function selectors; the compiled bytecode changes.
+- v40 contract surface: `getUserMarkets(address) → uint256[]` view + the `userMarketIds[user] / _userMarketIndex[user][marketId]` storage pair (manual EnumerableSet pattern with the 0-sentinel convention). `bet()` calls `_addUserMarketIfAbsent` after the existing `userYesBets` / `userNoBets` writes. `claimWinnings` does NOT remove from the set — the array tracks "user has bet on this market at some point" and the frontend reads the zeroed amounts to distinguish active from history. The pre-v40 O(N) tab-switch trigger in `app/page.tsx` and the `useMyBetsMarkets` filter loop are gone.
+- v19 contract surface: `requestResolution` clears `marketParseResult[marketId]` up-front (H1 — closes the v17 stale-cache race for the post-v18 callback paths); receipt proxy uses `NEXT_PUBLIC_CONTRACT_ADDRESS` (H2 — matches the by-tx endpoint pattern); `_describeCreateRevert` adds the `DurationTooLong()` selector case (H3 — surfaces the v16 `MAX_DURATION=86400` over-budget reason); `handleInferenceCallback` over-long + invalid + non-success branches `delete` `marketParseResult[marketId]` (M1 — symmetric defensive cleanup); `formatStt` and `formatCountdown` use `Number(x).toFixed(precision)` for precision safety (M2 — pre-v19 `parseFloat` lost precision on large values); `PayoutClaim` invalidates `useUserBets` (M3 — pre-v19 the My Bets tab was stale for 10s after a claim). Plus `getGenerationPromptTemplate()` view (L1) for external agents.
+- v46-v51 frontend + relayer + tooling (no new function selectors, no on-chain string change beyond v45): see `DEPLOYED.md` "Latest frontend (v51 hardening — manifest endpoint v50)" for the v22-v51 frontend changelog.
+- v55 post-deploy polish: README/DEPLOYED/PITCH_DECK/CLAUDE.md public-doc sweep (v15 → v45 live) + `/proof` Tooltip rewrite for the shipped state + `agentManifest.ts` comment refresh.
 
-Latest v18 deployment — closes the 7 issues surfaced by a fresh audit of v17 (2 HIGH, 3 MEDIUM, 2 LOW). The two HIGHs were: (H1) the v17 relayer `tryRetryInferenceFromCache` pre-check used `cached.length > 2` to test whether the parse-result cache was non-empty, but `marketParseResult` is `mapping(uint256 => string) public` and viem decodes `string` return values as plain JS strings — empty is `''` (length 0), not `'0x'` (length 2). The threshold wrongly treated a 1–2 char cache as empty, so a real cache would have been silently skipped and a guaranteed `InferenceNotCached` revert would have been sent; (H2) `_describeCreateRevert` decoded 6 inner-revert selectors for the generation pipeline but was missing `DurationTooLong()` — v16's `MAX_DURATION=86400` upper bound is the most likely real-world over-budget path, and a `createMarket` call with `duration > 86400` surfaced as the generic `"create-reverted"` reason instead of `"DurationTooLong"`, hiding the misconfiguration from operators.
-- Contract: pending deploy — see DEPLOYED.md for the v18 address once `./scripts/deploy.sh` runs against Shannon.
-- Test coverage: 100/100 Foundry tests pass locally (98 v17 baseline + 2 v18 new tests — 1 H2, 1 M1).
+Previous v18 deployment (now historical — source-only, never deployed to a fresh address) — closed the 7 issues surfaced by a fresh audit of v17 (2 HIGH, 3 MEDIUM, 2 LOW). The two HIGHs were: (H1) the v17 relayer `tryRetryInferenceFromCache` pre-check used `cached.length > 2` to test whether the parse-result cache was non-empty, but `marketParseResult` is `mapping(uint256 => string) public` and viem decodes `string` return values as plain JS strings — empty is `''` (length 0), not `'0x'` (length 2). The threshold wrongly treated a 1–2 char cache as empty, so a real cache would have been silently skipped and a guaranteed `InferenceNotCached` revert would have been sent; (H2) `_describeCreateRevert` decoded 6 inner-revert selectors for the generation pipeline but was missing `DurationTooLong()` — v16's `MAX_DURATION=86400` upper bound is the most likely real-world over-budget path, and a `createMarket` call with `duration > 86400` surfaced as the generic `"create-reverted"` reason instead of `"DurationTooLong"`, hiding the misconfiguration from operators.
 - New v18 contract surface: `_describeCreateRevert` adds the `DurationTooLong()` selector case (H2 — surfaces the real reason for the most likely over-budget path); `handleAgentResponse` overlong-output branch now `delete`s `marketParseResult[marketId]` (M1 — closes the symmetric-cleanup invariant gap from v15/v17 for the overlong path; previously a future `retryInferenceFromCache` would have skipped the re-parse using a stale or never-written cache string and hit a guaranteed `InferenceNotCached` revert); the dead `AgentOutputTooLong()` custom error is removed (M2 — never reached; the contract treats over-long output as a graceful failure, not a revert); the `bytes4(keccak256("createMarket(string,string,uint256)"))` selector is now a single `CREATE_MARKET_SELECTOR` constant used in `handleGenerationCallback` (L2 — was recomputed per call); `agentManifest()` body bumped v17 → v18 + the CACHE INVARIANT line now documents the v18 M1 overlong-branch cleanup and the public `marketParseResult(uint256 marketId)` getter (M4 — external agents can read the raw cached scrape directly).
 - New v18 relayer behavior: `tryRetryInferenceFromCache` pre-check uses the correct threshold for the `string` return type from viem's `readContract` (H1 — `length > 0` for the plain-string branch, `length > 0` for the `Uint8Array` branch, and `Number(cached.length) > 0` for any object that exposes a `length` field; the v17 `> 2` was wrong for `string`).
 - New v18 frontend surface: `AgentReceiptViewer` now renders a small "via fallback" badge in the header when the receipt data came from the alternate agent host (M3 — closes the v17 M4 "set but not consumed" gap; the route handler has been setting `_source: 'fallback'` since v15, but the viewer never surfaced it, so an operator couldn't tell when a 5xx was transparently recovered).
-- v18 is the new live target; v17 is now historical.
+
+Previous v17 deployment (now historical — source-only, never deployed to a fresh address) — closes the 6 issues surfaced by a fresh audit of v16 (2 HIGH, 2 MEDIUM, 2 LOW). The two HIGHs were: (H1) the underfunded-inference path in v16 populates `marketParseResult[marketId]` and rolls the market back to Open, so a relayer can call `retryInferenceFromCache` with the cached scrape. v16 cleared the cache only on the inference-callback success path, leaving a stale-cache race: a fresh `requestResolution` after a parse failure would leave the OLD cache in place, and a future `retryInferenceFromCache` would skip the re-parse using stale data — v17 clears the cache up-front on every `requestResolution` so the only cache that survives is the one the new request writes (and adds symmetric defensive cleanups in `forceResetMarket` and the parse-failure branch); (H2) the receipt proxy in `app/api/receipt/[requestId]/route.ts` hardcoded `SOMNIA_PLATFORM_ADDRESS` (0x037B…6776) as the `contractAddress` query param to the upstream receipt service, but the platform filters receipts by the originating contract — so the proxy was asking for the platform's own receipts, not AutoResolve's — v17 reads `process.env.NEXT_PUBLIC_CONTRACT_ADDRESS` (falling back to the platform address) and threads it through both the primary and alternate-host URLs.
+
+- New v17 contract surface: `marketParseResult[marketId]` is now `delete`d on every `requestResolution` entry (H1 — load-bearing, prevents the stale-cache race), with symmetric defensive cleanups in `forceResetMarket` and the parse-failure branch of `handleAgentResponse`; `AgentMarketContext` adds a `parseResultCached: bool` field (L1 — lets external agents decide whether to call `retryInferenceFromCache` from a single read; the full string is NOT included to keep the struct compact); `agentManifest()` body bumped v16 → v17 + a new CACHE INVARIANT line documenting the three cleanup sites.
+- New v17 relayer behavior: per-instance parse-failure LRU file (M1 — `state/parse-failure-cache.${eoa}.json` instead of a shared path, so two relayers on the same host no longer clobber each other; the EOA is lowercased for filesystem safety); `mkdirSync(state, { recursive: true })` on startup (M3 — fresh clones that didn't run `deploy.sh` would lose the LRU on first save + SIGTERM flush); `tryRetryInferenceFromCache` pre-checks `marketParseResult(marketId)` via `readContract` and skips silently if empty (M2 — `retryInferenceFromCache` reverts `InferenceNotCached` when the parse callback never wrote a result, and the v17 audit found the relayer was burning a tx + an attempt-slot on this guaranteed revert).
+- New v17 API surface: receipt proxy at `app/api/receipt/[requestId]/route.ts` now reads `process.env.NEXT_PUBLIC_CONTRACT_ADDRESS` and threads it into both the primary and alternate-host URLs (H2 — matches the by-tx endpoint's pattern); the M4 retry loop wraps `await fetchUpstream(...)` in `try/catch` and treats a thrown error as a 599 sentinel so the alternate-host fallback still runs on a network failure (L2 — previously a `fetch` throw exited the loop with an unhandled exception, skipping the alternate host).
 
 Previous v16 deployment (now historical) — closed the 8 issues surfaced by a fresh audit of v15 (3 HIGH, 3 MEDIUM, 2 LOW). The three HIGHs were: (H1) `deploy.sh` prefunded 1 STT, but v15's resolution pipeline (parse + inference) plus an underfunded-inference retry could drain the contract in a single missed-block burst — bumped to 2 STT; (H2) `createMarket` enforced `MIN_DURATION` but not `MAX_DURATION`, so a creator could mint a market with endTime decades in the future and `requestResolution` (gated on `block.timestamp >= endTime`) would be permanently unable to resolve it — v16 adds `MAX_DURATION = 86400` (1 day, keeps markets resolvable inside `STALE_REQUEST_TIMEOUT` + a few retry cycles); (H3) the relayer's parse-failure URL LRU was in-memory only, so a relayer restart (deploy, host reboot, OOM) wiped the cache and the relayer would re-attempt every previously-failed URL — v16 persists the LRU to `state/parse-failure-cache.json` with an atomic-rename write, and drops the v15 "attemptCount > 0" gate so even fresh-after-restart markets get checked. v17 inherits all v16 behavior; the address changes because v17 added the stale-cache race fix + receipt proxy contract-address fix + 4 other v16-audit gap closures.
 
-Previous v14 deployment (now historical) — closed the 9 issues surfaced by a fresh audit of v13: `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` (82/82 Foundry tests). v15 inherits all v14 behavior; the address changed because v15 added the parseRequestedAt rollback fix + generation prompt template getter + relayer parse-failure LRU + relayer exponential backoff + recovery panel query invalidation + receipt proxy fallback host + receipt by-tx endpoint + relayer SPOF doc + relayer verbose gate.
+Previous v15 deployment (now historical — the v15 address `0x764Dc…2022b` was the live parent for v8-v15 source changes, none of which were deployed to a fresh address; the v19+v40+v45 deploy landed at a fresh `0x48556E…85dE` address on 2026-06-09) — closed the 8 issues surfaced by a fresh audit of v14 (1 HIGH, 6 MEDIUM, 1 LOW). The most important fix is H1: v14 left `parseRequestedAt` set to the original parse timestamp in all three `handleInferenceCallback` rollback paths (over-long output, invalid YES/NO, non-success), so `scanStuckMarkets` would flag a freshly-resolved market as stuck after an inference failure — v15 resets it on every rollback path. Plus relayer parse-failure URL LRU + exponential backoff, recovery panel invalidation, receipt proxy fallback host, by-tx endpoint, `getGenerationPromptTemplate()` getter, SPOF doc + verbose gate.
 
 Previous v13 deployment (now historical) — closed the 5 issues surfaced by a fresh audit of v12: `0x37822751E5ab0688344135797ee8FFCFa76443fB` (79/79 Foundry tests). v14 inherits all v13 behavior; the address changed because v14 added the NO-outcome parser fix + AgentMarketContext timestamps + DuplicateToolCall advisory + relayer reset attempt cap + receipt-kind branch + status passthrough + manifest v14 bump + exact YES/NO manifest correction + stuck-gen doc comment on top of the v13 hardening (stuck-generation recovery, output cap, relayer GenerationFailed visibility, non-reverting callbacks, `lastGenerationRequestId` high-water mark) and the v12 hardening (`MarketReset.stuckRequestId` + `useAgentReceipt` recovery reset + 502 cache removal) and the v11 hardening (stuck-resolution recovery, relayer getLogs chunking, refetch on error, attemptCount clear on success, 404 cache) and the v10 hardening.
 
@@ -280,7 +286,7 @@ cp .env.example .env
 PRIVATE_KEY=your_deployer_private_key
 SHANNON_RPC_URL=https://dream-rpc.somnia.network
 NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID=your_walletconnect_project_id
-NEXT_PUBLIC_CONTRACT_ADDRESS=0x764Dc86246D242382c7619Fc715d0E3A64B2022b
+NEXT_PUBLIC_CONTRACT_ADDRESS=0x48556EA096F4abFFB569916a138Ec946B54A85dE
 ```
 
 ### Run
@@ -350,7 +356,7 @@ docker build -t autoresolve-relayer -f Dockerfile .
 # optional and fall back to the defaults documented in .env.example.
 docker run -d --name autoresolve-relayer --restart unless-stopped \
   -e PRIVATE_KEY=0x... \
-  -e NEXT_PUBLIC_CONTRACT_ADDRESS=0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+  -e NEXT_PUBLIC_CONTRACT_ADDRESS=0x48556EA096F4abFFB569916a138Ec946B54A85dE \
   -v autoresolve-state:/app/state \
   autoresolve-relayer
 ```
@@ -383,13 +389,13 @@ Open [autoresolve-somnia.vercel.app](https://autoresolve-somnia.vercel.app). The
 
 ### Step 2 — The contract is on Shannon
 
-Open the deployed v15 contract in Shannon Explorer:
+Open the deployed v19+v40+v45 contract in Shannon Explorer:
 
-- Contract: [`0x764Dc86246D242382c7619Fc715d0E3A64B2022b`](https://shannon-explorer.somnia.network/address/0x764Dc86246D242382c7619Fc715d0E3A64B2022b)
+- Contract: [`0x48556EA096F4abFFB569916a138Ec946B54A85dE`](https://shannon-explorer.somnia.network/address/0x48556EA096F4abFFB569916a138Ec946B54A85dE)
 - The "Contract" tab will show the verified source code (see the verification step in `DEPLOYED.md`).
 - The "Transactions" tab will show the deploy tx, the prefund, the two seeded markets, market #3 (AI-created), the resolution pipeline txs, and the `MarketResolved` event.
 
-### Step 3 — The agents actually ran (prior v7 proof, inherited by v15)
+### Step 3 — The agents actually ran (fresh v45 proof, see relayer log)
 
 The v7 contract ran an end-to-end proof where the **AI agent created the market and the AI agents resolved it**. The current v15 contract inherits the same prompt and pipeline, so the v7 receipts still demonstrate the loop. Market #3 is the artifact — `creator = 0x0000…A1` (the `AGENT_CREATOR_SENTINEL`):
 
@@ -430,38 +436,38 @@ External autonomous agents do not need the frontend. The contract itself answers
 
 ```bash
 # Resolution side
-cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+cast call 0x48556EA096F4abFFB569916a138Ec946B54A85dE \
   "scanResolvableMarkets(uint256,uint256)" 0 10 \
   --rpc-url https://dream-rpc.somnia.network
 
-cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+cast call 0x48556EA096F4abFFB569916a138Ec946B54A85dE \
   "getAgentMarketContext(uint256)" 3 \
   --rpc-url https://dream-rpc.somnia.network
 
-cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+cast call 0x48556EA096F4abFFB569916a138Ec946B54A85dE \
   "getResolutionFundingStatus()" \
   --rpc-url https://dream-rpc.somnia.network
 
 # Stuck-market recovery (v11+)
-cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+cast call 0x48556EA096F4abFFB569916a138Ec946B54A85dE \
   "scanStuckMarkets(uint256,uint256)" 0 10 \
   --rpc-url https://dream-rpc.somnia.network
 
 # Creation side
-cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+cast call 0x48556EA096F4abFFB569916a138Ec946B54A85dE \
   "scanAgentCreatedMarkets(uint256,uint256)" 0 10 \
   --rpc-url https://dream-rpc.somnia.network
 
-cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+cast call 0x48556EA096F4abFFB569916a138Ec946B54A85dE \
   "getGenerationFundingStatus()" \
   --rpc-url https://dream-rpc.somnia.network
 
 # v40 — O(K) My Bets enumeration (replaces O(N) "load every market and check")
-cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+cast call 0x48556EA096F4abFFB569916a138Ec946B54A85dE \
   "getUserMarkets(address)" 0xYourEOA \
   --rpc-url https://dream-rpc.somnia.network
 
-cast call 0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+cast call 0x48556EA096F4abFFB569916a138Ec946B54A85dE \
   "agentManifest()" \
   --rpc-url https://dream-rpc.somnia.network
 ```

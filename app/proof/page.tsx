@@ -184,21 +184,20 @@ export default async function ProofPage() {
                   <span className="ml-1.5 text-violet-300/70">({contractVersionNote})</span>
                 ) : null}
               </span>
-              {/* v49 (M2): the prior copy said "Both should agree once v19
-                  ships" — stale. v45 (M1) bumped the on-chain agentManifest()
-                  string to v40, and v48 (M1) bumped the JSON manifest's
-                  `version` field to v47. v51 bumped it again v47 -> v50
-                  to track the v49 (docs sweep) + v50 (DEPLOYED body
-                  changelog + judgingAlignment sentence + useQueryClient
-                  import fix) polish cycles. The two labels will never
-                  agree after the next contract deploy because
-                  v45+v46+v47+v48+v49+v50 is purely frontend + relayer +
-                  tooling (no new function selectors, no on-chain string
-                  change). The gap = the count of frontend-only audit
-                  cycles since the last ABI change. v49 documented the
-                  new invariant; v51 advances the gap explanation by one
-                  cycle. */}
-              <Tooltip content="Frontend label = JSON manifest's `version` field (v50, bumped by v51 M1 to track the v49+v50 polish cycles on top of the v45-v47 surface v48 M1 captured). Contract label = live on-chain `agentManifest()` view (v40, bumped by v45 M1 to advertise the user-position-discovery surface). The gap is the count of frontend-only audit cycles since the last ABI change.">
+              {/* v55 (M1): post-deploy rewrite. The v49 (M2) → v51 (M1) copy
+                  described a "pending deploy" state ("Both should agree once
+                  v19 ships", "gap = count of frontend-only audit cycles
+                  since the last ABI change"). After the 2026-06-09
+                  v19+v40+v45 deploy, both labels are live: Contract = v40
+                  (read from on-chain `agentManifest()` at SSR), Frontend
+                  = v50 (read from the JSON manifest's `version` field).
+                  The gap of 10 (v40 → v50) is now a permanent artifact
+                  of the shipped v22-v51 frontend/relayer/tooling surface
+                  that landed without an ABI change — v40 was the last
+                  bytecode bump and v45 only changed the on-chain string
+                  content. The Tooltip below describes the *shipped*
+                  invariant, not the pre-deploy plan. */}
+              <Tooltip content="Frontend label = JSON manifest's `version` field (v50, the cumulative shipped v22-v51 frontend + relayer + tooling surface). Contract label = live on-chain `agentManifest()` view (v40, the last ABI change: `getUserMarkets(address)` view + the v45 on-chain string bump). The gap of 10 is the count of shipped frontend-only audit cycles since the last ABI change — v22-v39 + v41-v51 all touched the frontend, relayer, or tooling without changing the contract bytecode or on-chain string.">
                 <span className="cursor-help text-zinc-500 underline-offset-2 hover:underline">why two?</span>
               </Tooltip>
             </div>

@@ -2,8 +2,8 @@
 
 | Contract | Address | Explorer |
 |---|---|---|
-| **AutonomousPredictionMarket (v15 — current, 1 v14-audit HIGH + 6 MEDIUM + 1 LOW closed: parseRequestedAt rollback cleanup in all 3 handleInferenceCallback branches, relayer parse-failure URL LRU + exponential backoff, recovery panel invalidates market queries, receipt proxy fallback host, receipt by-tx endpoint, generation prompt template getter, SPOF doc + verbose gate)** | `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` | [View](https://shannon-explorer.somnia.network/address/0x764Dc86246D242382c7619Fc715d0E3A64B2022b) |
-| **Frontend (v50 — pending contract deploy (v19 + v40 + v45) on the v15 address family: 1 HIGH + 7 new tests for the v40 `getUserMarkets` view; 8 v16-v19 audit cycles (requestResolution cache clear, receipt proxy `NEXT_PUBLIC_CONTRACT_ADDRESS`, _describeCreateRevert `DurationTooLong`, handleInferenceCallback overlong+invalid+non-success clear, formatStt/formatCountdown precision safety, PayoutClaim useUserBets invalidation); v45 on-chain `agentManifest()` string bump v19 → v40 (no new function selectors); 29 frontend v22-v50 hardening cycles (relayer drainTopicFeed + 30+ log.topics[N] decoders, useAgentReceipt 404 polling cap, SSR contract version, My Bets tab claimable chip, BetPanel myBets invalidation, CreateMarketForm + ResolutionPanel + GenerateMarketForm auto-redirect invalidation, deploy.sh portable sed, AgentCommandCenter pendingInvoke Map, /api/topics console.warn, DEPLOYED.md "Next deploy" callout, manifest version v40 → v47, relayer RELAYER_VERSION constant, v49 docs sweep + proof-page Tooltip + 4 server-side console.warns + 8 client-side bare-catch comments, v50 DEPLOYED body changelog sweep + judgingAlignment autonomousPerformance v45-v48 sentence + useQueryClient import fix, v51 manifest version v47 → v50 + RELAYER_VERSION v48 → v50 + smoke grep + public docs sweep, etc.))** | n/a (frontend) | [Live app](https://autoresolve-somnia.vercel.app) |
+| **AutonomousPredictionMarket (v19+v40+v45 — current, 1 v18-audit HIGH + 5 MEDIUM + 2 LOW closed in v19; 7 new tests + `getUserMarkets(address)` view in v40; v45 on-chain `agentManifest()` string bump v19 → v40 to advertise the user-position-discovery surface)** | `0x48556EA096F4abFFB569916a138Ec946B54A85dE` | [View](https://shannon-explorer.somnia.network/address/0x48556EA096F4abFFB569916a138Ec946B54A85dE) |
+| **Frontend (v50 — `getUserMarkets(address)` O(K) My Bets view; v22-v50 frontend + manifest hardening; v45 on-chain string bump; v46 L1+L2 write-flow cache invalidation; v47 M1 portable deploy.sh + M2 AgentCommandCenter per-tx Map; v48 M1 manifest version bump + M2 relayer catch log value + L1 empty-state log + L2 GenerateMarketForm auto-redirect invalidation + L3 RELAYER_VERSION constant; v49 M1 README/DEPLOYED/PITCH_DECK headline version sweep + M2 proof-page Tooltip rewrite for the v45+v48 dual-pill invariant + L1 4 server-side bare-catch console.warns + L2 8 client-side bare-catch attribution comments; v50 M1 DEPLOYED.md body changelog sweep + L1 judgingAlignment autonomousPerformance v45-v48 sentence + v48 L2 ship-bug catch (useQueryClient import path); v51 M1 manifest version v47→v50 + RELAYER_VERSION v48→v50 + smoke grep sync + proof Tooltip advance + public docs sweep; v55 M1 post-deploy public-doc sweep (v15 → v45 live) + /proof Tooltip rewrite for the shipped state + agentManifest.ts comment refresh; `useAgentReceipt` 404 polling cap; SSR contract version; v7 E2E proof section on `/proof`)** | n/a (frontend) | [Live app](https://autoresolve-somnia.vercel.app) |
 | AutonomousPredictionMarket (v14 — 9 v13-audit gaps closed: NO-outcome parser, AgentMarketContext timestamps, DuplicateToolCall advisory, relayer reset attempt cap, receipt-kind branch, status passthrough, stuck-gen doc comment, manifest v14 bump, exact YES/NO manifest correction) | `0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9` | [View](https://shannon-explorer.somnia.network/address/0x598E4F830bc5F6542a9E39DA761c1a74F5fd66a9) |
 | AutonomousPredictionMarket (v13 — 5 v12-audit gaps closed: stuck-generation recovery, agent output length cap, relayer GenerationFailed visibility + recovery, non-reverting callbacks on over-long output, `lastGenerationRequestId` high-water mark) | `0x37822751E5ab0688344135797ee8FFCFa76443fB` | [View](https://shannon-explorer.somnia.network/address/0x37822751E5ab0688344135797ee8FFCFa76443fB) |
 | AutonomousPredictionMarket (v12 — 3 v11-audit gaps closed: `MarketReset.stuckRequestId`, `useAgentReceipt` recovery flag reset, 502 cache removed) | `0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5` | [View](https://shannon-explorer.somnia.network/address/0x4D590eF3688a6Aa4630A57082bC62e14ACc2F6c5) |
@@ -19,19 +19,21 @@
 | AutonomousPredictionMarket (v2) | `0x1631303A748076648a0AbbE077a657Ad7812834F` | [View](https://shannon-explorer.somnia.network/address/0x1631303A748076648a0AbbE077a657Ad7812834F) |
 | AgentSmokeTest | `0x6e1dfB44AEc5c52dE3b12753726ea57207862F65` | [View](https://shannon-explorer.somnia.network/address/0x6e1dfB44AEc5c52dE3b12753726ea57207862F65) |
 
-> **Next deploy:** v19 + v40 + v45 (Foundry-tested, frontend-shipped, pending a single `forge create` onto the v15 address family). v40 adds the `getUserMarkets(address) → uint256[]` view; v45 bumps the on-chain `agentManifest()` string to v40 + the relayer smoke/ellipsis/comment-typo polish. v46-v51 are frontend + relayer + tooling only (no new function selectors, no on-chain string change). Total ABI change since v15: zero new function selectors in v45/v46/v47/v48/v49/v50/v51 (string content + relayer + frontend + tooling only), v40's `getUserMarkets` view, and v19's `getGenerationPromptTemplate` view + the 3 generation-pipeline functions.
+> **Last deploy (v19 + v40 + v45, 2026-06-09):** `0x48556EA096F4abFFB569916a138Ec946B54A85dE` (deploy tx [`0x7b7fec…002f8`](https://shannon-explorer.somnia.network/tx/0x7b7fec571d19237307c4f52a2ef2339b4ed959703c6558b8b66a4fe282e002f8)). Prefunded 2 STT, seeded 2 demo markets (Paris + Bitcoin), relayer on Railway submitted AI-created market #3 ("Will Somnia mainnet launch before 2027?", tx `0x454a2c…e56c`) and pushed markets #1 + #2 to `Resolving` (parse txs `0x100efe…0f30` and `0x146f71…9ec7`). v46-v55 are frontend + relayer + tooling only (no new function selectors, no on-chain string change beyond v45). Total ABI change since v15: v40's `getUserMarkets` view + v19's `getGenerationPromptTemplate` view + 3 generation-pipeline functions + 2 v15-era `requestMarketGeneration` / `getGenerationFundingStatus` views; v45/v46/v47/v48/v49/v50/v51/v55 add zero new selectors (string content + relayer + frontend + tooling only).
 
-## Latest deployment (v15 — 1 HIGH + 6 MEDIUM + 1 LOW audit gaps closed) — completed
+## Latest deployment (v19+v40+v45 — 8 v18-audit gap closures + v40 O(K) My Bets view + v45 on-chain string bump) — completed 2026-06-09
 
-v15 is the current live contract at `0x764Dc86246D242382c7619Fc715d0E3A64B2022b`.
-It closes the 8 issues surfaced by a fresh audit of the v14 deployment (1
-HIGH + 6 MEDIUM + 1 LOW). The most important fix is **H1**: v14 left
-`parseRequestedAt` set to the original parse timestamp in all three
-`handleInferenceCallback` rollback paths (over-long output, invalid YES/NO,
-non-success status), which misled `getAgentMarketContext` readers — they
-saw an Open market with `parseRequestedAt != 0`, indistinguishable from a
-market mid-parse. v15 adds `market.parseRequestedAt = 0` to all three
-rollback branches and ships regression tests for each.
+The v19+v40+v45 contract is the current live deployment at
+[`0x48556EA096F4abFFB569916a138Ec946B54A85dE`](https://shannon-explorer.somnia.network/address/0x48556EA096F4abFFB569916a138Ec946B54A85dE)
+(deploy tx
+[`0x7b7fec…002f8`](https://shannon-explorer.somnia.network/tx/0x7b7fec571d19237307c4f52a2ef2339b4ed959703c6558b8b66a4fe282e002f8)).
+It closes the 8 v18-audit gap closures in v19 + adds v40's `getUserMarkets(address) → uint256[]` view + v45's on-chain `agentManifest()` string bump v19 → v40. The relayer (`scripts/relayer.mjs` v50) is running on Railway (project `autoresolve-somnia`, service `relayer`) and submitted the first AI-created market on this contract within seconds of boot. The full v8-v51 frontend + relayer + tooling changelog lives in the "Latest frontend (v51)" section below.
+
+For the v15 → v19+v40+v45 diff (the per-cycle contract + relayer + frontend changes that landed in this single bytecode), see the [Latest deployment (v19+v40+v45)](#latest-deployment-v19v40v45--8-v18-audit-gap-closures--v40-ok-my-bets-view--v45-on-chain-string-bump--completed-2026-06-09) header above. The "Latest frontend (v51)" section below is now the shipped state, not the pending-deploy state.
+
+## Previous deployment (v15 — 1 HIGH + 6 MEDIUM + 1 LOW audit gaps closed) — historical (the v15 address `0x764Dc…2022b` was the live parent for v8-v15 source changes, none of which were deployed to a fresh address; the v19+v40+v45 deploy landed at a fresh `0x48556E…85dE` address on 2026-06-09)
+
+v15 was the live contract at `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` until 2026-06-09. It closed the 8 issues surfaced by a fresh audit of the v14 deployment (1 HIGH + 6 MEDIUM + 1 LOW). The most important fix is **H1**: v14 left `parseRequestedAt` set to the original parse timestamp in all three `handleInferenceCallback` rollback paths (over-long output, invalid YES/NO, non-success status), which misled `getAgentMarketContext` readers — they saw an Open market with `parseRequestedAt != 0`, indistinguishable from a
 
 **Contract (2 fixes)**
 - **H1 — `handleInferenceCallback` clears `parseRequestedAt` in all three
@@ -155,15 +157,12 @@ coverage — the repo has no JS test framework for the relayer (single-file
 `node` script) and no Next.js test framework. They are defended by the
 code change itself, the matching hook changes, and manual review.
 
-## Latest frontend (v51 hardening — manifest endpoint v50) — pending contract deploy (v19 + v40 + v45) on the v15 address family — completed
+## Latest frontend (v51 hardening — manifest endpoint v50) — shipped 2026-06-09 with the v19+v40+v45 contract
 
 The frontend at `autoresolve-somnia.vercel.app` is on v50 (the v22-v50 audit
 sequence — 30+ audit cycles, 29 shipped versions; v39 was skipped after v38
-went straight to v40). The contract on-chain is still v15 (the v15 audit at
-the top of this file). v16, v17, v18, v19, v40, and v45 contract changes
-are all Foundry-tested and merge-ready but have not been deployed to a new
-address; the next contract deploy will land them on top of the live v15
-address family in a single `forge create`. v45 only changes the compiled
+went straight to v40). The contract on-chain is now v19+v40+v45 (the v19+v40+v45 deploy at
+`0x48556E…85dE` on 2026-06-09). v45 only changed the compiled
 bytecode (the on-chain `agentManifest()` string content was bumped v19 → v40
 to advertise the user-position-discovery surface); v46-v51 are frontend
 + relayer + tooling only.
@@ -484,14 +483,7 @@ deployment" and the v15 section above moves to "Previous deployment".
 **Test count: 113/113 Foundry tests pass** (105 prior + 7 new for
 v40 `getUserMarkets` + 1 new for v45 `testAgentManifestAdvertisesV40`).
 
-**The next deploy is `./scripts/deploy.sh`** — single `forge create`
-against Shannon, prefund 2 STT, seed 2 markets, update
-`NEXT_PUBLIC_CONTRACT_ADDRESS` in `.env` to the new (still v15-family)
-address, then `pnpm export-abi` and `pnpm exec vercel deploy --prod`. The
-v15 live address stays the parent of the v15 address family because none
-of v8-v15 were deployed to a new address; the v15 bytecode at
-`0x764D…2022b` is the parent for all subsequent redeploys of the same
-source family.
+**This is the deployed state as of 2026-06-09.** The v19+v40+v45 bytecode is live at `0x48556EA096F4abFFB569916a138Ec946B54A85dE`; the relayer is running on Railway; the frontend is on Vercel. The v15 address (`0x764Dc…2022b`) is now historical. For the next redeploy workflow, see [`DEPLOY.md`](./DEPLOY.md) at the repo root.
 
 ## Previous deployment (v14 — 9 audit gaps closed) — historical
 
@@ -1156,7 +1148,7 @@ pnpm dev   # http://localhost:3000
 ```
 
 Set in `.env`:
-- `NEXT_PUBLIC_CONTRACT_ADDRESS=0x764Dc86246D242382c7619Fc715d0E3A64B2022b`
+- `NEXT_PUBLIC_CONTRACT_ADDRESS=0x48556EA096F4abFFB569916a138Ec946B54A85dE`
 
 ## Auto-retry relayer
 
@@ -1167,7 +1159,7 @@ request, then re-submits `requestResolution` with the wallet's top-up.
 
 ```bash
 PRIVATE_KEY=0x... \
-  NEXT_PUBLIC_CONTRACT_ADDRESS=0x764Dc86246D242382c7619Fc715d0E3A64B2022b \
+  NEXT_PUBLIC_CONTRACT_ADDRESS=0x48556EA096F4abFFB569916a138Ec946B54A85dE \
   node scripts/relayer.mjs
 ```
 
