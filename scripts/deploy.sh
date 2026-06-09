@@ -76,21 +76,29 @@ fi
 
 pnpm export-abi
 
+# v55 (M1): Shannon Explorer is a Blockscout v2 instance — no API key required.
+# The pre-v55 invocation (`forge verify-contract --chain-id 50312 --etherscan-api-key ...`)
+# fell back to Sourcify, which doesn't have chain 50312 in its supported list
+# and errors with "Chain 50312 not found". The working flow uses the Blockscout
+# verifier endpoint (the v2 API at `shannon-explorer.somnia.network/api`),
+# which accepts a POST without any auth.
 if [ -n "${ETHERSCAN_API_KEY:-}" ]; then
   echo ""
-  echo "Verifying source on Shannon Explorer..."
-  forge verify-contract \
-    --chain-id 50312 \
-    --etherscan-api-key "$ETHERSCAN_API_KEY" \
-    "$CONTRACT" \
-    src/AutonomousPredictionMarket.sol:AutonomousPredictionMarket || echo "  (verification attempt failed; you can retry manually)"
-else
-  echo ""
-  echo "Skipping source verification: ETHERSCAN_API_KEY not set."
-  echo "Get a Shannon Explorer API key and run:"
-  echo "  forge verify-contract --chain-id 50312 --etherscan-api-key <KEY> \\"
-  echo "    $CONTRACT src/AutonomousPredictionMarket.sol:AutonomousPredictionMarket"
+  echo "NOTE: ETHERSCAN_API_KEY is set but no longer needed for Shannon —"
+  echo "      Shannon Explorer is Blockscout v2 and accepts verification"
+  echo "      without any API key. The key will be ignored. Unset it in"
+  echo "      .env to silence this message."
 fi
+
+echo ""
+echo "Verifying source on Shannon Explorer (Blockscout v2, no API key)..."
+forge verify-contract \
+  --rpc-url "$SHANNON_RPC_URL" \
+  --verifier blockscout \
+  --verifier-url "https://shannon-explorer.somnia.network/api" \
+  "$CONTRACT" \
+  src/AutonomousPredictionMarket.sol:AutonomousPredictionMarket \
+  || echo "  (verification attempt failed; you can retry manually: see DEPLOY.md 'Source verification')"
 
 echo ""
 echo "Deployed: $CONTRACT"
