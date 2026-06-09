@@ -47,13 +47,16 @@ COPY scripts/ ./scripts/
 # Railway Volumes") — the volume is attached via the dashboard/CLI instead.
 RUN mkdir -p /app/state
 
-# Healthcheck: assert the relayer process is still running. The relayer
-# logs `[relayer] loop error: ...` on every main-loop tick that throws
-# (caught + re-logged), but a totally dead process would just stop emitting
-# logs. A 60s interval is generous (the relayer polls every RELAYER_POLL_MS
-# seconds, default 30s). Retries=3 = ~3min of continuous death before the
-# container is marked unhealthy.
+# Healthcheck: the service-level `health_check_path` on Railway is set to
+# GET /health on port 3000, which overrides the Dockerfile's HEALTHCHECK
+# directive with an HTTP probe. pgrep doesn't speak HTTP, so the probe
+# times out and the container is marked unhealthy after 5 minutes of
+# retries — even though the relayer process is alive and running. The
+# fix: scripts/healthcheck.mjs is a tiny Node HTTP shim that listens on
+# 0.0.0.0:3000, returns 200 OK when the relayer child process is alive,
+# 503 otherwise. The pgrep-based HEALTHCHECK stays as a defense-in-depth
+# fallback (ignored by Railway but respected by a plain `docker run`).
 HEALTHCHECK --interval=60s --timeout=5s --start-period=10s --retries=3 \
   CMD pgrep -f "node scripts/relayer.mjs" >/dev/null || exit 1
 
-CMD ["node", "scripts/relayer.mjs"]
+CMD ["node", "scripts/healthcheck.mjs"]
