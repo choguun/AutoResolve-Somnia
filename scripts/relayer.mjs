@@ -1057,11 +1057,27 @@ async function tryResetStuckGeneration(requestId, alreadySubmitted) {
 async function scanStuckGenerationRequests(alreadySubmitted) {
   // Paginate via the contract's own agent surface. MAX_AGENT_SCAN_LIMIT is 50.
   // The contract walks [cursor, lastGenerationRequestId] so the upper bound is
-  // tight — no wasted iterations over the entire uint256 space.
+  // tight — but we have to enforce it on the client side too. v56 (L0):
+  // added the upper-bound check. Pre-L0 the loop was `while (true)` with
+  // only the `nextCursor <= cursor` no-progress break — which never
+  // fired on a healthy chain because the contract returns
+  // `nextCursor = cursor + limit` on every call. On the live v45
+  // contract lastGenerationRequestId is ~5.85M, so the relayer
+  // made ~117,000 sequential readContract calls before the
+  // healthcheck probe timed out. Mirror the scanStuckMarkets
+  // pattern: read the high-water mark, terminate when cursor
+  // passes it.
+  const lastId = await publicClient.readContract({
+    address: CONTRACT,
+    abi: ABI,
+    functionName: 'lastGenerationRequestId',
+  });
+  if (lastId === 0n) return;
+
   const allIds = [];
   let cursor = 1n;
   const limit = 50n;
-  while (true) {
+  while (cursor <= lastId) {
     const [ids, nextCursor] = await publicClient.readContract({
       address: CONTRACT,
       abi: ABI,
