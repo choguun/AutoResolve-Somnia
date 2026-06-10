@@ -310,7 +310,16 @@ export function getAutoResolveAgentManifest() {
     // distinction between a gas issue, a user-rejected tx, and
     // a contract revert. v61 is a frontend-only change (no
     // contract bytecode shift).
-    version: 'v61',
+    // v62 (M0) bumps v61 -> v62 to advertise the relayer-driven
+    // auto-liquidity feature: when RELAYER_LIQUIDITY_STT > 0
+    // (default 0 = disabled), the relayer EOA places a small
+    // YES+NO seed bet on every newly-created market and auto-
+    // claims the winnings on MarketResolved. The seed is
+    // invisible in the UI (it just bumps yesTotal/noTotal) and
+    // uses the existing bet() / claimWinnings() entry points —
+    // no contract bytecode shift, no new functions. A future
+    // v2 AMM LP slot is reserved in the manifest below.
+    version: 'v62',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
@@ -424,6 +433,35 @@ export function getAutoResolveAgentManifest() {
         topicFile: 'scripts/daily-topics.txt',
         durationHintConvention: '[duration=<seconds>] suffix in topic text',
         demo: 'DailyResolutionDemo section on /proof',
+      },
+      // v62 (M0): relayer-driven auto-liquidity. Opt-in via
+      // RELAYER_LIQUIDITY_STT (default 0 = disabled). When enabled,
+      // the relayer EOA places a small YES+NO seed bet on every
+      // newly-created market (capped at RELAYER_SEED_MAX_PER_TICK per
+      // tick) and auto-claims the winnings on MarketResolved. The
+      // seed lands in marketBets[id] like any other bet, so the UI
+      // just sees the bumped yesTotal/noTotal — no new component, no
+      // new copy. Future v2 will introduce a real on-chain AMM LP
+      // (addLiquidity/removeLiquidity) — the contract surface is
+      // reserved here but not implemented in v62.
+      autoLiquidity: {
+        description:
+          'Relayer-driven auto-liquidity. When RELAYER_LIQUIDITY_STT > 0 ' +
+          '(default 0 = disabled for first-deploy safety), the relayer EOA ' +
+          'places a YES+NO seed bet of that amount on every newly-created ' +
+          'market, and auto-claims the winnings back on MarketResolved. ' +
+          'Pure relayer logic — uses the existing bet() and claimWinnings() ' +
+          'entry points; no contract bytecode change.',
+        enabled: 'env-gated: RELAYER_LIQUIDITY_STT > 0',
+        seedAmount: 'RELAYER_LIQUIDITY_STT STT per side (total = 2x per market)',
+        seedTrigger: 'MarketCreated event (drainSeedEvents in scripts/relayer.mjs)',
+        claimTrigger: 'MarketResolved event (augmented logResolvedMarkets in scripts/relayer.mjs)',
+        perTickCap: 'RELAYER_SEED_MAX_PER_TICK (default 5) bounds burst case',
+        stateFiles: [
+          'state/seeded-markets.<eoa>.json (cross-restart dedup for the seed bet)',
+          'state/claimed-markets.<eoa>.json (FIFO-capped at 1000, in-memory + persistence)',
+        ],
+        v2AMM: 'AMM constant-product LP (addLiquidity/removeLiquidity) reserved, not yet implemented',
       },
     },
     judgingAlignment: {

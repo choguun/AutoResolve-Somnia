@@ -56,11 +56,22 @@ if kill -0 "$PID" 2>/dev/null; then
   kill -9 "$PID" 2>/dev/null
   # Look for the RELAYER_VERSION-prefixed startup line — the H0 fix is
   # specifically about getting this log to print without a TDZ throw.
-  if grep -q "starting (v61)" /tmp/relayer-smoke.log; then
-    echo "[relayer-smoke] OK: v61 startup line printed"
+  if grep -q "starting (v62)" /tmp/relayer-smoke.log; then
+    echo "[relayer-smoke] OK: v62 startup line printed"
   else
-    echo "[relayer-smoke] WARN: v61 startup line missing — relayer may be running an older version"
+    echo "[relayer-smoke] WARN: v62 startup line missing — relayer may be running an older version"
     cat /tmp/relayer-smoke.log
+  fi
+  # v62 (M0): assert the new `liquidity:` startup line is present, and
+  # that the env-gate behaves correctly. When the smoke runs without
+  # RELAYER_LIQUIDITY_STT in the env, the relayer should print
+  # `liquidity:  disabled` (and crucially NOT try to parseEther
+  # an undefined value, which would crash the relayer on startup).
+  if grep -q "liquidity:  disabled" /tmp/relayer-smoke.log; then
+    echo "[relayer-smoke] OK: v62 liquidity startup line correct (disabled by default)"
+  else
+    echo "[relayer-smoke] WARN: v62 liquidity startup line missing or wrong (expected 'liquidity:  disabled' since the smoke env has no RELAYER_LIQUIDITY_STT)"
+    grep -E "liquidity" /tmp/relayer-smoke.log || echo "  (no 'liquidity' line in startup log at all)"
   fi
   # v56 (L0): the post-fix invariant is that the main loop has at
   # least started ticking. A hung scanStuckGenerationRequests (the

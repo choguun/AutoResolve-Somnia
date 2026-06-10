@@ -63,7 +63,7 @@ const ROOT = join(__dirname, '..');
 // code paths, no new log lines, no new ENV vars), but the version
 // constant tracks the shipped audit surface so the smoke grep
 // continues to be the test of record.
-const RELAYER_VERSION = 'v61';
+const RELAYER_VERSION = 'v62';
 const SHANNON_RPC_URL = process.env.SHANNON_RPC_URL ?? 'https://dream-rpc.somnia.network';
 const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
 const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';
@@ -156,6 +156,14 @@ const GENERATION_FAILED_TOPIC = keccak256(
 const INFERENCE_UNDERFUNDED_TOPIC = keccak256(
   toBytes('InferenceUnderfunded(uint256,uint256,string)'),
 );
+// v62 (M0): relayer-driven auto-liquidity. Watched for fresh
+// MarketCreated events so the relayer can seed YES+NO bets on every
+// newly-created market (env-gated via RELAYER_LIQUIDITY_STT). The
+// event signature mirrors the contract's MarketCreated at
+// src/AutonomousPredictionMarket.sol:244.
+const MARKET_CREATED_TOPIC = keccak256(
+  toBytes('MarketCreated(uint256,address,string,string,uint256)'),
+);
 // v29 (H1): topic-feed source for autonomous market generation. The relayer
 // reads GENERATION_TOPICS_FILE (one topic per line, # = comment) and submits
 // `requestMarketGeneration(topic)` for each unseen topic. The set of already-
@@ -177,6 +185,21 @@ const SUBMITTED_TOPICS_FILE = process.env.SUBMITTED_TOPICS_FILE
 // the per-tick rate-limit context). 30s cadence × 2880 ticks/day × max
 // 1/tick = up to 2880 topic submissions/day, well above any demo cadence.
 const TOPIC_FEED_MAX_PER_TICK = Number(process.env.TOPIC_FEED_MAX_PER_TICK ?? 1);
+// v62 (M0): relayer-driven auto-liquidity. When RELAYER_LIQUIDITY_STT > 0,
+// the relayer places a YES + NO seed bet of that amount on every newly-
+// created market (from the relayer EOA's own STT balance), and auto-claims
+// the winnings back on MarketResolved. Default '0' = disabled (opt-in via
+// env to keep the first deploy safe and to avoid silently draining the
+// relayer EOA on a flood of markets). The seed lands in `marketBets[id]`
+// like any other bet, so the UI sees it as just a bump to yesTotal/noTotal
+// — no new component, no new copy. Future v2 will introduce real on-chain
+// AMM LP (addLiquidity/removeLiquidity) reserved here as a manifest stub.
+const RELAYER_LIQUIDITY_STT = process.env.RELAYER_LIQUIDITY_STT ?? '0';
+const LIQUIDITY_SEED_MAX_PER_TICK = Number(process.env.RELAYER_SEED_MAX_PER_TICK ?? 5);
+const SEEDED_FILE = process.env.SEEDED_FILE
+  || join(ROOT, 'state', `seeded-markets.${account.address.toLowerCase()}.json`);
+const CLAIMED_FILE = process.env.CLAIMED_FILE
+  || join(ROOT, 'state', `claimed-markets.${account.address.toLowerCase()}.json`);
 
 console.log(`[relayer] starting (${RELAYER_VERSION})`);
 console.log(`  rpc:         ${SHANNON_RPC_URL}`);
@@ -186,6 +209,9 @@ console.log(`  poll:        ${POLL_MS / 1000}s`);
 console.log(`  max top-up:  ${MAX_TOPUP_STT} STT per market`);
 console.log(`  max attempts: ${MAX_ATTEMPTS_PER_MARKET} per market before giving up`);
 console.log(`  topic feed:  ${TOPICS_FILE} (max ${TOPIC_FEED_MAX_PER_TICK}/tick)`);
+console.log(
+  `  liquidity:  ${RELAYER_LIQUIDITY_STT === '0' ? 'disabled' : `${RELAYER_LIQUIDITY_STT} STT per side (max ${LIQUIDITY_SEED_MAX_PER_TICK}/tick)`}`,
+);
 
 let lastScannedBlock = await publicClient.getBlockNumber();
 console.log(`  resume from block: ${lastScannedBlock}\n`);
@@ -233,6 +259,17 @@ const SEEN_GEN_FAILURE_LIMIT = 1000;
 const seenResolvedMarkets = new Set();
 const SEEN_RESOLVED_LIMIT = 1000;
 const maxWei = parseEther(MAX_TOPUP_STT);
+// v62 (M0): auto-liquidity state. seededMarkets tracks every market
+// the relayer has already placed the YES+NO seed bet on (cross-restart
+// dedup, persisted to disk on every add to survive SIGKILL). seenClaimed
+// is the in-memory FIFO dedup for the post-resolution claimWinnings
+// path — the resolved-events scan is bounded to a 50-block window and
+// re-scans every tick, so the FIFO prevents repeated "claimed market
+// N" log lines for already-handled resolutions.
+const seededMarkets = new Set();
+const seenClaimedMarkets = new Set();
+const SEEN_CLAIMED_LIMIT = 1000;
+let lastScannedSeedBlock = 0n;
 
 // v29 (H1) + v30 (H0): TOPICS_FILE / SUBMITTED_TOPICS_FILE / TOPIC_FEED_MAX_PER_TICK
 // were hoisted to L160–167 so the L176 startup log line can reference them
@@ -460,8 +497,67 @@ function flushSubmittedTopicsSync() {
   }
 }
 
+// v62 (M0): auto-liquidity persistence. Mirrors the submitted-topics
+// pattern: in-memory Set + EOA-namespaced JSON file on disk, sync
+// write after every change (the seed bet costs 0.02 STT per market —
+// a SIGKILL race that re-seeds on restart is bounded by the cost
+// of one extra seed, ~0.02 STT, not catastrophic). The seed-set
+// keys on `marketId.toString()` for human-readable JSON. The
+// claimed-set lives in memory only (losing it on restart just
+// means a re-scan of the 50-block resolved window will try to claim
+// again, which the contract's NoWinningBets revert handles
+// gracefully).
+function loadSeededMarkets() {
+  if (!existsSync(SEEDED_FILE)) return;
+  try {
+    const raw = readFileSync(SEEDED_FILE, 'utf8');
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      let count = 0;
+      for (const k of arr) {
+        if (typeof k === 'string' && /^\d+$/.test(k) && k !== '0') {
+          seededMarkets.add(k);
+          count++;
+        }
+      }
+      if (count > 0) {
+        console.log(`[relayer] loaded ${count} seeded-market(s) from disk`);
+      }
+    }
+  } catch (err) {
+    console.warn(
+      '[relayer] seeded-markets cache load failed (starting empty):',
+      err.message,
+    );
+  }
+}
+
+function saveSeededMarkets() {
+  try {
+    const arr = Array.from(seededMarkets);
+    const tmp = SEEDED_FILE + '.tmp';
+    writeFileSync(tmp, JSON.stringify(arr));
+    renameSync(tmp, SEEDED_FILE);
+  } catch (err) {
+    console.warn('[relayer] seeded-markets cache save failed:', err.message);
+  }
+}
+
+function saveClaimedMarkets() {
+  try {
+    const arr = Array.from(seenClaimedMarkets);
+    const tmp = CLAIMED_FILE + '.tmp';
+    writeFileSync(tmp, JSON.stringify(arr));
+    renameSync(tmp, CLAIMED_FILE);
+  } catch (err) {
+    console.warn('[relayer] claimed-markets cache save failed:', err.message);
+  }
+}
+
 loadParseFailureCache();
 loadSubmittedTopics();
+loadSeededMarkets();
 // v17 (M3): ensure the cache directory exists. A fresh clone may not have
 // `state/` yet (deploy.sh creates it, but operators that run the relayer
 // standalone won't have that step). Without this, the first save (or
@@ -798,6 +894,133 @@ async function drainInferenceUnderfundedEvents(alreadySubmitted) {
   lastScannedInferenceBlock = toBlock;
 }
 
+// v62 (M0): relayer-driven auto-liquidity. Watches for fresh
+// MarketCreated events and seeds a YES+NO bet (RELAYER_LIQUIDITY_STT
+// per side) on each new market. Mirrors the drainInferenceUnderfundedEvents
+// shape (read cursor, scan, filter, advance, rollback on regression).
+// The per-tick cap LIQUIDITY_SEED_MAX_PER_TICK bounds the burst case
+// (a fresh contract redeploy with 50 historical markets) so the
+// relayer EOA doesn't drain in a single 30s window.
+async function drainSeedEvents(alreadySubmitted) {
+  if (RELAYER_LIQUIDITY_STT === '0') return; // feature disabled, fast-path
+  const head = await publicClient.getBlockNumber();
+  if (lastScannedSeedBlock === 0n) {
+    // First tick after startup — initialize the cursor to head so we
+    // don't try to seed every historical market on first boot (which
+    // would burn STT on markets that already have user bets and may
+    // even be resolved).
+    lastScannedSeedBlock = head;
+    return;
+  }
+  if (head < lastScannedSeedBlock) {
+    // Chain reorg or RPC reset; resync to a safe margin.
+    lastScannedSeedBlock = head - 10n;
+    return;
+  }
+  const fromBlock = lastScannedSeedBlock + 1n;
+  const toBlock = head;
+  if (fromBlock > toBlock) return;
+
+  let logs;
+  try {
+    logs = await getLogsChunked(CONTRACT, fromBlock, toBlock);
+  } catch (err) {
+    console.error('[relayer] getLogs (seed events) failed (will retry next tick):', err.shortMessage ?? err.message);
+    return;
+  }
+
+  const createdLogs = logs.filter(
+    (l) => l.topics[0]?.toLowerCase() === MARKET_CREATED_TOPIC.toLowerCase(),
+  );
+  if (createdLogs.length === 0) {
+    lastScannedSeedBlock = toBlock;
+    return;
+  }
+  console.log(
+    `[relayer] saw ${createdLogs.length} MarketCreated event(s) between blocks ` +
+      `${fromBlock}-${toBlock} (capping at ${LIQUIDITY_SEED_MAX_PER_TICK}/tick)`,
+  );
+  let seededThisTick = 0;
+  for (const log of createdLogs) {
+    if (seededThisTick >= LIQUIDITY_SEED_MAX_PER_TICK) {
+      console.log(
+        `[relayer]   reached LIQUIDITY_SEED_MAX_PER_TICK=${LIQUIDITY_SEED_MAX_PER_TICK}; remaining markets deferred to next tick`,
+      );
+      break;
+    }
+    const marketId = log.topics[1];
+    const key = marketKey(marketId);
+    if (alreadySubmitted.has(key)) continue;
+    if (seededMarkets.has(key)) continue;
+    const ok = await seedMarket(marketId);
+    if (ok) {
+      alreadySubmitted.add(key);
+      seededThisTick++;
+    }
+  }
+  lastScannedSeedBlock = toBlock;
+}
+
+// v62 (M0): place the YES+NO seed bets. Returns true on full success
+// (both bets mined), false otherwise. The seededMarkets Set is updated
+// ONLY after both bets have receipts with status='success' — a partial
+// seed (e.g. YES mined, NO reverted) is NOT recorded, so the next
+// relayer restart will retry. The retry cost is bounded by
+// LIQUIDITY_SEED_MAX_PER_TICK per tick, so a single market getting
+// re-seeded costs ~0.02 STT — acceptable for the demo.
+async function seedMarket(marketId) {
+  const key = marketKey(marketId);
+  if (seededMarkets.has(key)) return false;
+  const seedWei = parseEther(RELAYER_LIQUIDITY_STT);
+  if (seedWei < 1000000000000000n /* 0.001 STT = MIN_BET */) {
+    console.warn(
+      `[relayer]   skipping seed for market ${marketId}: RELAYER_LIQUIDITY_STT=${RELAYER_LIQUIDITY_STT} is below MIN_BET (0.001 STT)`,
+    );
+    return false;
+  }
+  console.log(
+    `[relayer]   seeding market ${marketId} (${RELAYER_LIQUIDITY_STT} STT each side, total ${Number(RELAYER_LIQUIDITY_STT) * 2} STT)`,
+  );
+  for (const option of [0 /* Yes */, 1 /* No */]) {
+    try {
+      const hash = await walletClient.writeContract({
+        address: CONTRACT,
+        abi: ABI,
+        functionName: 'bet',
+        args: [marketId, option],
+        value: seedWei,
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash,
+        timeout: 60_000,
+      });
+      if (receipt.status !== 'success') {
+        console.error(
+          `[relayer]   seed bet for market ${marketId} option=${option} reverted (blockHash=${receipt.blockHash}); aborting pair`,
+        );
+        return false;
+      }
+      if (VERBOSE) {
+        console.log(
+          `[relayer]   seed bet mined: market ${marketId} option=${option} → ${hash}`,
+        );
+      }
+    } catch (err) {
+      console.error(
+        `[relayer]   seed bet for market ${marketId} option=${option} failed:`,
+        err.shortMessage ?? err.message,
+      );
+      return false;
+    }
+  }
+  seededMarkets.add(key);
+  saveSeededMarkets(); // sync write (v32 H1 pattern) — SIGKILL here costs 0.02 STT
+  console.log(
+    `[relayer]   seeded market ${marketId} (${RELAYER_LIQUIDITY_STT} STT each side)`,
+  );
+  return true;
+}
+
 async function tryRetryInferenceFromCache(marketId, alreadySubmitted) {
   const key = marketKey(marketId);
   if (alreadySubmitted.has(key)) {
@@ -965,6 +1188,62 @@ async function logResolvedMarkets() {
       // let the operator investigate via the receipt URL.
     }
     console.log(`[relayer] ✓ market ${log.topics[1]} resolved outcome=${outcome}`);
+    // v62 (M0): if we seeded this market, claim the winnings back. The
+    // relayer's YES+NO seed bet lands in marketBets[marketId] like any
+    // other bet, so claimWinnings pays out the relayer's share of the
+    // winning side (proportional to its 0.01 STT stake vs. the
+    // winningPool). If the relayer's side lost (or the market had no
+    // other bettors — the relayer gets 0.02 STT back, its 0.01 stake
+    // on the losing side forfeit), claimWinnings reverts NoWinningBets
+    // and we add the market to seenClaimedMarkets so we don't retry
+    // every tick. The outcome is logged as an advisory so the operator
+    // can see "the relayer's seed was recovered" or "the relayer's
+    // side lost, seed forfeit" without digging through receipt URLs.
+    if (RELAYER_LIQUIDITY_STT !== '0' && seededMarkets.has(key) && !seenClaimedMarkets.has(key)) {
+      if (seenClaimedMarkets.size >= SEEN_CLAIMED_LIMIT) {
+        const oldest = seenClaimedMarkets.values().next().value;
+        seenClaimedMarkets.delete(oldest);
+      }
+      seenClaimedMarkets.add(key);
+      try {
+        const hash = await walletClient.writeContract({
+          address: CONTRACT,
+          abi: ABI,
+          functionName: 'claimWinnings',
+          args: [log.topics[1]],
+        });
+        const receipt = await publicClient.waitForTransactionReceipt({
+          hash,
+          timeout: 60_000,
+        });
+        if (receipt.status === 'success') {
+          saveClaimedMarkets();
+          console.log(
+            `[relayer]   claimed winnings for market ${log.topics[1]} → ${hash}`,
+          );
+        } else {
+          console.error(
+            `[relayer]   claimWinnings(${log.topics[1]}) reverted (blockHash=${receipt.blockHash}); relayer EOA had no winning bet, seed forfeit`,
+          );
+        }
+      } catch (err) {
+        // NoWinningBets reverts when the relayer's side lost (or the
+        // user already claimed). Catch + advisory log so the operator
+        // can audit. The seenClaimedMarkets.add above ensures we
+        // don't retry every tick.
+        const reason = err.shortMessage ?? err.message ?? '';
+        if (/NoWinningBets/i.test(reason)) {
+          console.log(
+            `[relayer]   market ${log.topics[1]} resolved ${outcome}; relayer EOA had no winning bet (seed forfeit on losing side)`,
+          );
+        } else {
+          console.error(
+            `[relayer]   claimWinnings(${log.topics[1]}) failed:`,
+            reason,
+          );
+        }
+      }
+    }
   }
 }
 
@@ -1428,11 +1707,19 @@ process.on('SIGINT', () => {
   flushParseFailureCacheSync();
   // v29 (H1): same guarantee for the submitted-topics cache.
   flushSubmittedTopicsSync();
+  // v62 (M0): same guarantee for the auto-liquidity seeded-markets
+  // cache. A SIGKILL here would re-seed markets on restart, costing
+  // ~0.02 STT per market — bounded by LIQUIDITY_SEED_MAX_PER_TICK
+  // so the relayer can't blow its own STT on a bad restart.
+  saveSeededMarkets();
+  saveClaimedMarkets();
 });
 process.on('SIGTERM', () => {
   stopping = true;
   flushParseFailureCacheSync();
   flushSubmittedTopicsSync();
+  saveSeededMarkets();
+  saveClaimedMarkets();
 });
 
 while (!stopping) {
@@ -1448,6 +1735,13 @@ while (!stopping) {
     // the cross-restart dedup, so a relayer that comes up after editing
     // scripts/topics.txt picks up only the new entries.
     await drainTopicFeed();
+    // v62 (M0): drainSeedEvents runs AFTER drainTopicFeed (a market
+    // auto-created by the topic feed in this tick is seeded in the
+    // same tick) and BEFORE drainInferenceUnderfundedEvents (no
+    // ordering dependency, but keeps the "creation" surfaces grouped
+    // with the "resolution" surfaces in the log). The function is
+    // a fast-path no-op when RELAYER_LIQUIDITY_STT='0'.
+    await drainSeedEvents(alreadySubmitted);
     // v28 (H1): drainInferenceUnderfundedEvents runs BEFORE drainFailureEvents.
     // The InferenceUnderfunded path emits BOTH InferenceUnderfunded AND
     // ResolutionFailed(stage=Inference); the v16 ordering let drainFailureEvents
