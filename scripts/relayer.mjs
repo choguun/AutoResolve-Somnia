@@ -830,14 +830,17 @@ async function maybeAutoFundContract() {
   }
   // The highest topUpNeeded is the binding constraint for the next batch.
   const maxTopUpNeeded = resStatus[2] > genStatus[2] ? resStatus[2] : genStatus[2];
-  // If the contract already has enough for the next batch, skip.
-  if (maxTopUpNeeded === 0n) return;
   // Target balance: 1.5x the configured threshold. The extra 0.5x
   // is a buffer for the next batch after the immediate refill.
   const topUpTo = targetWei + (targetWei / 2n);
-  // If the contract already has >= topUpTo, skip (avoids wasting
-  // gas on tiny top-ups when the contract is over-funded).
-  if (contractBalance >= topUpTo) return;
+  // v68 (L3): skip only when BOTH conditions are met. The previous
+  // logic checked `maxTopUpNeeded === 0n` first, which incorrectly
+  // skipped the refill even when the contract was below the
+  // threshold (e.g. balance 11 STT, threshold 20 STT, topUpNeeded
+  // 0 because requiredDeposit < balance). With the target check
+  // first, the refill fires whenever the contract is below the
+  // operator-configured threshold.
+  if (contractBalance >= topUpTo && maxTopUpNeeded === 0n) return;
   // Compute the refill amount. Cap at min(0.1 * eoaBalance, maxPerRefill).
   // The 10% EOA cap protects the operator's wallet from runaway
   // fills (e.g. a buggy contract that drains the relayer EOA).
