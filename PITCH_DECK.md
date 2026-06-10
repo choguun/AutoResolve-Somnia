@@ -8,9 +8,9 @@
 
 No human oracle. No backend resolver. Validator-executed agent receipts for every decision.
 
-Live app: https://autoresolve-somnia.vercel.app  
-Proof page: https://autoresolve-somnia.vercel.app/proof  
-Contract: `0xc7d1A923A5a5C90d3134aAD2Abd508D192468f4f` (v19+v40+v45+v60 live; v22-v68 frontend/relayer/tooling shipped; deploy tx on 2026-06-10. v60 update: the on-chain `GENERATION_PROMPT_SUFFIX` now teaches the inference agent to honor `[duration=N]` hints in the topic text, so the daily auto-create pattern produces 24h markets instead of 5-min ones. v62 update: relayer-driven auto-liquidity — when `RELAYER_LIQUIDITY_STT > 0` (default 0 = disabled), the relayer EOA places a YES+NO seed bet on every newly-created market and auto-claims the winnings on `MarketResolved`. v63 update: v62-audit cleanup (stranded-seed observability, dynamic MIN_BET, partial-seed completion, env-toggle fix). v64 update: dApp surface for stranded-seed observability (`/api/stranded-seeds` API + `StrandedSeedsCard` on `/proof`). v65 update: v64-audit cleanup (backfill-on-startup pass that seeds pre-v62 markets; on the live contract 8 markets were backfilled; plus the StrandedSeedsCard precision conversion fix). v66 update: v65-audit cleanup (periodic partial-seed retry every ~30 min to recover from Somnia state-trie partial seeds; stranded-seeds API tags entries with `partialSeed` so the dApp can show a 'partial' pill). v67 update: v66-audit cleanup (stranded-seeds route requires the relayer EOA to have userYesBets+userNoBets of exactly 0.01 STT each; sttStringToWei precision helper moved to lib-web; the partial-seed retry now happens on every tick for flaggedPartials markets, with a 60-attempt cap). v68 update: relayer-driven auto-funding — the relayer now tops up the contract's STT balance whenever it falls below RELAYER_AUTO_FUND_STT, with a per-refill cap of min(0.1 * EOA balance, RELAYER_AUTO_FUND_MAX_PER_REFILL_STT default 2 STT).)
+Live app: https://autoresolve-somnia.vercel.app
+Proof page: https://autoresolve-somnia.vercel.app/proof
+Contract: `0x48556EA096F4abFFB569916a138Ec946B54A85dE` (deployed 2026-06-09)
 
 ---
 
@@ -78,7 +78,7 @@ With Somnia, the resolver becomes part of the on-chain settlement flow.
 
 AutoResolve is built so autonomous agents can interact with it directly.
 
-The v19+v40+v45+v60 live contract (deployed 2026-06-10 at `0xc7d1A923A5a5C90d3134aAD2Abd508D192468f4f`; v22-v68 frontend + relayer + tooling shipped alongside) exposes:
+The contract exposes:
 
 | Function | Purpose |
 |---|---|
@@ -149,10 +149,14 @@ Verification:
 
 Current deployment:
 
-- Contract: `0xc7d1A923A5a5C90d3134aAD2Abd508D192468f4f` (v19+v40+v45+v60 live; v22-v68 frontend/relayer/tooling shipped)
-- Contract balance: `0.72 STT` (2.0 STT prefunded − 0.62 STT spent on AI-created market #3's inference deposit + 2 × 0.01 STT prefund on the resolution pipeline for markets #1 and #2)
-- Resolution deposit: `0.66 STT` per resolution (parse 0.01 + inference 0.3 + 0.01 + 0.3)
-- Seeded markets: `#1` (Paris, parsing), `#2` (Bitcoin, parsing); AI-created market `#3` ("Will Somnia mainnet launch before 2027?", submitted by the Railway relayer within seconds of boot)
+- Contract: `0x48556EA096F4abFFB569916a138Ec946B54A85dE` (deployed 2026-06-09)
+- Contract balance: ~16.8 STT (well above the 2 STT auto-fund target; the relayer tops up automatically when needed)
+- Resolution deposit: ~0.66 STT per resolution (parse 0.36 + inference 0.30)
+- AI-created markets: 8 markets with `creator == 0xA1` (the agent-sentinel class). The most recent auto-created market (`#13` — "v63 partial seed test", BBC URL) was created via the relayer's topic-feed path. The dApp's `StrandedSeedsCard` shows `count: 9, totalStrandedStt: "0.180"` — 9 markets with the relayer's auto-seed that haven't resolved yet.
+
+Fresh E2E proof:
+
+- The relayer's first AI-created market on this contract is `#5` ("Will Somnia mainnet launch before 2027?") at tx `0x454a2c…e56c`. The market is in `Open` state with the relayer EOA's seed (0.01 STT YES + 0.01 STT NO).
 
 Completed historical E2E proof:
 
@@ -161,6 +165,14 @@ Completed historical E2E proof:
 - Inference receipt: `2400485`
 - Outcome: `YES`
 - Claim transaction: `0x888327...2380`
+
+Completed historical E2E proof (AI-created → AI-resolved):
+
+- Market: `Did a tier-1 LLM agent beat a human on a standard SWE-bench task this week?` (creator `0xA1`)
+- Parse receipt: `4254170`
+- Inference receipt: `4254291`
+- Outcome: `YES`
+- Resolution transaction: `0x362daa6f…b5143`
 
 Proof page:
 
@@ -232,6 +244,11 @@ The core value is replacing human or backend-controlled settlement with Somnia-n
 - Agent-scannable contract interface
 - Machine-readable manifest for external agents
 - Full callback and payout test coverage
+- Relayer-driven auto-liquidity: the relayer EOA places 0.01 STT YES + 0.01 STT NO on every newly-created market, so fresh markets show non-zero pools from the start instead of `0 STT` totals
+- Periodic partial-seed retry: the relayer detects Somnia state-trie partial seeds (where `userNoBets` and `marketBets.push` commit but `market.noTotal` rolls back) and retries the missing side every tick with a 60-attempt cap
+- Stranded-seed observability: the dApp's `/api/stranded-seeds` API derives the stranded set from on-chain data; a `StrandedSeedsCard` on `/proof` shows count + total STT locked + per-market detail with a "partial" pill for partial-seed markets
+- Backfill-on-startup: the relayer scans `[1, nextMarketId)` on the first tick and seeds any Open market where the relayer EOA hasn't already placed the YES+NO seed
+- Relayer-driven auto-funding: the relayer tops up the contract's STT balance whenever it falls below a configurable threshold. Per-refill cap = `min(0.1 * EOA balance, 2 STT)`. No contract bytecode change — the contract's `receive()` function already accepts plain STT transfers
 
 ---
 
@@ -269,4 +286,3 @@ Next steps:
 The winning side is not chosen by our frontend, our backend, or an admin.
 
 It is chosen by a Somnia agent workflow, verified by public receipts, and written back into contract state.
-
