@@ -194,8 +194,13 @@ export default async function ProofPage() {
                   string bump). The gap of 16 is the count of shipped
                   frontend-only audit cycles since the last ABI change
                   (v22-v39 + v41-v56). The shipped invariant hasn't
-                  changed — only the cumulative gap counter has. */}
-              <Tooltip content="Frontend label = JSON manifest's `version` field (v61, the cumulative shipped v22-v61 frontend + relayer + tooling + contract surface — v61 lowers the default bet amount to 0.001 STT (= MIN_BET) so a fresh wallet can place a bet without first topping up beyond the minimum, and surfaces the FULL wallet error message in a toast with a specific 'top up your STT balance' hint when the error looks like a gas/balance issue; the previous behavior truncated the error to 120 chars and lost the shortMessage that distinguishes a gas issue from a contract revert. v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change). Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 21 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v61 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
+                  changed — only the cumulative gap counter has.
+                  v62 (M0): bumps v61 -> v62 (relayer-driven auto-
+                  liquidity; pure relayer-side change, no contract
+                  bytecode shift), so the cumulative surface is now
+                  v22-v62 and the gap is 22. The Tooltip below
+                  reflects both numbers. */}
+              <Tooltip content="Frontend label = JSON manifest's `version` field (v62, the cumulative shipped v22-v62 frontend + relayer + tooling + contract surface — v62 adds relayer-driven auto-liquidity: when RELAYER_LIQUIDITY_STT > 0 (default 0 = disabled), the relayer EOA places a small YES+NO seed bet on every newly-created market and auto-claims the winnings on MarketResolved; the seed is invisible in the UI and uses the existing bet() / claimWinnings() entry points with no contract bytecode change. A future v2 AMM LP slot is reserved in the manifest). v61 was the bet-flow UX fix that lowered the default bet amount to 0.001 STT (= MIN_BET) and surfaced the FULL wallet error message in a toast with a specific 'top up your STT balance' hint when the error looks like a gas/balance issue. v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change. Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 22 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v62 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
                 <span className="cursor-help text-zinc-500 underline-offset-2 hover:underline">why two?</span>
               </Tooltip>
             </div>
