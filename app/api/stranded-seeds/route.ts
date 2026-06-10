@@ -123,10 +123,18 @@ export async function GET() {
         endTime: market.endTime.toString(),
       });
     }
-    const totalStrandedStt = (
+    // Total STT locked: stranded.length * 0.02 STT. Use 1e15 as the
+    // divisor so the result is in 0.001 STT units (the smallest
+    // unit the dApp cares about). Integer division is fine here —
+    // 0.001 STT precision is enough for the operator card. e.g.
+    // 2 markets * 0.02 STT = 0.04 STT = 40 (in 0.001 STT units).
+    const totalStrandedMilliStt = (
       (BigInt(stranded.length) * SEED_SIZE_PER_MARKET) /
-      1_000_000_000_000_000_000n
+      1_000_000_000_000_000n
     ).toString();
+    // Format the millistt value back to a human-readable string in
+    // STT (e.g. "0.040").
+    const totalStrandedStt = (Number(totalStrandedMilliStt) / 1000).toFixed(3);
     return NextResponse.json(
       {
         eoa: RELAYER_EOA_HARDCODED,
