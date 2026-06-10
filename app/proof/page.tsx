@@ -199,8 +199,15 @@ export default async function ProofPage() {
                   liquidity; pure relayer-side change, no contract
                   bytecode shift), so the cumulative surface is now
                   v22-v62 and the gap is 22. The Tooltip below
-                  reflects both numbers. */}
-              <Tooltip content="Frontend label = JSON manifest's `version` field (v62, the cumulative shipped v22-v62 frontend + relayer + tooling + contract surface — v62 adds relayer-driven auto-liquidity: when RELAYER_LIQUIDITY_STT > 0 (default 0 = disabled), the relayer EOA places a small YES+NO seed bet on every newly-created market and auto-claims the winnings on MarketResolved; the seed is invisible in the UI and uses the existing bet() / claimWinnings() entry points with no contract bytecode change. A future v2 AMM LP slot is reserved in the manifest). v61 was the bet-flow UX fix that lowered the default bet amount to 0.001 STT (= MIN_BET) and surfaced the FULL wallet error message in a toast with a specific 'top up your STT balance' hint when the error looks like a gas/balance issue. v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change. Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 22 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v62 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
+                  reflects both numbers.
+                  v63 (H1+M1+M2+L1): bumps v62 -> v63 (v62 audit
+                  cleanup — stranded-seed observability, dynamic
+                  MIN_BET, partial-seed completion, env-toggle fix;
+                  pure relayer-side change, no contract bytecode
+                  shift), so the cumulative surface is now v22-v63
+                  and the gap is 23. The Tooltip below reflects both
+                  numbers. */}
+              <Tooltip content="Frontend label = JSON manifest's `version` field (v63, the cumulative shipped v22-v63 frontend + relayer + tooling + contract surface — v63 is the v62-audit cleanup: stranded-seed observability (logs when a seeded market's URL is in the parse-failure LRU and detects LRU eviction so the seed can be recovered), dynamic MIN_BET (reads from the contract on startup instead of a hardcoded 0.001 STT), partial-seed completion (avoids double-betting on a YES+NO pair when a prior attempt placed one side before failing), and the env-toggle foot-gun fix (the claim block no longer skips when RELAYER_LIQUIDITY_STT is toggled to '0' mid-flight). v62 was the relayer-driven auto-liquidity feature itself; v61 was the bet-flow UX fix that lowered the default bet amount to 0.001 STT (= MIN_BET) and surfaced the FULL wallet error message in a toast with a specific 'top up your STT balance' hint; v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change. Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 23 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v63 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
                 <span className="cursor-help text-zinc-500 underline-offset-2 hover:underline">why two?</span>
               </Tooltip>
             </div>

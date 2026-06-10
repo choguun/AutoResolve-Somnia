@@ -319,7 +319,18 @@ export function getAutoResolveAgentManifest() {
     // uses the existing bet() / claimWinnings() entry points —
     // no contract bytecode shift, no new functions. A future
     // v2 AMM LP slot is reserved in the manifest below.
-    version: 'v62',
+    // v63 (H1+M1+M2+L1) bumps v62 -> v63 to advertise the v62
+    // audit cleanup: stranded-seed observability (logs the locked
+    // STT when a seeded market's URL is in the parse-failure LRU
+    // and detects LRU eviction so the seed can be recovered),
+    // dynamic MIN_BET (reads from the contract on startup instead
+    // of a hardcoded 0.001 STT), partial-seed completion (avoids
+    // double-betting on a YES+NO pair when a prior attempt placed
+    // one side before failing), and the env-toggle foot-gun fix
+    // (the claim block no longer skips when the operator toggles
+    // RELAYER_LIQUIDITY_STT to '0' mid-flight). No contract
+    // bytecode change.
+    version: 'v63',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
