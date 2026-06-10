@@ -363,7 +363,23 @@ export function getAutoResolveAgentManifest() {
     // Also: the stranded-seeds route now tags each entry with a
     // `partialSeed` boolean so the dApp can show a "partial" pill
     // on the StrandedSeedsCard table. No contract bytecode change.
-    version: 'v66',
+    // v67 (L0+L1+L2) bumps v66 -> v67 to advertise the v66-audit
+    // cleanup: (L0) the stranded-seeds route now requires the
+    // relayer EOA to have userYesBets AND userNoBets of EXACTLY
+    // 0.01 STT each (the auto-seed size) — this excludes test
+    // markets where the relayer EOA has bets with arbitrary
+    // amounts (e.g. market #3 from the v62 gas test) from the
+    // stranded count. (L1) the sttStringToWei precision helper
+    // is moved from the dApp to lib-web/contract.ts so the API
+    // route can also use it. (L2) the partial-seed retry now
+    // happens on EVERY tick (not just every 30 min) for markets
+    // in the flaggedPartials Map — the operator sees a
+    // "partial" pill for the minimum possible window. The
+    // slow-path full scan still runs every
+    // RETRY_PARTIAL_SEED_INTERVAL_TICKS. Markets that remain
+    // partial for 60 attempts (30 min) are dropped with an
+    // advisory log. No contract bytecode change.
+    version: 'v67',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {

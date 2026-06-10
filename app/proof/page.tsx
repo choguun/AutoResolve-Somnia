@@ -238,8 +238,21 @@ export default async function ProofPage() {
                   can show a 'partial' pill on the
                   StrandedSeedsCard). No contract bytecode
                   change, so the cumulative surface is now v22-v66
-                  and the gap is 26. */}
-              <Tooltip content="Frontend label = JSON manifest's `version` field (v66, the cumulative shipped v22-v66 frontend + relayer + tooling + contract surface — v66 is the v65-audit cleanup: a periodic partial-seed retry that runs every RELAYER_RETRY_PARTIAL_SEED_INTERVAL_TICKS (default 60 = ~30 minutes) and re-attempts the missing side for any seeded market where the relayer EOA lacks both YES+NO bets. This is the operator-friendly recovery for the Somnia state-trie partial-seed bug (a successful tx that doesn't commit `market.noTotal` even though `userNoBets[msg.sender][marketId]` and `marketBets[marketId].push` both commit). v66 also tags each entry in the stranded-seeds API with a `partialSeed` boolean so the dApp can show a 'partial' pill on the StrandedSeedsCard. v65 was the backfill-on-startup pass; v64 was the dApp surface for stranded-seed observability; v63 was the v62-audit cleanup; v62 was the relayer-driven auto-liquidity feature itself; v61 was the bet-flow UX fix; v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change. Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 26 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v66 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
+                  and the gap is 26.
+                  v67 (L0+L1+L2): bumps v66 -> v67 (v66-audit
+                  cleanup — stranded-seeds route now requires
+                  the relayer EOA to have userYesBets AND
+                  userNoBets of EXACTLY 0.01 STT each to be
+                  counted as stranded; the sttStringToWei
+                  precision helper moved from dApp to
+                  lib-web/contract.ts; the partial-seed retry
+                  now happens on EVERY tick for markets in the
+                  flaggedPartials Map, not just every 30 min, so
+                  the operator sees a 'partial' pill for the
+                  minimum possible window). No contract
+                  bytecode change, so the cumulative surface is
+                  now v22-v67 and the gap is 27. */}
+              <Tooltip content="Frontend label = JSON manifest's `version` field (v67, the cumulative shipped v22-v67 frontend + relayer + tooling + contract surface — v67 is the v66-audit cleanup: stranded-seeds route requires userYesBets + userNoBets = 0.01 STT each to count as stranded (filters out test markets); sttStringToWei precision helper moved to lib-web/contract.ts; partial-seed retry now happens on EVERY tick for flaggedPartials markets (not just every 30 min), with a 60-attempt cap to bound the retry budget. v66 was the v65-audit cleanup (periodic partial-seed retry); v65 was the backfill-on-startup pass; v64 was the dApp surface for stranded-seed observability; v63 was the v62-audit cleanup; v62 was the relayer-driven auto-liquidity feature itself; v61 was the bet-flow UX fix; v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change. Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 27 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v67 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
                 <span className="cursor-help text-zinc-500 underline-offset-2 hover:underline">why two?</span>
               </Tooltip>
             </div>
