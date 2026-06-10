@@ -2,7 +2,8 @@
 
 import { Info, Link as LinkIcon, Database } from 'lucide-react';
 import { Tooltip } from '@/components/shared/Tooltip';
-import { MarketStatus, formatCountdown, formatStt, statusLabel, type Market } from '@/lib-web/contract';
+import { MarketStatus, formatStt, statusLabel, type Market } from '@/lib-web/contract';
+import { LiveCountdown } from '@/components/shared/LiveCountdown';
 
 export function MarketHeader({ market }: { market: Market }) {
   const totalPool = market.yesTotal + market.noTotal;
@@ -21,11 +22,7 @@ export function MarketHeader({ market }: { market: Market }) {
         >
           {statusLabel(market.status)}
         </span>
-        {market.status !== MarketStatus.Resolved && (
-          <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-medium text-cyan-200">
-            {formatCountdown(market.endTime)}
-          </span>
-        )}
+        <LiveCountdown endTime={market.endTime} status={market.status} variant="header" />
       </div>
 
       <h1 className="max-w-4xl text-3xl font-extrabold leading-tight tracking-tight text-white drop-shadow-sm sm:text-5xl">

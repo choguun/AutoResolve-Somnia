@@ -195,7 +195,7 @@ export default async function ProofPage() {
                   frontend-only audit cycles since the last ABI change
                   (v22-v39 + v41-v56). The shipped invariant hasn't
                   changed — only the cumulative gap counter has. */}
-              <Tooltip content="Frontend label = JSON manifest's `version` field (v56, the cumulative shipped v22-v56 frontend + relayer + tooling surface — v56 adds the Daily Resolution Demo section that demos the daily-cadence autonomous-creation pattern). Contract label = live on-chain `agentManifest()` view (v40, the last ABI change: `getUserMarkets(address)` view + the v45 on-chain string bump). The gap of 16 is the count of shipped frontend-only audit cycles since the last ABI change — v22-v39 + v41-v56 all touched the frontend, relayer, or tooling without changing the contract bytecode or on-chain string.">
+              <Tooltip content="Frontend label = JSON manifest's `version` field (v57, the cumulative shipped v22-v57 frontend + relayer + tooling surface — v57 adds the live-ticking LiveCountdown component shared by MarketCard and MarketHeader). Contract label = live on-chain `agentManifest()` view (v40, the last ABI change: `getUserMarkets(address)` view + the v45 on-chain string bump). The gap of 17 is the count of shipped frontend-only audit cycles since the last ABI change — v22-v39 + v41-v57 all touched the frontend, relayer, or tooling without changing the contract bytecode or on-chain string.">
                 <span className="cursor-help text-zinc-500 underline-offset-2 hover:underline">why two?</span>
               </Tooltip>
             </div>

@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { Bot, ExternalLink, Sparkles, Wand2 } from 'lucide-react';
 import {
-  formatCountdown,
   formatStt,
   isAgentCreated,
   MarketStatus,
@@ -10,6 +9,7 @@ import {
   type Market,
 } from '@/lib-web/contract';
 import { Tooltip } from '@/components/shared/Tooltip';
+import { LiveCountdown } from '@/components/shared/LiveCountdown';
 
 function StatusBadge({ status }: { status: MarketStatus }) {
   const styles = {
@@ -157,13 +157,13 @@ export function MarketCard({
           <span className="truncate text-xs font-semibold text-violet-300">
             {yourSide ? `Your bet: ${yourSide}` : 'No position yet'}
           </span>
-          <span className="shrink-0 text-right text-xs font-bold text-cyan-300 uppercase tracking-wide">
-            {isResolved
-              ? market.outcome
-                ? 'Resolved YES'
-                : 'Resolved NO'
-              : formatCountdown(market.endTime)}
-          </span>
+          {isResolved ? (
+            <span className="shrink-0 text-right text-xs font-bold text-zinc-500 uppercase tracking-wide">
+              {market.outcome ? 'Resolved YES' : 'Resolved NO'}
+            </span>
+          ) : (
+            <LiveCountdown endTime={market.endTime} status={market.status} variant="card" />
+          )}
         </div>
       </div>
     </Link>

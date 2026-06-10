@@ -257,14 +257,19 @@ export function getAutoResolveAgentManifest() {
     // change the field value — the post-deploy public-doc sweep
     // (README/DEPLOYED/PITCH_DECK/CLAUDE.md, /proof Tooltip, this
     // comment) is purely a documentation refresh that doesn't touch
-    // the surface the field describes. v56 (H0) bumps the field
+    // the surface the field describes. v56 (H0) bumped the field
     // v50 -> v56 to advertise the new Daily Resolution Demo section
     // on /proof (one AI-created market per day, 24h duration, fully
     // autonomous resolution) + the new /api/daily-topic endpoint +
-    // the new scripts/daily-topics.txt operator-curated feed. The
-    // shipped invariant is Contract (on-chain agentManifest) = v40,
-    // Frontend (this field) = v56.
-    version: 'v56',
+    // the new scripts/daily-topics.txt operator-curated feed. v57
+    // (H0) bumps the field v56 -> v57 to advertise the live-ticking
+    // LiveCountdown component (components/shared/LiveCountdown.tsx)
+    // shared by MarketCard and MarketHeader — replaces the static
+    // formatCountdown call with a 1Hz client tick that color-shifts
+    // cyan → amber → pulsing amber as the resolution window closes.
+    // The shipped invariant is Contract (on-chain agentManifest) =
+    // v40, Frontend (this field) = v57.
+    version: 'v57',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
