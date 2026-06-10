@@ -63,7 +63,7 @@ const ROOT = join(__dirname, '..');
 // code paths, no new log lines, no new ENV vars), but the version
 // constant tracks the shipped audit surface so the smoke grep
 // continues to be the test of record.
-const RELAYER_VERSION = 'v67';
+const RELAYER_VERSION = 'v68';
 const SHANNON_RPC_URL = process.env.SHANNON_RPC_URL ?? 'https://dream-rpc.somnia.network';
 const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
 const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';
@@ -196,6 +196,15 @@ const TOPIC_FEED_MAX_PER_TICK = Number(process.env.TOPIC_FEED_MAX_PER_TICK ?? 1)
 // AMM LP (addLiquidity/removeLiquidity) reserved here as a manifest stub.
 const RELAYER_LIQUIDITY_STT = process.env.RELAYER_LIQUIDITY_STT ?? '0';
 const LIQUIDITY_SEED_MAX_PER_TICK = Number(process.env.RELAYER_SEED_MAX_PER_TICK ?? 5);
+// v68 (M0): relayer-driven auto-funding. Target balance the
+// relayer maintains for the contract. 0 = disabled (default).
+// When non-zero, the relayer tops up the contract to
+// RELAYER_AUTO_FUND_STT + RELAYER_AUTO_FUND_STT * 0.5 on every
+// tick where the balance falls below the target. Bounded per
+// refill by RELAYER_AUTO_FUND_MAX_PER_REFILL_STT and 10% of the
+// relayer EOA balance.
+const RELAYER_AUTO_FUND_STT = process.env.RELAYER_AUTO_FUND_STT ?? '0';
+const RELAYER_AUTO_FUND_MAX_PER_REFILL_STT = process.env.RELAYER_AUTO_FUND_MAX_PER_REFILL_STT ?? '2';
 // v66 (M0): periodic partial-seed retry interval. Default 60 ticks =
 // ~30 minutes at POLL_MS=30s. The retry scans all seeded markets
 // and re-attempts the missing side (the Somnia state-trie bug can
@@ -771,6 +780,113 @@ async function readInferenceTopUp() {
     functionName: 'getGenerationFundingStatus',
   });
   return status[2]; // topUpNeeded
+}
+
+// v68 (M0): relayer-driven auto-funding. Top up the contract's
+// STT balance whenever it falls below RELAYER_AUTO_FUND_STT. Cheap
+// no-op when disabled (RELAYER_AUTO_FUND_STT='0') or when the
+// contract is already funded. The cap is per-refill, so a single
+// tick can't blow the relayer EOA's balance.
+async function maybeAutoFundContract() {
+  if (RELAYER_AUTO_FUND_STT === '0') return;
+  let targetWei;
+  let maxPerRefill;
+  try {
+    targetWei = parseEther(RELAYER_AUTO_FUND_STT);
+    maxPerRefill = parseEther(RELAYER_AUTO_FUND_MAX_PER_REFILL_STT);
+  } catch {
+    console.warn(
+      `[relayer] auto-fund: invalid RELAYER_AUTO_FUND_STT=${RELAYER_AUTO_FUND_STT} or RELAYER_AUTO_FUND_MAX_PER_REFILL_STT=${RELAYER_AUTO_FUND_MAX_PER_REFILL_STT} (must be numeric, in STT). Disabling auto-fund for this process.`,
+    );
+    return;
+  }
+  // Read the contract's current STT balance + both funding statuses
+  // + the relayer EOA balance in parallel. The funding-status reads
+  // return (requiredDeposit, contractBalance, topUpNeeded); the
+  // topUpNeeded is the binding constraint for the next batch.
+  let contractBalance, resStatus, genStatus, eoaBalance;
+  try {
+    [contractBalance, resStatus, genStatus, eoaBalance] = await Promise.all([
+      publicClient.getBalance({ address: CONTRACT }),
+      publicClient.readContract({
+        address: CONTRACT,
+        abi: ABI,
+        functionName: 'getResolutionFundingStatus',
+      }),
+      publicClient.readContract({
+        address: CONTRACT,
+        abi: ABI,
+        functionName: 'getGenerationFundingStatus',
+      }),
+      publicClient.getBalance({ address: account.address }),
+    ]);
+  } catch {
+    // Catch-all for RPC errors (network blip, node restart). The
+    // function returns; the next tick will re-attempt. The console
+    // output is intentionally silent at this layer — the inner
+    // Promise.all rejections would otherwise dump 3 stack traces
+    // per failed tick.
+    return;
+  }
+  // The highest topUpNeeded is the binding constraint for the next batch.
+  const maxTopUpNeeded = resStatus[2] > genStatus[2] ? resStatus[2] : genStatus[2];
+  // If the contract already has enough for the next batch, skip.
+  if (maxTopUpNeeded === 0n) return;
+  // Target balance: 1.5x the configured threshold. The extra 0.5x
+  // is a buffer for the next batch after the immediate refill.
+  const topUpTo = targetWei + (targetWei / 2n);
+  // If the contract already has >= topUpTo, skip (avoids wasting
+  // gas on tiny top-ups when the contract is over-funded).
+  if (contractBalance >= topUpTo) return;
+  // Compute the refill amount. Cap at min(0.1 * eoaBalance, maxPerRefill).
+  // The 10% EOA cap protects the operator's wallet from runaway
+  // fills (e.g. a buggy contract that drains the relayer EOA).
+  const refillWei = topUpTo - contractBalance;
+  const eoaCap = eoaBalance / 10n;
+  const cap = eoaCap < maxPerRefill ? eoaCap : maxPerRefill;
+  const actualRefill = refillWei > cap ? cap : refillWei;
+  if (actualRefill === 0n) {
+    console.warn(
+      `[relayer] auto-fund: contract needs ${formatEther(refillWei)} STT but refill cap is 0 (EOA balance too low or RELAYER_AUTO_FUND_MAX_PER_REFILL_STT too tight)`,
+    );
+    return;
+  }
+  // Send the refill via a plain STT transfer. The contract's
+  // receive() function emits RebateReceived; the STT lands in the
+  // contract's balance and is available for the next
+  // requestResolution / requestMarketGeneration / retryInferenceFromCache.
+  console.log(
+    `[relayer] auto-fund: contract balance ${formatEther(contractBalance)} STT, ` +
+      `topping up ${formatEther(actualRefill)} STT (target ${formatEther(topUpTo)} STT, ` +
+      `topUpNeeded ${formatEther(maxTopUpNeeded)} STT)`,
+  );
+  let hash;
+  try {
+    hash = await walletClient.sendTransaction({
+      to: CONTRACT,
+      value: actualRefill,
+    });
+  } catch (err) {
+    console.error(
+      `[relayer] auto-fund: sendTransaction failed:`,
+      err.shortMessage ?? err.message,
+    );
+    return;
+  }
+  const receipt = await publicClient.waitForTransactionReceipt({
+    hash,
+    timeout: 60_000,
+  });
+  if (receipt.status !== 'success') {
+    console.error(
+      `[relayer] auto-fund: sendTransaction reverted (blockHash=${receipt.blockHash})`,
+    );
+    return;
+  }
+  console.log(
+    `[relayer] auto-fund: topped up ${formatEther(actualRefill)} STT ` +
+      `(block ${receipt.blockNumber}, tx ${receipt.transactionHash})`,
+  );
 }
 
 async function tryResolveMarket(marketId, alreadySubmitted) {
@@ -2246,6 +2362,14 @@ while (!stopping) {
     // after the first tick. Logs the count of backfilled markets
     // so the operator can see what was missed.
     await backfillSeededMarkets(alreadySubmitted);
+    // v68 (M0): auto-fund the contract if the balance is below
+    // the configured threshold. Runs every tick; cheap no-op when
+    // disabled (RELAYER_AUTO_FUND_STT='0') or when the contract
+    // is already funded. The per-refill cap (min(0.1 * EOA
+    // balance, RELAYER_AUTO_FUND_MAX_PER_REFILL_STT)) bounds the
+    // spend so a single tick can't blow the relayer EOA's
+    // balance.
+    await maybeAutoFundContract();
     // v66 (M0) + v67 (L2): partial-seed retry. v67 changed the
     // schedule — retryPartialSeeds is now called EVERY tick (not
     // just every 30 min). The function itself has two paths:
