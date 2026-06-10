@@ -63,7 +63,7 @@ const ROOT = join(__dirname, '..');
 // code paths, no new log lines, no new ENV vars), but the version
 // constant tracks the shipped audit surface so the smoke grep
 // continues to be the test of record.
-const RELAYER_VERSION = 'v63';
+const RELAYER_VERSION = 'v64';
 const SHANNON_RPC_URL = process.env.SHANNON_RPC_URL ?? 'https://dream-rpc.somnia.network';
 const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
 const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';
@@ -299,10 +299,18 @@ let lastScannedSeedBlock = 0n;
 // visibility into how much STT is locked. Each tick, scan this Map
 // and log advisory lines for any URLs that have been evicted from
 // the LRU (TTL or FIFO eviction) — the next tryResolveMarket scan
-// will then re-attempt resolution. The Map is in-memory only (a
-// relayer restart rebuilds it from the parse-failure cache + the
-// seeded-markets file on the first scanForRetryableMarkets tick).
+// will then re-attempt resolution.
+// v64 (M0): the Map is now persisted to state/stranded-seeds.<eoa>.json
+// on every mutation (tryResolveMarket cache hit adds; drainStrandedSeeds
+// eviction removes; SIGTERM/SIGINT also flushes). The dApp's /proof
+// page polls the shim's /stranded-seeds endpoint, which reads the
+// file directly. Without persistence, a relayer restart would
+// clear the Map and the dApp would show "0 stranded" even though
+// the on-disk state (seeded-markets + parse-failure-cache) still
+// has stranded capital.
 const strandedSeedMarkets = new Map();
+const STRANDED_FILE = process.env.STRANDED_FILE
+  || join(ROOT, 'state', `stranded-seeds.${account.address.toLowerCase()}.json`);
 
 // v29 (H1) + v30 (H0): TOPICS_FILE / SUBMITTED_TOPICS_FILE / TOPIC_FEED_MAX_PER_TICK
 // were hoisted to L160–167 so the L176 startup log line can reference them
@@ -588,9 +596,68 @@ function saveClaimedMarkets() {
   }
 }
 
+// v64 (M0): stranded-seeds persistence. Loads on startup (rehydrates
+// the in-memory Map from disk) and saves on every mutation. The
+// file is an array of { marketId, url, expiresAt } entries — the
+// urlKey isn't stored because the dApp's /stranded-seeds endpoint
+// re-derives it from the URL on each request. The dApp polls the
+// shim, which reads this file directly. Sync write is fine — the
+// set only changes at most once per tick, and the cost is ~5ms
+// per save (atomic via tmp + rename).
+function loadStrandedSeeds() {
+  if (!existsSync(STRANDED_FILE)) return;
+  try {
+    const raw = readFileSync(STRANDED_FILE, 'utf8');
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      let count = 0;
+      for (const entry of arr) {
+        if (
+          entry &&
+          typeof entry.marketId === 'string' &&
+          typeof entry.url === 'string'
+        ) {
+          strandedSeedMarkets.set(entry.marketId, entry.url);
+          count++;
+        }
+      }
+      if (count > 0) {
+        console.log(`[relayer] loaded ${count} stranded-seed(s) from disk`);
+      }
+    }
+  } catch (err) {
+    console.warn(
+      '[relayer] stranded-seeds cache load failed (starting empty):',
+      err.message,
+    );
+  }
+}
+
+function saveStrandedSeeds() {
+  try {
+    const arr = [];
+    for (const [marketId, url] of strandedSeedMarkets) {
+      const k = urlKey(url);
+      const expiresAt = parseFailureCache.get(k);
+      // Only persist entries that are still stranded (URL still in
+      // cache). This keeps the file small and avoids confusing the
+      // dApp with stale entries.
+      if (expiresAt === undefined || expiresAt < Date.now()) continue;
+      arr.push({ marketId, url, expiresAt });
+    }
+    const tmp = STRANDED_FILE + '.tmp';
+    writeFileSync(tmp, JSON.stringify(arr));
+    renameSync(tmp, STRANDED_FILE);
+  } catch (err) {
+    console.warn('[relayer] stranded-seeds cache save failed:', err.message);
+  }
+}
+
 loadParseFailureCache();
 loadSubmittedTopics();
 loadSeededMarkets();
+loadStrandedSeeds();
 // v17 (M3): ensure the cache directory exists. A fresh clone may not have
 // `state/` yet (deploy.sh creates it, but operators that run the relayer
 // standalone won't have that step). Without this, the first save (or
@@ -706,6 +773,7 @@ async function tryResolveMarket(marketId, alreadySubmitted) {
     // seededMarkets Set size, so it can't grow unbounded.
     if (seededMarkets.has(key) && !strandedSeedMarkets.has(key)) {
       strandedSeedMarkets.set(key, context.resolutionSource);
+      saveStrandedSeeds(); // v64 (M0): persist for the dApp's /stranded-seeds endpoint
       console.warn(
         `[relayer] stranded seed: market ${marketId} URL is in parse-failure cache ` +
           `(seed 0.02 STT locked until LRU eviction in ≤1h)`,
@@ -877,8 +945,20 @@ async function drainFailureEvents(alreadySubmitted) {
         );
       }
     }
+    // v64 (L1): the previous "re-resolving market N" log was misleading —
+    // tryResolveMarket would immediately hit the URL-in-parse-failure-
+    // cache check and skip, so the action described by the log never
+    // happened. The new wording makes the actual outcome clear: the
+    // URL was just cached (or the stage wasn't ParseWebsite so nothing
+    // changed), and the next scanForRetryableMarkets pass will re-attempt
+    // if the LRU has evicted the URL. tryResolveMarket is still called
+    // here for the non-ParseWebsite failure case (e.g. inference-stage
+    // failures where the URL isn't cached), but the log no longer
+    // overpromises.
     console.log(
-      `[relayer] re-resolving market ${marketId} after failure (requestId ${requestId}, stage=${stage})`,
+      stage === 1
+        ? `[relayer] market ${marketId} parse-failure cached; next scan will retry once LRU evicts URL`
+        : `[relayer] re-resolving market ${marketId} after failure (requestId ${requestId}, stage=${stage})`,
     );
     await tryResolveMarket(marketId, alreadySubmitted);
   }
@@ -1134,6 +1214,7 @@ async function drainStrandedSeeds() {
         `[relayer] stranded seed recovered: market ${marketId} URL no longer in parse-failure cache; will retry on next scan`,
       );
       strandedSeedMarkets.delete(key);
+      saveStrandedSeeds(); // v64 (M0): persist the eviction for the dApp
     }
   }
 }
@@ -1839,6 +1920,7 @@ process.on('SIGINT', () => {
   // so the relayer can't blow its own STT on a bad restart.
   saveSeededMarkets();
   saveClaimedMarkets();
+  saveStrandedSeeds(); // v64 (M0): persist for the dApp's /stranded-seeds endpoint
 });
 process.on('SIGTERM', () => {
   stopping = true;
@@ -1846,6 +1928,7 @@ process.on('SIGTERM', () => {
   flushSubmittedTopicsSync();
   saveSeededMarkets();
   saveClaimedMarkets();
+  saveStrandedSeeds();
 });
 
 while (!stopping) {
