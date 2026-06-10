@@ -63,7 +63,7 @@ const ROOT = join(__dirname, '..');
 // code paths, no new log lines, no new ENV vars), but the version
 // constant tracks the shipped audit surface so the smoke grep
 // continues to be the test of record.
-const RELAYER_VERSION = 'v64';
+const RELAYER_VERSION = 'v65';
 const SHANNON_RPC_URL = process.env.SHANNON_RPC_URL ?? 'https://dream-rpc.somnia.network';
 const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
 const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';
@@ -292,6 +292,18 @@ const seededMarkets = new Set();
 const seenClaimedMarkets = new Set();
 const SEEN_CLAIMED_LIMIT = 1000;
 let lastScannedSeedBlock = 0n;
+// v65 (H0): backfill-on-startup flag. The backfill runs ONCE on the
+// first tick after startup, scanning [1, nextMarketId) for any
+// Open market where the relayer EOA hasn't already placed the
+// YES+NO seed. This catches markets created BEFORE the v62
+// auto-seed feature was enabled (the v62 cursor initialized to
+// `head` on first tick, missing historical MarketCreated events).
+// 8 markets on the live contract (4, 5, 6, 7, 8, 9, 10, 11) were
+// missed by this initial-skip pattern; the backfill seeds them.
+// The flag is in-memory only — a relayer restart runs the
+// backfill again, which is idempotent (seedMarket dedups via
+// seededMarkets + getMarketBets check).
+let hasBackfilled = false;
 // v63 (H1): stranded-seed observability. Maps seeded marketId → its
 // resolutionSource URL, for markets whose URL is currently in the
 // parse-failure LRU. The relayer can't recover the seed (the market
@@ -1086,6 +1098,114 @@ async function drainSeedEvents(alreadySubmitted) {
     }
   }
   lastScannedSeedBlock = toBlock;
+}
+
+// v65 (H0): backfill pass for markets that were created BEFORE the
+// v62 auto-seed feature was enabled. The v62 relayer initialized
+// lastScannedSeedBlock to `head` on first tick, so any MarketCreated
+// event that fired before that block was missed. On the live
+// contract, 8 markets (4, 5, 6, 7, 8, 9, 10, 11) lack the relayer
+// seed because they were created during the v60/v61 era when the
+// auto-seed feature didn't exist. This function scans [1,
+// nextMarketId) and calls seedMarket for any Open market where the
+// relayer EOA hasn't already placed the YES+NO seed. Idempotent
+// (seedMarket dedups via seededMarkets Set + getMarketBets check),
+// safe to run on every relayer restart. Runs ONCE per process
+// (gated by hasBackfilled flag).
+async function backfillSeededMarkets(alreadySubmitted) {
+  if (hasBackfilled) return;
+  if (RELAYER_LIQUIDITY_STT === '0') {
+    // Auto-seed disabled — skip the backfill entirely. The
+    // operator opted out of the feature.
+    hasBackfilled = true;
+    return;
+  }
+  hasBackfilled = true;
+  let nextId;
+  try {
+    nextId = await publicClient.readContract({
+      address: CONTRACT,
+      abi: ABI,
+      functionName: 'nextMarketId',
+    });
+  } catch (err) {
+    console.warn(
+      '[relayer] backfill: failed to read nextMarketId (skipping):',
+      err.shortMessage ?? err.message,
+    );
+    return;
+  }
+  if (nextId <= 1n) return;
+  const total = Number(nextId - 1n);
+  console.log(
+    `[relayer] backfill: scanning ${total} historical market(s) for missing seeds`,
+  );
+  let backfilledCount = 0;
+  for (let id = 1n; id < nextId; id++) {
+    try {
+      const market = await publicClient.readContract({
+        address: CONTRACT,
+        abi: ABI,
+        functionName: 'getMarket',
+        args: [id],
+      });
+      // Skip non-Open markets (Resolved/Resolving don't need
+      // seeds — the relayer would have either claimed or be mid-
+      // flight).
+      if (Number(market.status) !== 0) continue;
+      // Skip markets that don't end yet (no point seeding a
+      // market that won't resolve for hours).
+      if (BigInt(market.endTime) * 1000n <= BigInt(Date.now())) continue;
+      // Skip markets the relayer already seeded (seededMarkets
+      // Set is the canonical source of truth, persisted to disk).
+      if (seededMarkets.has(marketKey(id))) continue;
+      // Check if the relayer EOA has both YES and NO bets on this
+      // market. If so, the seed is already in place.
+      const bets = await publicClient.readContract({
+        address: CONTRACT,
+        abi: ABI,
+        functionName: 'getMarketBets',
+        args: [id],
+      }).catch(() => []);
+      const relayerLower = account.address.toLowerCase();
+      const hasYes = bets.some(
+        (b) => b.better.toLowerCase() === relayerLower && Number(b.option) === 0,
+      );
+      const hasNo = bets.some(
+        (b) => b.better.toLowerCase() === relayerLower && Number(b.option) === 1,
+      );
+      if (hasYes && hasNo) {
+        // Seed is in place but the relayer's seededMarkets Set
+        // didn't know — backfill the Set without re-seeding.
+        seededMarkets.add(marketKey(id));
+        saveSeededMarkets();
+        continue;
+      }
+      // Place the seed (or complete the partial seed if one side
+      // is already present).
+      const ok = await seedMarket(id);
+      if (ok) {
+        alreadySubmitted.add(marketKey(id));
+        backfilledCount++;
+      }
+    } catch (err) {
+      console.warn(
+        `[relayer] backfill: market ${id} check failed:`,
+        err.shortMessage ?? err.message,
+      );
+      // Continue with the next market — one bad market shouldn't
+      // abort the backfill.
+    }
+  }
+  if (backfilledCount > 0) {
+    console.log(
+      `[relayer] backfill: seeded ${backfilledCount} historical market(s) that were missed by the initial v62 cursor skip`,
+    );
+  } else {
+    console.log(
+      '[relayer] backfill: no missing seeds found',
+    );
+  }
 }
 
 // v62 (M0): place the YES+NO seed bets. Returns true on full success
@@ -1950,6 +2070,13 @@ while (!stopping) {
     // ordering dependency, but keeps the "creation" surfaces grouped
     // with the "resolution" surfaces in the log). The function is
     // a fast-path no-op when RELAYER_LIQUIDITY_STT='0'.
+    // v65 (H0): backfillSeededMarkets runs BEFORE drainSeedEvents.
+    // It scans all historical markets for missing seeds (markets
+    // created before the v62 cursor was set). Idempotent
+    // (gated by hasBackfilled flag, in-memory only) and a no-op
+    // after the first tick. Logs the count of backfilled markets
+    // so the operator can see what was missed.
+    await backfillSeededMarkets(alreadySubmitted);
     await drainSeedEvents(alreadySubmitted);
     // v28 (H1): drainInferenceUnderfundedEvents runs BEFORE drainFailureEvents.
     // The InferenceUnderfunded path emits BOTH InferenceUnderfunded AND

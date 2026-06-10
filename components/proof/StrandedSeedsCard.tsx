@@ -19,6 +19,25 @@ type StrandedSeedsResponse = {
   markets: StrandedMarket[];
 };
 
+// v65 (L1): precision-preserving STT-string → wei conversion. The
+// previous code did `Number(str) * 1e18` which loses precision for
+// STT amounts > ~9e15 (9 STT) because JS Number is float64. This
+// helper splits the string on '.', builds the integer part as a
+// BigInt, and pads the fractional part to 18 digits before
+// concatenating. Pure string manipulation + BigInt, no floats.
+function sttStringToWei(sttString: string): bigint {
+  const [intPart, fracPartRaw = ''] = sttString.split('.');
+  const intWei = BigInt(intPart || '0') * 10n ** 18n;
+  // Pad the fractional part to exactly 18 digits (e.g. "04" → "04" + 16 zeros).
+  const fracPart = (fracPartRaw + '0'.repeat(18)).slice(0, 18);
+  const fracWei = BigInt(fracPart || '0');
+  // The integer part was multiplied by 10^18, so subtract the
+  // fractional digits we already added: wei = intPart*1e18 + fracPart.
+  // We just concatenate the two — intPart*1e18 already includes
+  // 18 zeros of precision, and fracPart fills the lower 18 digits.
+  return intWei + fracWei;
+}
+
 // v64 (M0): operator card for the dApp's /proof page. Polls
 // /api/stranded-seeds every 30s and renders a list of markets
 // where the relayer's auto-seed is stuck (parse-failure cache,
@@ -87,7 +106,7 @@ export function StrandedSeedsCard() {
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-extrabold text-rose-300 drop-shadow-sm">
-                {formatStt(BigInt(Math.round(Number(data.totalStrandedStt) * 1e18)))}
+                {formatStt(sttStringToWei(data.totalStrandedStt))}
               </span>
               <span className="text-sm font-semibold text-zinc-400">locked</span>
             </div>
