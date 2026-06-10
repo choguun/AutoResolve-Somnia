@@ -10,7 +10,7 @@ No human oracle. No backend resolver. Validator-executed agent receipts for ever
 
 Live app: https://autoresolve-somnia.vercel.app  
 Proof page: https://autoresolve-somnia.vercel.app/proof  
-Contract: `0xc7d1A923A5a5C90d3134aAD2Abd508D192468f4f` (v19+v40+v45+v60 live; v22-v67 frontend/relayer/tooling shipped; deploy tx on 2026-06-10. v60 update: the on-chain `GENERATION_PROMPT_SUFFIX` now teaches the inference agent to honor `[duration=N]` hints in the topic text, so the daily auto-create pattern produces 24h markets instead of 5-min ones. v62 update: relayer-driven auto-liquidity — when `RELAYER_LIQUIDITY_STT > 0` (default 0 = disabled), the relayer EOA places a YES+NO seed bet on every newly-created market and auto-claims the winnings on `MarketResolved`. v63 update: v62-audit cleanup (stranded-seed observability, dynamic MIN_BET, partial-seed completion, env-toggle fix). v64 update: dApp surface for stranded-seed observability (`/api/stranded-seeds` API + `StrandedSeedsCard` on `/proof`). v65 update: v64-audit cleanup (backfill-on-startup pass that seeds pre-v62 markets; on the live contract 8 markets were backfilled; plus the StrandedSeedsCard precision conversion fix). v66 update: v65-audit cleanup (periodic partial-seed retry every ~30 min to recover from Somnia state-trie partial seeds; stranded-seeds API tags entries with `partialSeed` so the dApp can show a 'partial' pill). v67 update: v66-audit cleanup (stranded-seeds route requires the relayer EOA to have userYesBets+userNoBets of exactly 0.01 STT each; sttStringToWei precision helper moved to lib-web; the partial-seed retry now happens on every tick for flaggedPartials markets, with a 60-attempt cap).)
+Contract: `0xc7d1A923A5a5C90d3134aAD2Abd508D192468f4f` (v19+v40+v45+v60 live; v22-v68 frontend/relayer/tooling shipped; deploy tx on 2026-06-10. v60 update: the on-chain `GENERATION_PROMPT_SUFFIX` now teaches the inference agent to honor `[duration=N]` hints in the topic text, so the daily auto-create pattern produces 24h markets instead of 5-min ones. v62 update: relayer-driven auto-liquidity — when `RELAYER_LIQUIDITY_STT > 0` (default 0 = disabled), the relayer EOA places a YES+NO seed bet on every newly-created market and auto-claims the winnings on `MarketResolved`. v63 update: v62-audit cleanup (stranded-seed observability, dynamic MIN_BET, partial-seed completion, env-toggle fix). v64 update: dApp surface for stranded-seed observability (`/api/stranded-seeds` API + `StrandedSeedsCard` on `/proof`). v65 update: v64-audit cleanup (backfill-on-startup pass that seeds pre-v62 markets; on the live contract 8 markets were backfilled; plus the StrandedSeedsCard precision conversion fix). v66 update: v65-audit cleanup (periodic partial-seed retry every ~30 min to recover from Somnia state-trie partial seeds; stranded-seeds API tags entries with `partialSeed` so the dApp can show a 'partial' pill). v67 update: v66-audit cleanup (stranded-seeds route requires the relayer EOA to have userYesBets+userNoBets of exactly 0.01 STT each; sttStringToWei precision helper moved to lib-web; the partial-seed retry now happens on every tick for flaggedPartials markets, with a 60-attempt cap). v68 update: relayer-driven auto-funding — the relayer now tops up the contract's STT balance whenever it falls below RELAYER_AUTO_FUND_STT, with a per-refill cap of min(0.1 * EOA balance, RELAYER_AUTO_FUND_MAX_PER_REFILL_STT default 2 STT).)
 
 ---
 
@@ -78,7 +78,7 @@ With Somnia, the resolver becomes part of the on-chain settlement flow.
 
 AutoResolve is built so autonomous agents can interact with it directly.
 
-The v19+v40+v45+v60 live contract (deployed 2026-06-10 at `0xc7d1A923A5a5C90d3134aAD2Abd508D192468f4f`; v22-v67 frontend + relayer + tooling shipped alongside) exposes:
+The v19+v40+v45+v60 live contract (deployed 2026-06-10 at `0xc7d1A923A5a5C90d3134aAD2Abd508D192468f4f`; v22-v68 frontend + relayer + tooling shipped alongside) exposes:
 
 | Function | Purpose |
 |---|---|
@@ -149,7 +149,7 @@ Verification:
 
 Current deployment:
 
-- Contract: `0xc7d1A923A5a5C90d3134aAD2Abd508D192468f4f` (v19+v40+v45+v60 live; v22-v67 frontend/relayer/tooling shipped)
+- Contract: `0xc7d1A923A5a5C90d3134aAD2Abd508D192468f4f` (v19+v40+v45+v60 live; v22-v68 frontend/relayer/tooling shipped)
 - Contract balance: `0.72 STT` (2.0 STT prefunded − 0.62 STT spent on AI-created market #3's inference deposit + 2 × 0.01 STT prefund on the resolution pipeline for markets #1 and #2)
 - Resolution deposit: `0.66 STT` per resolution (parse 0.01 + inference 0.3 + 0.01 + 0.3)
 - Seeded markets: `#1` (Paris, parsing), `#2` (Bitcoin, parsing); AI-created market `#3` ("Will Somnia mainnet launch before 2027?", submitted by the Railway relayer within seconds of boot)

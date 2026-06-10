@@ -251,8 +251,18 @@ export default async function ProofPage() {
                   the operator sees a 'partial' pill for the
                   minimum possible window). No contract
                   bytecode change, so the cumulative surface is
-                  now v22-v67 and the gap is 27. */}
-              <Tooltip content="Frontend label = JSON manifest's `version` field (v67, the cumulative shipped v22-v67 frontend + relayer + tooling + contract surface — v67 is the v66-audit cleanup: stranded-seeds route requires userYesBets + userNoBets = 0.01 STT each to count as stranded (filters out test markets); sttStringToWei precision helper moved to lib-web/contract.ts; partial-seed retry now happens on EVERY tick for flaggedPartials markets (not just every 30 min), with a 60-attempt cap to bound the retry budget. v66 was the v65-audit cleanup (periodic partial-seed retry); v65 was the backfill-on-startup pass; v64 was the dApp surface for stranded-seed observability; v63 was the v62-audit cleanup; v62 was the relayer-driven auto-liquidity feature itself; v61 was the bet-flow UX fix; v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change. Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 27 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v67 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
+                  now v22-v67 and the gap is 27.
+                  v68 (M0): bumps v67 -> v68 (relayer-driven
+                  auto-funding — the relayer now tops up the
+                  contract's STT balance whenever it falls below
+                  RELAYER_AUTO_FUND_STT, a new opt-in env var
+                  default 0 = disabled; per-refill cap is
+                  min(0.1 * EOA balance,
+                  RELAYER_AUTO_FUND_MAX_PER_REFILL_STT) so a
+                  single tick can't blow the operator's wallet).
+                  No contract bytecode change, so the cumulative
+                  surface is now v22-v68 and the gap is 28. */}
+              <Tooltip content="Frontend label = JSON manifest's `version` field (v68, the cumulative shipped v22-v68 frontend + relayer + tooling + contract surface — v68 is the relayer-driven auto-funding feature: the relayer now tops up the contract's STT balance whenever it falls below RELAYER_AUTO_FUND_STT, a new opt-in env var (default 0 = disabled; setting it to e.g. 5 enables auto-funding with a 5 STT target). The refill is bounded by min(0.1 * EOA balance, RELAYER_AUTO_FUND_MAX_PER_REFILL_STT default 2 STT). v67 was the v66-audit cleanup; v66 was the v65-audit cleanup (periodic partial-seed retry); v65 was the backfill-on-startup pass; v64 was the dApp surface for stranded-seed observability; v63 was the v62-audit cleanup; v62 was the relayer-driven auto-liquidity feature itself; v61 was the bet-flow UX fix; v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change. Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 28 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v68 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
                 <span className="cursor-help text-zinc-500 underline-offset-2 hover:underline">why two?</span>
               </Tooltip>
             </div>
