@@ -63,7 +63,7 @@ const ROOT = join(__dirname, '..');
 // code paths, no new log lines, no new ENV vars), but the version
 // constant tracks the shipped audit surface so the smoke grep
 // continues to be the test of record.
-const RELAYER_VERSION = 'v66';
+const RELAYER_VERSION = 'v67';
 const SHANNON_RPC_URL = process.env.SHANNON_RPC_URL ?? 'https://dream-rpc.somnia.network';
 const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
 const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';
@@ -321,6 +321,12 @@ let hasBackfilled = false;
 // Set for any market where the relayer EOA lacks both YES + NO
 // bets, re-attempting the missing side. This is bounded — at most
 // LIQUIDITY_SEED_MAX_PER_TICK re-seeds per tick.
+// v67 (L2): flaggedPartials Set — markets where the relayer
+// detected a partial seed (one side landed, the other didn't due
+// to the Somnia state-trie bug). These are retried EVERY tick
+// (not just every 30 min) so the operator sees a "partial" pill
+// for the minimum possible window. Cleared when both sides land.
+const flaggedPartials = new Map(); // marketId (string) -> { attempts }
 let tickCount = 0;
 // v63 (H1): stranded-seed observability. Maps seeded marketId → its
 // resolutionSource URL, for markets whose URL is currently in the
@@ -1255,18 +1261,67 @@ async function backfillSeededMarkets(alreadySubmitted) {
 // other side seemingly on-chain but `noTotal = 0`). The v65 backfill
 // catches this on relayer startup, but a partial seed that occurs
 // AFTER the backfill would only recover on the next restart.
-// This function runs every RETRY_PARTIAL_SEED_INTERVAL_TICKS
-// ticks (default 60 = ~30 minutes) and scans the seededMarkets
-// Set for any market where the relayer EOA lacks both YES + NO
-// bets, re-attempting the missing side via the same seedMarket
-// function. Bounded: at most LIQUIDITY_SEED_MAX_PER_TICK
-// re-seeds per call.
+// v67 (L2): this function now has two paths:
+//   1. flaggedPartials: a Set of markets where seedMarket returned
+//      false (one side landed, the other didn't due to the
+//      Somnia state-trie bug). These are retried EVERY tick
+//      (not just every 30 min) so the operator sees a "partial"
+//      pill for the minimum possible window. Cleared when both
+//      sides land.
+//   2. The full seededMarkets Set: scanned every
+//      RETRY_PARTIAL_SEED_INTERVAL_TICKS (default 60 = ~30 min)
+//      for any market where the relayer EOA lacks both YES + NO
+//      bets, re-attempting the missing side. This catches the
+//      slow case where the relayer didn't detect the partial on
+//      the original attempt (e.g. the receipt said success and
+//      the SOMNIA state rolled back later).
 async function retryPartialSeeds(alreadySubmitted) {
   if (RELAYER_LIQUIDITY_STT === '0') return;
+  // Path 1: per-tick retry of flagged partials. Bounded by
+  // LIQUIDITY_SEED_MAX_PER_TICK so a single tick can't blow the
+  // budget on a flood of partials.
+  if (flaggedPartials.size > 0) {
+    let retried = 0;
+    for (const key of [...flaggedPartials]) {
+      if (retried >= LIQUIDITY_SEED_MAX_PER_TICK) break;
+      if (alreadySubmitted.has(key)) continue;
+      let marketId;
+      try {
+        marketId = BigInt(key);
+      } catch {
+        continue;
+      }
+      console.log(
+        `[relayer] flagged retry: market ${marketId} (every-tick retry until both sides land)`,
+      );
+      const ok = await seedMarket(marketId);
+      if (ok) {
+        flaggedPartials.delete(key);
+        alreadySubmitted.add(key);
+        retried++;
+      } else {
+        // Still partial. Keep in the flagged set, retry next tick.
+        // v67 (L2): bound the retry budget — a stuck partial should
+        // not retry forever. After 60 attempts (60 ticks = 30 min at
+        // 30s POLL_MS), drop the market from the flagged set and
+        // log an advisory. The relayer's main loop will still
+        // process the market via the regular resolution path
+        // (tryResolveMarket) once the market expires.
+        const attempts = (flaggedPartials.get(key)?.attempts ?? 0) + 1;
+        if (attempts >= 60) {
+          flaggedPartials.delete(key);
+          console.warn(
+            `[relayer] flagged retry: market ${marketId} gave up after 60 attempts (Somnia state-trie bug is unfixable from the relayer side)`,
+          );
+        } else {
+          flaggedPartials.set(key, { attempts });
+        }
+      }
+    }
+  }
+  // Path 2: every-30-min full scan (catches the slow path).
+  if (tickCount % RETRY_PARTIAL_SEED_INTERVAL_TICKS !== 0) return;
   if (seededMarkets.size === 0) return;
-  // Bounded scan: iterate the seededMarkets Set (small, ~10-100
-  // entries on the live contract). For each market where the
-  // relayer EOA doesn't have both YES + NO bets, retry.
   let retried = 0;
   for (const key of seededMarkets) {
     if (retried >= LIQUIDITY_SEED_MAX_PER_TICK) break;
@@ -1292,13 +1347,18 @@ async function retryPartialSeeds(alreadySubmitted) {
         (b) => b.better.toLowerCase() === relayerLower && Number(b.option) === 1,
       );
       if (hasYes && hasNo) continue; // already fully seeded
+      // v67 (L2): the slow-path retry uses the regular seedMarket,
+      // which returns false on partial. Add to flaggedPartials so
+      // the per-tick retry handles it from now on.
       console.log(
-        `[relayer] periodic retry: market ${marketId} partial seed (has yes=${hasYes}, no=${hasNo}); re-attempting`,
+        `[relayer] slow-path retry: market ${marketId} partial seed (has yes=${hasYes}, no=${hasNo}); re-attempting`,
       );
       const ok = await seedMarket(marketId);
       if (ok) {
         alreadySubmitted.add(key);
         retried++;
+      } else if (!flaggedPartials.has(key)) {
+        flaggedPartials.add(key, { attempts: 0 });
       }
     } catch (err) {
       console.warn(
@@ -1384,6 +1444,11 @@ async function seedMarket(marketId) {
         console.error(
           `[relayer]   seed bet for market ${marketId} option=${option} reverted (blockHash=${receipt.blockHash}); aborting pair`,
         );
+        // v67 (L2): flag the market for per-tick retry. The receipt
+        // says "reverted" but the on-chain state may be inconsistent
+        // (Somnia state-trie); the next per-tick retry will re-read
+        // and either complete the seed or confirm the revert.
+        flaggedPartials.set(key, { attempts: 0 });
         return false;
       }
       if (VERBOSE) {
@@ -1396,6 +1461,11 @@ async function seedMarket(marketId) {
         `[relayer]   seed bet for market ${marketId} option=${option} failed:`,
         err.shortMessage ?? err.message,
       );
+      // v67 (L2): flag for per-tick retry. The error might be a
+      // transient RPC issue (network blip, node restart) that the
+      // next tick resolves. A permanent failure (e.g. contract
+      // paused) will hit the 60-attempt cap and self-clear.
+      flaggedPartials.set(key, { attempts: 0 });
       return false;
     }
   }
@@ -2176,14 +2246,21 @@ while (!stopping) {
     // after the first tick. Logs the count of backfilled markets
     // so the operator can see what was missed.
     await backfillSeededMarkets(alreadySubmitted);
-    // v66 (M0): periodic partial-seed retry. Runs every
-    // RETRY_PARTIAL_SEED_INTERVAL_TICKS (default 60 = ~30 min)
-    // to recover from Somnia state-trie partial seeds. Cheap no-op
-    // when seededMarkets is empty or all bets are complete.
+    // v66 (M0) + v67 (L2): partial-seed retry. v67 changed the
+    // schedule — retryPartialSeeds is now called EVERY tick (not
+    // just every 30 min). The function itself has two paths:
+    //   1. flaggedPartials (a Map<marketId, {attempts}>) is
+    //      retried on every tick. Markets stay in the set until
+    //      both sides land, or until 60 attempts (30 min at 30s
+    //      POLL_MS) elapses, at which point they're dropped with
+    //      an advisory log.
+    //   2. The full seededMarkets Set is scanned every
+    //      RETRY_PARTIAL_SEED_INTERVAL_TICKS (default 60 = ~30
+    //      min) for the slow-path case where the partial wasn't
+    //      detected on the original attempt.
+    // Cheap no-op when neither set is non-empty.
     tickCount++;
-    if (tickCount % RETRY_PARTIAL_SEED_INTERVAL_TICKS === 0) {
-      await retryPartialSeeds(alreadySubmitted);
-    }
+    await retryPartialSeeds(alreadySubmitted);
     await drainSeedEvents(alreadySubmitted);
     // v28 (H1): drainInferenceUnderfundedEvents runs BEFORE drainFailureEvents.
     // The InferenceUnderfunded path emits BOTH InferenceUnderfunded AND

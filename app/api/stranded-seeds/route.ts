@@ -111,25 +111,37 @@ export async function GET() {
       // above 0.02 STT, but the bet-array check is more robust
       // (it proves the relayer EOA has the bets, regardless of the
       // aggregate total).
-      let bets: Array<{ better: string; option: number }>;
+      let bets: Array<{ better: string; option: number; amount: bigint }>;
       try {
         bets = (await publicClient.readContract({
           address: CONTRACT_ADDRESS,
           abi: CONTRACT_ABI,
           functionName: 'getMarketBets',
           args: [id],
-        })) as Array<{ better: string; option: number }>;
+        })) as Array<{ better: string; option: number; amount: bigint }>;
       } catch {
         continue;
       }
       const relayerLower = RELAYER_EOA_HARDCODED;
-      const hasYes = bets.some(
+      // v67 (L0): strict auto-seed check. The relayer EOA must be
+      // a YES better of EXACTLY 0.01 STT AND a NO better of EXACTLY
+      // 0.01 STT. The previous `hasYes && hasNo` check matched any
+      // market where the relayer EOA had bets on both sides, which
+      // incorrectly counted test markets (e.g. market #3, where the
+      // v62 gas test left the relayer EOA with arbitrary bet
+      // amounts) as stranded. The strict check is the proof that
+      // the auto-seed feature placed the seed — any other amounts
+      // mean the market has a different history.
+      const SEED_AMOUNT = SEED_SIZE_PER_MARKET / 2n; // 0.01 STT
+      const yesBet = bets.find(
         (b) => b.better.toLowerCase() === relayerLower && b.option === 0,
       );
-      const hasNo = bets.some(
+      const noBet = bets.find(
         (b) => b.better.toLowerCase() === relayerLower && b.option === 1,
       );
-      if (!hasYes || !hasNo) continue;
+      if (!yesBet || !noBet) continue;
+      if (yesBet.amount !== SEED_AMOUNT) continue;
+      if (noBet.amount !== SEED_AMOUNT) continue;
       // v66 (L1): tag the entry with a `partialSeed` boolean so the
       // dApp can distinguish fully-stranded from partial-seed
       // markets. A partial seed is a Somnia state-trie artifact

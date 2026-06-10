@@ -166,3 +166,23 @@ export function oddsPercent(yesTotal: bigint, noTotal: bigint, side: 'yes' | 'no
   const sideTotal = side === 'yes' ? yesTotal : noTotal;
   return Number((sideTotal * 10000n) / total) / 100;
 }
+
+// v67 (L1): precision-preserving STT-string → wei conversion.
+// The previous `Number(str) * 1e18` approach loses precision for STT
+// amounts > ~9 because JS Number is float64 (~15-16 significant
+// digits). This helper splits the string on '.', builds the integer
+// part as a BigInt, and pads the fractional part to 18 digits
+// before concatenating. Pure string manipulation + BigInt, no
+// floats. Works for any STT amount up to the BigInt limit
+// (arbitrary precision). The stranded-seeds API emits
+// `totalStrandedStt` as a 3-decimal string; the dApp needs the
+// wei form for `formatStt`. Putting the helper in lib-web means
+// both the API route and the React component can use the same
+// implementation.
+export function sttStringToWei(sttString: string): bigint {
+  const [intPart, fracPartRaw = ''] = sttString.split('.');
+  const intWei = BigInt(intPart || '0') * 10n ** 18n;
+  const fracPart = (fracPartRaw + '0'.repeat(18)).slice(0, 18);
+  const fracWei = BigInt(fracPart || '0');
+  return intWei + fracWei;
+}
