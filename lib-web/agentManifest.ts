@@ -274,9 +274,21 @@ export function getAutoResolveAgentManifest() {
     // Resolving yet, or Resolved for markets with a final outcome).
     // v58 also seeds 4 fresh active markets with 1h/6h/24h
     // durations on the v19+v40+v45 contract so the Active tab
-    // is non-empty. The shipped invariant is Contract (on-chain
-    // agentManifest) = v40, Frontend (this field) = v58.
-    version: 'v58',
+    // is non-empty. v59 (H0) bumps v58 -> v59 to advertise
+    // the daily auto-creation pattern: scripts/daily-topics.txt
+    // now has two `{{date}}`-templated lines (Ethereum gas +
+    // Bitcoin price) that the relayer's drainTopicFeed and the
+    // /api/daily-topic route both substitute at read time with
+    // today's UTC date. The substitution is what makes the
+    // relayer's submittedTopics Set dedup-by-string actually
+    // re-fire daily — a static line would only fire once total.
+    // v59 also creates market #12 with the corrected Bitcoin
+    // question to fix the v58 bash-quoting bug (the prior
+    // market #9 had the `$110,000` literally eaten by $1
+    // variable interpolation). The shipped invariant is
+    // Contract (on-chain agentManifest) = v40, Frontend (this
+    // field) = v59.
+    version: 'v59',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {

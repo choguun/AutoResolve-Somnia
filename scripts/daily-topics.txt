@@ -12,10 +12,21 @@
 # amber warning if the on-chain endTime doesn't match the hint. The default
 # hint is 86400 (24h) when no suffix is present.
 #
-# The 7 topics below rotate Mon→Sun. The /proof page's Daily Resolution
-# Demo panel reads today's topic, displays it with a "Run today's market"
-# button, and tracks the live state (Submitted → Created → Resolving →
-# Resolved) over the 24h market lifetime.
+# v59 (H0): `{{date}}` placeholder. Both the relayer's drainTopicFeed
+# and the /api/daily-topic route substitute this with today's UTC date
+# (YYYY-MM-DD) at read time, so the same template line produces a unique
+# topic string each day. The relayer's submittedTopics Set dedupes by
+# full string, so this is what makes "every day" work — a static line
+# would only fire once total.
+#
+# v59 (H0): the two `{{date}}`-templated lines below are auto-created
+# EVERY day by the relayer (Ethereum gas + Bitcoin price). The
+# remaining 7 lines rotate weekly via the day-of-year % 7 index.
+#
+# The /proof page's Daily Resolution Demo panel reads today's topic,
+# displays it with a "Run today's market" button, and tracks the live
+# state (Submitted → Created → Resolving → Resolved) over the 24h
+# market lifetime.
 Will Somnia mainnet launch before 2027? [duration=86400]
 Did a tier-1 LLM agent beat a human on a standard SWE-bench task this week? [duration=86400]
 Did the S&P 500 close above 5500 today? [duration=86400]
@@ -23,3 +34,9 @@ Did Bitcoin trade above $100,000 on Coinbase today? [duration=86400]
 Did any frontpage Reddit thread reach 50,000 upvotes today? [duration=86400]
 Is the median Shannon testnet block time under 700ms today? [duration=86400]
 Did a new autonomous prediction market ship on a non-EVM chain this week? [duration=86400]
+
+# v59 (H0): auto-created every day. The `{{date}}` placeholder is
+# substituted with today's UTC date at read time, so each day's run
+# is a unique string the relayer's submittedTopics Set hasn't seen.
+Will Ethereum's L1 gas price stay under 5 gwei for {{date}}? [duration=86400]
+Did Bitcoin close above $110,000 on Coinbase on {{date}}? [duration=86400]

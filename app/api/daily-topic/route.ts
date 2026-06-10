@@ -36,15 +36,26 @@ function dayOfYear(): number {
   return Math.floor(diff / 86_400_000);
 }
 
+// v59 (H0): substitute `{{date}}` with today's UTC date at read time
+// so the same template line produces a unique topic string each day
+// (and the relayer's submittedTopics Set sees a fresh entry per day).
+// Mirrors the substitution the relayer does in drainTopicFeed so the
+// API panel and the relayer agree on what today's topic text is.
+function todayUtc(): string {
+  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
 export async function GET() {
   let topics: DailyTopic[] = [];
   try {
     const raw = await fs.readFile(TOPICS_FILE, 'utf8');
+    const today = todayUtc();
     topics = raw
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0 && !line.startsWith('#'))
-      .map(parseTopicLine);
+      .map(parseTopicLine)
+      .map((t) => ({ ...t, topic: t.topic.replaceAll('{{date}}', today) }));
   } catch (err) {
     // v56 (M0): mirror the v47 L1 attribution in app/api/topics/route.ts —
     // a bare `catch {}` left the in-app "today's topic" pill silently

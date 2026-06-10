@@ -63,7 +63,7 @@ const ROOT = join(__dirname, '..');
 // code paths, no new log lines, no new ENV vars), but the version
 // constant tracks the shipped audit surface so the smoke grep
 // continues to be the test of record.
-const RELAYER_VERSION = 'v58';
+const RELAYER_VERSION = 'v59';
 const SHANNON_RPC_URL = process.env.SHANNON_RPC_URL ?? 'https://dream-rpc.somnia.network';
 const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
 const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';
@@ -1250,7 +1250,17 @@ async function readTopicFeed() {
 async function drainTopicFeed() {
   const topics = await readTopicFeed();
   if (topics === null) return; // read error; already logged
-  const fresh = topics.filter((t) => !submittedTopics.has(t));
+  // v59 (H0): substitute `{{date}}` with today's UTC date so a
+  // single template line like "Will Ethereum's L1 gas price stay
+  // under 5 gwei for {{date}}?" produces a unique string each day.
+  // The relayer's submittedTopics Set dedupes by full string, so
+  // this is what makes "auto-created every day" work — a static
+  // line would only fire once total. Substitution happens here, not
+  // at file-read time, so the on-disk file stays human-readable
+  // (the {{date}} placeholder is visible to anyone inspecting it).
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
+  const expanded = topics.map((t) => t.replaceAll('{{date}}', today));
+  const fresh = expanded.filter((t) => !submittedTopics.has(t));
   if (fresh.length === 0) {
     // v48 (L1): log the empty case once per tick so VERBOSE=1 operators
     // can see the feed is being polled. The pre-v48 silent return made a
@@ -1268,7 +1278,7 @@ async function drainTopicFeed() {
     return;
   }
   console.log(
-    `[relayer] topic feed: ${topics.length} total, ${fresh.length} new, ` +
+    `[relayer] topic feed: ${topics.length} total (${expanded.length} after {{date}} substitution), ${fresh.length} new, ` +
       `submitting up to ${TOPIC_FEED_MAX_PER_TICK}`,
   );
   const slice = fresh.slice(0, TOPIC_FEED_MAX_PER_TICK);
