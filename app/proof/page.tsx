@@ -214,8 +214,19 @@ export default async function ProofPage() {
                   stranded set from on-chain data; plus the
                   re-resolving log fix in drainFailureEvents). No
                   contract bytecode change, so the cumulative
-                  surface is now v22-v64 and the gap is 24. */}
-              <Tooltip content="Frontend label = JSON manifest's `version` field (v64, the cumulative shipped v22-v64 frontend + relayer + tooling + contract surface — v64 is the dApp surface for the v63 stranded-seed observability: /api/stranded-seeds API route that derives the stranded set from on-chain data (getUserMarkets + getMarket + getMarketBets) without needing direct access to the relayer's /app/state directory, plus a StrandedSeedsCard on /proof that polls the endpoint and renders count + total STT locked + per-market detail. v64 also fixes a misleading 're-resolving market N' log line in drainFailureEvents (the previous wording implied an action that the cache check immediately skipped). v63 was the v62-audit cleanup; v62 was the relayer-driven auto-liquidity feature itself; v61 was the bet-flow UX fix; v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change. Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 24 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v64 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
+                  surface is now v22-v64 and the gap is 24.
+                  v65 (H0+L1): bumps v64 -> v65 (v64-audit cleanup
+                  — backfill-on-startup pass that seeds pre-v62
+                  markets that were missed by the initial-cursor-
+                  skip pattern; on the live contract 8 markets
+                  sat unseeded before the backfill; plus the
+                  StrandedSeedsCard precision conversion
+                  STT-string-to-wei now uses BigInt math instead
+                  of Number * 1e18 to avoid float64 precision loss
+                  for STT amounts > ~9). No contract bytecode
+                  change, so the cumulative surface is now v22-v65
+                  and the gap is 25. */}
+              <Tooltip content="Frontend label = JSON manifest's `version` field (v65, the cumulative shipped v22-v65 frontend + relayer + tooling + contract surface — v65 is the v64-audit cleanup: a backfill-on-startup pass that scans [1, nextMarketId) for any Open market where the relayer EOA hasn't already placed the YES+NO seed (catches markets created before the v62 auto-seed feature was enabled; on the live contract 8 markets were missed). v65 also fixes a precision bug in the StrandedSeedsCard: the STT-string-to-wei conversion now uses BigInt math instead of Number * 1e18 to avoid float64 precision loss for STT amounts > ~9. v64 was the dApp surface for stranded-seed observability; v63 was the v62-audit cleanup; v62 was the relayer-driven auto-liquidity feature itself; v61 was the bet-flow UX fix; v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change. Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 25 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v65 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
                 <span className="cursor-help text-zinc-500 underline-offset-2 hover:underline">why two?</span>
               </Tooltip>
             </div>

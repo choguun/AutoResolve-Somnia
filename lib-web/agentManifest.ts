@@ -339,7 +339,19 @@ export function getAutoResolveAgentManifest() {
     // the misleading "re-resolving" message with "parse-failure
     // cached; next scan will retry once LRU evicts URL" for the
     // parse-failure case. No contract bytecode change.
-    version: 'v64',
+    // v65 (H0+L1) bumps v64 -> v65 to advertise the v64-audit
+    // cleanup: backfill-on-startup pass that scans [1, nextMarketId)
+    // for any Open market where the relayer EOA hasn't already
+    // placed the YES+NO seed (catches markets created before the
+    // v62 auto-seed feature was enabled; on the live contract, 8
+    // markets were missed by the initial-cursor-skip pattern and
+    // sat unseeded). Idempotent, runs once per process, gates on
+    // the in-memory hasBackfilled flag. Also: the StrandedSeedsCard
+    // now uses a precision-preserving STT-string-to-wei helper
+    // (sttStringToWei) instead of `Number * 1e18` which loses
+    // precision for STT amounts > ~9 STT. No contract bytecode
+    // change.
+    version: 'v65',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
