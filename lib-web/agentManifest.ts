@@ -285,10 +285,21 @@ export function getAutoResolveAgentManifest() {
     // v59 also creates market #12 with the corrected Bitcoin
     // question to fix the v58 bash-quoting bug (the prior
     // market #9 had the `$110,000` literally eaten by $1
-    // variable interpolation). The shipped invariant is
-    // Contract (on-chain agentManifest) = v40, Frontend (this
-    // field) = v59.
-    version: 'v59',
+    // variable interpolation). v60 (H0) bumps the field
+    // v59 -> v60 to advertise the on-chain prompt-suffix
+    // change: the new suffix teaches the inference agent to
+    // honor the [duration=N] suffix in topic text instead of
+    // preferring [300, 600] seconds, so the daily
+    // auto-create pattern produces 24h markets (matching the
+    // user's [duration=86400] hint) instead of the pre-v60
+    // 5-min markets that expired before judges could
+    // interact. The shipped invariant is Contract (on-chain
+    // agentManifest) = v40, Frontend (this field) = v60.
+    // v60 is a contract change (compiled bytecode shifts) but
+    // does NOT change the on-chain agentManifest() string,
+    // which is a static narrative that doesn't reference the
+    // prompt suffix — so the v40 label is still accurate.
+    version: 'v60',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {
@@ -355,7 +366,7 @@ export function getAutoResolveAgentManifest() {
         {
           signature: 'createMarket(string,string,uint256)',
           description:
-            'Create a binary YES/NO market. question <= 500 chars (MAX_QUESTION_LENGTH), source is http(s) URL, durationSeconds in [300, 86400] (MIN_DURATION..MAX_DURATION; prefer [300, 600] for fast resolution). Returns the new marketId.',
+            'Create a binary YES/NO market. question <= 500 chars (MAX_QUESTION_LENGTH), source is http(s) URL, durationSeconds in [300, 86400] (MIN_DURATION..MAX_DURATION; honor the [duration=N] suffix in the topic text if present, otherwise pick a per-topic-appropriate value in [300, 86400]). Returns the new marketId.',
         },
       ],
       // v25 (L3): the prompt template is no longer hardcoded. The route
@@ -371,15 +382,17 @@ export function getAutoResolveAgentManifest() {
       // static fallback labeled a non-existent `system` field, which would
       // mislead external agents. Renamed to `userSuffix` to match the
       // actual model architecture; the text is the v7 SPECIFIC-URL +
-      // SHORT-duration guidance the live contract prompt encodes (the
-      // older static text was missing both requirements, which is what
-      // blocked AI-created → AI-resolved markets until v7).
+      // honor-the-duration-hint guidance the live contract prompt
+      // encodes (the older static text was missing both requirements,
+      // which is what blocked AI-created → AI-resolved markets until
+      // v7, and v60 fixed the duration-hint honor so the daily
+      // auto-create pattern produces 24h markets instead of 5-min).
       promptTemplate: {
         userPrefix: 'Design a binary YES/NO prediction market on this topic. ',
         userSuffix:
           ' You MUST call createMarket(question, source, durationSeconds) exactly once. ' +
           'question <= 500 chars. The source URL MUST be a SPECIFIC article or page that directly states the answer to the YES/NO question (e.g. https://en.wikipedia.org/wiki/Paris NOT https://en.wikipedia.org/). ' +
-          'Prefer a SHORT duration in [300, 600] seconds so the market can resolve quickly.',
+          "DURATION: if the topic text includes a [duration=N] suffix, use that exact value in seconds. Otherwise pick a duration appropriate for the topic in [300, 86400] seconds (daily / 'this week' / 'tomorrow' topics should use 86400; same-day 'by end of today' topics should use 43200-86400; 'did X already happen' topics should use 300-3600).",
       },
       creatorSentinel: '0x00000000000000000000000000000000000000A1',
       // v56 (H0): the daily-cadence autonomous-creation pattern. The

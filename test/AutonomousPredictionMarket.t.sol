@@ -1530,6 +1530,11 @@ contract AutonomousPredictionMarketTest is Test {
         // prompt prefix + suffix the contract sends to the LLM Inference
         // agent's inferToolsChat. They previously had to decompile the source
         // (or scrape this repo) to predict the agent's tool-call output.
+        // v60 (H0): the suffix used to contain "[300, 600]" (a hint to
+        // prefer short durations). The new suffix teaches the agent to
+        // honor the [duration=N] suffix in the topic text and falls back
+        // to a per-topic-appropriate range [300, 86400]. Update the
+        // assertion to match.
         (string memory prefix, string memory suffix) = market.getGenerationPromptTemplate();
 
         assertEq(prefix, market.GENERATION_PROMPT_PREFIX(), "prefix matches the constant");
@@ -1540,7 +1545,8 @@ contract AutonomousPredictionMarketTest is Test {
         );
         assertTrue(_contains(suffix, "createMarket(question, source, durationSeconds)"), "suffix names the tool");
         assertTrue(_contains(suffix, "SPECIFIC"), "suffix enforces the SPECIFIC-URL rule");
-        assertTrue(_contains(suffix, "[300, 600]"), "suffix enforces the [300, 600] duration range");
+        assertTrue(_contains(suffix, "[duration=N]"), "suffix explains the duration-hint convention");
+        assertTrue(_contains(suffix, "[300, 86400]"), "suffix provides a default duration range");
     }
 
     function testAgentManifestAdvertisesV15() public {

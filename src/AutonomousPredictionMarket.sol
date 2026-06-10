@@ -102,13 +102,21 @@ contract AutonomousPredictionMarket is ReentrancyGuard {
     ///   "<prefix><topic><suffix>"
     /// where prefix and suffix enforce the market shape (binary YES/NO,
     /// 500-char question, http(s) source URL pointing at a SPECIFIC article
-    /// not a homepage, [300, 600] second duration).
+    /// not a homepage).
+    /// v60 (H0): the suffix previously read "Prefer a SHORT duration in
+    /// [300, 600] seconds so the market can resolve quickly." That
+    /// caused the inference agent to ignore the `[duration=N]` suffix
+    /// that the relayer + /api/daily-topic template lines include
+    /// (e.g. `[duration=86400]` for a daily market). All auto-created
+    /// markets ended up with the [300, 600] duration and expired in
+    /// 5-10 min, which broke the "daily" cadence. The new suffix
+    /// tells the agent to honor the [duration=N] hint if present.
     string public constant GENERATION_PROMPT_PREFIX =
         "Design a binary YES/NO prediction market on this topic. ";
     string public constant GENERATION_PROMPT_SUFFIX =
         " You MUST call createMarket(question, source, durationSeconds) exactly once. "
         "question <= 500 chars. The source URL MUST be a SPECIFIC article or page that directly states the answer to the YES/NO question (e.g. https://en.wikipedia.org/wiki/Paris NOT https://en.wikipedia.org/). "
-        "Prefer a SHORT duration in [300, 600] seconds so the market can resolve quickly.";
+        "DURATION: if the topic text includes a [duration=N] suffix, use that exact value in seconds. Otherwise pick a duration appropriate for the topic in [300, 86400] seconds (daily / 'this week' / 'tomorrow' topics should use 86400; same-day 'by end of today' topics should use 43200-86400; 'did X already happen' topics should use 300-3600).";
 
     uint256 public nextMarketId;
 
