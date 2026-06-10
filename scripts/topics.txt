@@ -2,8 +2,24 @@
 # `requestMarketGeneration(topic)` call. The Somnia LLM Inference agent
 # (inferToolsChat) decides the market question, source URL, and duration,
 # then yields ABI-encoded createMarket calldata back to the contract.
+#
+# v59 (H0): `{{date}}` placeholder. The relayer's drainTopicFeed
+# substitutes this with today's UTC date at read time, so a single
+# template line produces a unique topic string each day. The relayer's
+# submittedTopics Set dedupes by full string, so this is what makes
+# "auto-created every day" work — a static line would only fire once
+# total. The /api/daily-topic route does the same substitution for the
+# demo panel on /proof.
 Will Somnia mainnet launch before 2027?
 Did Bitcoin reach 100,000 USD on any exchange in 2024?
 Did the United States default on its debt in 2025?
 Will Ethereum trade above 5,000 USD on any major exchange in 2026?
 Is the capital of Australia Canberra?
+# v59 (H0): the two {{date}}-templated lines below are auto-created EVERY
+# day by the relayer. The relayer picks them up on its first tick after
+# each UTC midnight (the relayer has no built-in cron, so the
+# substitution at read time is what makes the dedup-by-string Set
+# actually re-fire daily). Sources hint (the inference agent picks the
+# final URL):
+Will Ethereum's L1 gas price stay under 5 gwei for {{date}}? [duration=86400]
+Did Bitcoin close above $110,000 on Coinbase on {{date}}? [duration=86400]
