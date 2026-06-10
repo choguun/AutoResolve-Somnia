@@ -17,12 +17,16 @@ hard constraints that are easy to break.
 - **Current contract (v19+v40+v45 — live on-chain since 2026-06-09)**:
   [`0x48556EA096F4abFFB569916a138Ec946B54A85dE`](https://shannon-explorer.somnia.network/address/0x48556EA096F4abFFB569916a138Ec946B54A85dE)
   is the v19+v40+v45 contract (deploy tx [`0x7b7fec…002f8`](https://shannon-explorer.somnia.network/tx/0x7b7fec571d19237307c4f52a2ef2339b4ed959703c6558b8b66a4fe282e002f8)). 113/113 Foundry tests pass (104 pre-v40 + 7 v40 `getUserMarkets` + 1 v45 `agentManifest()` + 1 v45 ABI regression; all test names listed in `test/AutonomousPredictionMarket.t.sol`). The v15 address `0x764Dc86246D242382c7619Fc715d0E3A64B2022b` is now historical.
-- **Live app (v50)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
+- **Live app (v68)**: `autoresolve-somnia.vercel.app`. Proof page at `/proof`,
   agent manifest at `/api/agent-manifest` and
-  `/.well-known/autoresolve-agent.json`. The relayer (`scripts/relayer.mjs` v50)
+  `/.well-known/autoresolve-agent.json`. The relayer (`scripts/relayer.mjs` v68)
   is running on Railway (project `autoresolve-somnia`, service `relayer`,
   healthcheck passing; relayer EOA `0x119F9fd07C09B7AD45Ac45c6797e2c2FB97a5fD6`,
-  same as the deployer).
+  same as the deployer). The relayer has relayer-driven auto-liquidity
+  (`RELAYER_LIQUIDITY_STT=0.01`, opt-in), periodic partial-seed retry for
+  Somnia state-trie issues, stranded-seed observability, and
+  relayer-driven auto-funding (`RELAYER_AUTO_FUND_STT=2`, opt-in) to keep
+  the contract's STT balance topped up.
 - **Fresh E2E AI-created→AI-resolved proof (in progress)**: market #3 on the v19+v40+v45 contract ("Will Somnia mainnet launch before 2027?") was created by the inference agent at `tx 0x454a2c…e56c` (the relayer's first topic-feed submission on the new contract) and is awaiting parse receipt. Markets #1 and #2 (Paris + Bitcoin, seeded by `deploy.sh`) are both in `Resolving` with parse txs `0x100efe…0f30` and `0x146f71…9ec7`.
 - **Historical E2E proof (v2)**: market #1 on the v2 contract resolved `YES`
   via parse receipt `2400421` and inference receipt `2400485`; winnings
@@ -33,12 +37,25 @@ hard constraints that are easy to break.
   resolved YES via parse receipt `4254170` and inference receipt `4254291`
   (tx `0x362daa6f…b5143`).
 
-### Version history (v8–v55; v19+v40+v45 live, v46-v55 frontend/relayer/tooling)
+### Version history (v8–v68; v19+v40+v45 live, v56-v68 frontend/relayer/tooling)
 
 The contract has been hardened through v8–v19 (Foundry) and the frontend /
-relayer / manifest through v22–v53. The full per-cycle diff lives in the
+relayer / manifest through v22–v68. The full per-cycle diff lives in the
 `auto-resolve-v*-hardening` memory files indexed in `MEMORY.md` (each
 ~5–10KB; this section is a pointer, not a re-narration).
+
+**v56–v68 highlights (post-v55)**:
+- v55 end-to-end deploy (contract + Vercel + Railway relayer).
+- v56 healthcheck shim (Railway service-level healthcheck needs an HTTP endpoint).
+- v58 home-page "Resolved" tab renamed to "Ended" + 4 fresh active markets seeded.
+- v60 contract prompt-suffix honors `[duration=N]` (5-min → 24h daily auto-create).
+- v62 relayer-driven auto-liquidity (auto-seed YES+NO on every MarketCreated).
+- v63 v62-audit cleanup (stranded-seed observability + dynamic MIN_BET + partial-seed completion + env-toggle fix).
+- v64 dApp surface for stranded-seed observability (`/api/stranded-seeds` API + StrandedSeedsCard on `/proof`).
+- v65 backfill-on-startup pass (catches pre-v62 markets that the initial-cursor-skip pattern missed; 8 markets backfilled on the live contract).
+- v66 periodic partial-seed retry every ~30 min to recover from Somnia state-trie partial seeds.
+- v67 v66-audit cleanup (strict relayer-seed filter in the route, sttStringToWei in lib-web, per-tick retry on flaggedPartials with 60-attempt cap).
+- v68 relayer-driven auto-funding (opt-in via `RELAYER_AUTO_FUND_STT=0`; per-refill cap `min(0.1 * EOA, 2 STT)`).
 
 **vN surface invariant (v48 M1, hardened through v51)**: every cycle that
 ships to Vercel must bump **all** of `lib-web/agentManifest.ts:version`,
