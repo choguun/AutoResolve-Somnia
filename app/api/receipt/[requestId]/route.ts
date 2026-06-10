@@ -120,10 +120,35 @@ export async function GET(
       // The throw surfaces as a 502 with upstreamStatus:200, which is the
       // honest signal — the platform returned 200, but the body wasn't
       // usable. The hook's status-code logic still routes correctly.
+      // v68 (M0): also detect the 200-with-0-receipts case the platform
+      // returns when the receipt was filed under a DIFFERENT contract
+      // (e.g. the v7 proof receipts 4254170/4254291 are filed under
+      // 0xd3E946aC…4B69, but the canonical AutoResolve contract is the
+      // v19+v40+v45 address — querying with the current contract returns
+      // `{"receipts":[],"count":0}`). Pre-v68, normalizeMinimalReceipt
+      // threw on data.receipts[0] being undefined and the route returned
+      // 502 with upstreamStatus:200, which the viewer rendered as
+      // "couldn't parse, mid-deploy" — misleading because the platform
+      // was actually responding, the receipt just lives under a
+      // different contract. v68 falls through to a platform-address
+      // retry first, and only emits the 502 if the platform itself
+      // returns 0 receipts under its own address.
       try {
         const data = (await primary.json()) as RawMinimalReceiptResponse;
-        const receipt = normalizeMinimalReceipt(data);
-        return NextResponse.json(receipt);
+        if (!data.receipts || data.receipts.length === 0) {
+          // Receipt isn't filed under the queried contract. Try the
+          // platform address before giving up — the platform's own
+          // address filter does the cross-contract lookup that the
+          // contract-filtered query doesn't.
+          console.warn(
+            `[api/receipt] contract-filtered primary returned 0 receipts for requestId=${requestId} contractAddress=${contractAddress}; retrying under SOMNIA_PLATFORM_ADDRESS`,
+          );
+          primaryStatus = 404;
+          // fall through to the platform-address retry below
+        } else {
+          const receipt = normalizeMinimalReceipt(data);
+          return NextResponse.json(receipt);
+        }
       } catch (err) {
         // v49 (L1): surface the normalize-threw case to operators. The
         // platform returned 200, but the body wasn't usable — the 502
@@ -136,6 +161,44 @@ export async function GET(
         console.warn(`[api/receipt] normalizeMinimalReceipt threw for requestId=${requestId}:`, err);
         primaryStatus = 200;
         // fall through to the 502 branch below
+      }
+    }
+
+    // v68 (M0): cross-contract receipt recovery. The primary host
+    // returned 0 receipts under the AutoResolve contract filter, which
+    // happens when a request was filed under a prior contract version
+    // (the v7 receipts 4254170/4254291 are filed under
+    // 0xd3E946aC…4B69, not the current 0x48556E…85dE). The platform
+    // serves those receipts under the SOMNIA_PLATFORM_ADDRESS
+    // filter — a one-time retry with that filter surfaces the
+    // canonical receipt body. Only reached on the empty-receipts
+    // path; a real 404 from the contract-filtered query (the
+    // request id genuinely doesn't exist) is still a 404.
+    if (primaryStatus === 404 && contractAddress !== SOMNIA_PLATFORM_ADDRESS) {
+      try {
+        const crossContract = await fetchUpstream(
+          receiptServiceUrl(requestId, 'minimal', SOMNIA_PLATFORM_ADDRESS),
+        );
+        if (crossContract.ok) {
+          const crossData = (await crossContract.json()) as RawMinimalReceiptResponse;
+          if (crossData.receipts && crossData.receipts.length > 0) {
+            return NextResponse.json({
+              ...normalizeMinimalReceipt(crossData),
+              // Mark cross-contract receipts so the viewer can surface
+              // "originally filed under a prior contract version" copy
+              // if it ever wants to (currently unused — the receipt
+              // data is identical to what a same-contract user would
+              // see).
+              _source: 'platform',
+            });
+          }
+        }
+      } catch (err) {
+        // v49 (L1): surface the cross-contract retry throw to operators.
+        // Bare `catch {}` would leave the dev-server logs empty when
+        // the platform host is network-unreachable on this retry —
+        // the operator's only signal would be the 404 to the user.
+        console.warn(`[api/receipt] platform-address retry threw for requestId=${requestId}:`, err);
       }
     }
 
