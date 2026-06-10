@@ -56,10 +56,10 @@ if kill -0 "$PID" 2>/dev/null; then
   kill -9 "$PID" 2>/dev/null
   # Look for the RELAYER_VERSION-prefixed startup line — the H0 fix is
   # specifically about getting this log to print without a TDZ throw.
-  if grep -q "starting (v62)" /tmp/relayer-smoke.log; then
-    echo "[relayer-smoke] OK: v62 startup line printed"
+  if grep -q "starting (v63)" /tmp/relayer-smoke.log; then
+    echo "[relayer-smoke] OK: v63 startup line printed"
   else
-    echo "[relayer-smoke] WARN: v62 startup line missing — relayer may be running an older version"
+    echo "[relayer-smoke] WARN: v63 startup line missing — relayer may be running an older version"
     cat /tmp/relayer-smoke.log
   fi
   # v62 (M0): assert the new `liquidity:` startup line is present, and
@@ -67,11 +67,25 @@ if kill -0 "$PID" 2>/dev/null; then
   # RELAYER_LIQUIDITY_STT in the env, the relayer should print
   # `liquidity:  disabled` (and crucially NOT try to parseEther
   # an undefined value, which would crash the relayer on startup).
+  # v63 (M1): also assert the new `contract MIN_BET:` line is present
+  # — a missing line means the readContract call failed silently and
+  # the relayer fell back to the 0.001 STT hardcoded default.
   if grep -q "liquidity:  disabled" /tmp/relayer-smoke.log; then
     echo "[relayer-smoke] OK: v62 liquidity startup line correct (disabled by default)"
   else
     echo "[relayer-smoke] WARN: v62 liquidity startup line missing or wrong (expected 'liquidity:  disabled' since the smoke env has no RELAYER_LIQUIDITY_STT)"
     grep -E "liquidity" /tmp/relayer-smoke.log || echo "  (no 'liquidity' line in startup log at all)"
+  fi
+  if grep -qE "contract MIN_BET:" /tmp/relayer-smoke.log; then
+    echo "[relayer-smoke] OK: v63 contract MIN_BET read succeeded"
+  elif grep -qE "could not read contract MIN_BET" /tmp/relayer-smoke.log; then
+    # Expected for the smoke (the placeholder zero address has no contract
+    # bytecode, so readContract reverts with "returned no data"). The
+    # relayer falls back to the 0.001 STT literal, which is the right
+    # behavior for legacy / pre-v8 contracts.
+    echo "[relayer-smoke] OK: v63 MIN_BET read fell back to 0.001 STT (smoke uses placeholder contract)"
+  else
+    echo "[relayer-smoke] WARN: v63 MIN_BET read status unknown — neither success nor fallback log line present"
   fi
   # v56 (L0): the post-fix invariant is that the main loop has at
   # least started ticking. A hung scanStuckGenerationRequests (the

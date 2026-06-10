@@ -63,7 +63,7 @@ const ROOT = join(__dirname, '..');
 // code paths, no new log lines, no new ENV vars), but the version
 // constant tracks the shipped audit surface so the smoke grep
 // continues to be the test of record.
-const RELAYER_VERSION = 'v62';
+const RELAYER_VERSION = 'v63';
 const SHANNON_RPC_URL = process.env.SHANNON_RPC_URL ?? 'https://dream-rpc.somnia.network';
 const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
 const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';
@@ -216,6 +216,28 @@ console.log(
 let lastScannedBlock = await publicClient.getBlockNumber();
 console.log(`  resume from block: ${lastScannedBlock}\n`);
 
+// v63 (M1): read the contract's MIN_BET on startup so seedMarket's
+// under-floor guard is dynamic, not hardcoded to 0.001 STT. If the
+// contract's MIN_BET is ever bumped (e.g. for chain-level inflation
+// adjustment), the relayer picks up the new value on the next deploy.
+// The read is wrapped in try/catch — a contract ABI that doesn't
+// expose MIN_BET (e.g. a pre-v8 contract) falls back to the 0.001
+// STT literal so the relayer still works on legacy contracts.
+let minBetWei = 1000000000000000n /* 0.001 STT fallback */;
+try {
+  minBetWei = await publicClient.readContract({
+    address: CONTRACT,
+    abi: ABI,
+    functionName: 'MIN_BET',
+  });
+  console.log(`[relayer] contract MIN_BET: ${formatEther(minBetWei)} STT`);
+} catch (err) {
+  console.warn(
+    `[relayer] could not read contract MIN_BET (using 0.001 STT fallback):`,
+    err.shortMessage ?? err.message,
+  );
+}
+
 // Per-market attempt counter. Lives in memory for the relayer's lifetime; on
 // restart, all markets get a fresh budget. This stops a permanently underfunded
 // contract from draining the relayer EOA via infinite resubmits — the operator
@@ -270,6 +292,17 @@ const seededMarkets = new Set();
 const seenClaimedMarkets = new Set();
 const SEEN_CLAIMED_LIMIT = 1000;
 let lastScannedSeedBlock = 0n;
+// v63 (H1): stranded-seed observability. Maps seeded marketId → its
+// resolutionSource URL, for markets whose URL is currently in the
+// parse-failure LRU. The relayer can't recover the seed (the market
+// never resolves while the URL is cached), so the operator needs
+// visibility into how much STT is locked. Each tick, scan this Map
+// and log advisory lines for any URLs that have been evicted from
+// the LRU (TTL or FIFO eviction) — the next tryResolveMarket scan
+// will then re-attempt resolution. The Map is in-memory only (a
+// relayer restart rebuilds it from the parse-failure cache + the
+// seeded-markets file on the first scanForRetryableMarkets tick).
+const strandedSeedMarkets = new Map();
 
 // v29 (H1) + v30 (H0): TOPICS_FILE / SUBMITTED_TOPICS_FILE / TOPIC_FEED_MAX_PER_TICK
 // were hoisted to L160–167 so the L176 startup log line can reference them
@@ -664,6 +697,20 @@ async function tryResolveMarket(marketId, alreadySubmitted) {
   // the wasted parse-failure-resubmit cycle it prevents.
   const context = await fetchContextForMarket(marketId);
   if (context && isUrlInParseFailureCache(context.resolutionSource)) {
+    // v63 (H1): track seeded markets whose URL is in the parse-failure
+    // LRU so the operator can see stranded seed money. The relayer
+    // can't recover the seed while the URL is cached, but
+    // observation lets the operator know how much STT is locked and
+    // when the LRU evicts the URL (the next tick logs an advisory
+    // and re-attempts resolution). The Map is bounded by the
+    // seededMarkets Set size, so it can't grow unbounded.
+    if (seededMarkets.has(key) && !strandedSeedMarkets.has(key)) {
+      strandedSeedMarkets.set(key, context.resolutionSource);
+      console.warn(
+        `[relayer] stranded seed: market ${marketId} URL is in parse-failure cache ` +
+          `(seed 0.02 STT locked until LRU eviction in ≤1h)`,
+      );
+    }
     if (VERBOSE) {
       console.log(`[relayer]   skipping market ${marketId} (URL in parse-failure cache)`);
     }
@@ -972,16 +1019,56 @@ async function seedMarket(marketId) {
   const key = marketKey(marketId);
   if (seededMarkets.has(key)) return false;
   const seedWei = parseEther(RELAYER_LIQUIDITY_STT);
-  if (seedWei < 1000000000000000n /* 0.001 STT = MIN_BET */) {
+  if (seedWei < minBetWei) {
     console.warn(
-      `[relayer]   skipping seed for market ${marketId}: RELAYER_LIQUIDITY_STT=${RELAYER_LIQUIDITY_STT} is below MIN_BET (0.001 STT)`,
+      `[relayer]   skipping seed for market ${marketId}: RELAYER_LIQUIDITY_STT=${RELAYER_LIQUIDITY_STT} is below MIN_BET (${formatEther(minBetWei)} STT)`,
     );
     return false;
   }
-  console.log(
-    `[relayer]   seeding market ${marketId} (${RELAYER_LIQUIDITY_STT} STT each side, total ${Number(RELAYER_LIQUIDITY_STT) * 2} STT)`,
+  // v63 (M2): partial-seed completion. Read the market's bet array
+  // first — if the relayer EOA already has a YES or NO bet on this
+  // market (e.g. a prior seedMarket attempt placed YES but NO reverted
+  // because the relayer EOA ran out of STT between txs, or the RPC
+  // dropped mid-sequence), only place the missing side. Without this
+  // check, a retry would double-up the side that already landed,
+  // wasting ~0.01 STT per failed-NO event. Read is bounded by the
+  // marketBets array length (typically <10 bets at demo scale) so
+  // the RPC cost is negligible. The `hasYesRelayer` / `hasNoRelayer`
+  // checks use the option field directly — the relayer EOA's
+  // address is matched against marketBets[i].better.
+  const existingBets = await publicClient.readContract({
+    address: CONTRACT,
+    abi: ABI,
+    functionName: 'getMarketBets',
+    args: [marketId],
+  }).catch(() => []);
+  const relayerAddrLower = account.address.toLowerCase();
+  const hasYesRelayer = existingBets.some(
+    (b) => b.better.toLowerCase() === relayerAddrLower && Number(b.option) === 0 /* Yes */,
   );
-  for (const option of [0 /* Yes */, 1 /* No */]) {
+  const hasNoRelayer = existingBets.some(
+    (b) => b.better.toLowerCase() === relayerAddrLower && Number(b.option) === 1 /* No */,
+  );
+  const optionsToPlace = [];
+  if (!hasYesRelayer) optionsToPlace.push(0 /* Yes */);
+  if (!hasNoRelayer) optionsToPlace.push(1 /* No */);
+  if (optionsToPlace.length === 0) {
+    // Both bets already on-chain (shouldn't happen because seededMarkets
+    // gates entry, but defensive). Mark as seeded and move on.
+    seededMarkets.add(key);
+    saveSeededMarkets();
+    return true;
+  }
+  if (optionsToPlace.length < 2) {
+    console.log(
+      `[relayer]   completing partial seed for market ${marketId} (already has ${hasYesRelayer ? 'YES' : 'NO'})`,
+    );
+  } else {
+    console.log(
+      `[relayer]   seeding market ${marketId} (${RELAYER_LIQUIDITY_STT} STT each side, total ${Number(RELAYER_LIQUIDITY_STT) * 2} STT)`,
+    );
+  }
+  for (const option of optionsToPlace) {
     try {
       const hash = await walletClient.writeContract({
         address: CONTRACT,
@@ -1019,6 +1106,36 @@ async function seedMarket(marketId) {
     `[relayer]   seeded market ${marketId} (${RELAYER_LIQUIDITY_STT} STT each side)`,
   );
   return true;
+}
+
+// v63 (H1): stranded-seed eviction detector. Each tick, scan the
+// strandedSeedMarkets Map. For any market whose URL is no longer in
+// the parse-failure LRU (TTL expired or FIFO size eviction), log an
+// advisory and remove the entry — the next scanForRetryableMarkets
+// pass will then re-attempt resolution via the normal tryResolveMarket
+// path. This is observability + a passive retry, not an active one:
+// the operator sees the "[relayer] stranded seed recovered" line and
+// knows the relayer is no longer holding the seed money hostage. The
+// function is a fast no-op when strandedSeedMarkets is empty (the
+// common case in steady state).
+async function drainStrandedSeeds() {
+  if (strandedSeedMarkets.size === 0) return;
+  const now = Date.now();
+  for (const [key, url] of strandedSeedMarkets) {
+    const k = urlKey(url);
+    const expiresAt = parseFailureCache.get(k);
+    const stillCached =
+      expiresAt !== undefined && expiresAt > now;
+    if (!stillCached) {
+      // Either expired (TTL) or evicted (FIFO size). Look up the
+      // marketId from the key (reverse of marketKey).
+      const marketId = BigInt(key);
+      console.log(
+        `[relayer] stranded seed recovered: market ${marketId} URL no longer in parse-failure cache; will retry on next scan`,
+      );
+      strandedSeedMarkets.delete(key);
+    }
+  }
 }
 
 async function tryRetryInferenceFromCache(marketId, alreadySubmitted) {
@@ -1199,7 +1316,16 @@ async function logResolvedMarkets() {
     // every tick. The outcome is logged as an advisory so the operator
     // can see "the relayer's seed was recovered" or "the relayer's
     // side lost, seed forfeit" without digging through receipt URLs.
-    if (RELAYER_LIQUIDITY_STT !== '0' && seededMarkets.has(key) && !seenClaimedMarkets.has(key)) {
+    // v63 (L1): the env-toggle foot-gun fix. v62 gated the claim on
+    // `RELAYER_LIQUIDITY_STT !== '0'`, but if the operator toggles the
+    // env var from '0.01' to '0' mid-flight (without restart), the
+    // in-memory seededMarkets Set still has the marketId — but the
+    // claim block would skip, stranding the seed money. v63 drops
+    // the env-gate; the check is now purely on `seededMarkets.has(key)`
+    // (the operator manually editing the relayer to remove an entry
+    // from the on-disk file is the only way to disable the claim for
+    // a specific market).
+    if (seededMarkets.has(key) && !seenClaimedMarkets.has(key)) {
       if (seenClaimedMarkets.size >= SEEN_CLAIMED_LIMIT) {
         const oldest = seenClaimedMarkets.values().next().value;
         seenClaimedMarkets.delete(oldest);
@@ -1757,6 +1883,15 @@ while (!stopping) {
     await drainFailureEvents(alreadySubmitted);
     await drainGenerationFailureEvents();
     await scanForRetryableMarkets(alreadySubmitted);
+    // v63 (H1): scan stranded seeds for LRU eviction. The function
+    // is a fast no-op when strandedSeedMarkets is empty, so the cost
+    // is one Date.now() call per tick in steady state. When non-empty,
+    // it logs advisory lines for any URLs that have been evicted
+    // (TTL or FIFO) so the operator can see the seed money is no
+    // longer locked. Re-attempting resolution is passive — the next
+    // scanForRetryableMarkets pass (called above) will see the URL
+    // is no longer in the cache and call tryResolveMarket.
+    await drainStrandedSeeds();
     await logResolvedMarkets();
   } catch (err) {
     console.error('[relayer] loop error:', err.shortMessage ?? err.message);
