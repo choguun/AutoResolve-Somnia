@@ -262,14 +262,21 @@ export function getAutoResolveAgentManifest() {
     // on /proof (one AI-created market per day, 24h duration, fully
     // autonomous resolution) + the new /api/daily-topic endpoint +
     // the new scripts/daily-topics.txt operator-curated feed. v57
-    // (H0) bumps the field v56 -> v57 to advertise the live-ticking
+    // (H0) bumped v56 -> v57 to advertise the live-ticking
     // LiveCountdown component (components/shared/LiveCountdown.tsx)
     // shared by MarketCard and MarketHeader — replaces the static
     // formatCountdown call with a 1Hz client tick that color-shifts
     // cyan → amber → pulsing amber as the resolution window closes.
-    // The shipped invariant is Contract (on-chain agentManifest) =
-    // v40, Frontend (this field) = v57.
-    version: 'v57',
+    // v58 (H0) bumps v57 -> v58 to advertise the home-page tab
+    // rename: the old "Resolved" tab is now "Ended" and matches
+    // any market whose endTime has passed (status can be Open
+    // for markets that hit endTime but haven't been pushed to
+    // Resolving yet, or Resolved for markets with a final outcome).
+    // v58 also seeds 4 fresh active markets with 1h/6h/24h
+    // durations on the v19+v40+v45 contract so the Active tab
+    // is non-empty. The shipped invariant is Contract (on-chain
+    // agentManifest) = v40, Frontend (this field) = v58.
+    version: 'v58',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {

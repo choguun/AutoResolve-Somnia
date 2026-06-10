@@ -9,11 +9,19 @@ import { EmptyState } from '@/components/shared/EmptyState';
 import { useMarkets, useMyBets } from '@/hooks/useMarkets';
 import { MarketStatus } from '@/lib-web/contract';
 
-type Tab = 'active' | 'resolved' | 'my-bets';
+type Tab = 'active' | 'ended' | 'my-bets';
 
+// v58: the old 'resolved' tab became 'ended' so it covers both
+// resolved markets AND markets that have hit endTime but are still
+// in Open status (waiting for the relayer to push them to
+// Resolving). For judge demos, "Ended" is the more useful label
+// since you can immediately see the outcome of markets that
+// have completed (whether they're Resolved or just past their
+// trading window). Markets whose endTime is in the future stay
+// on the Active tab.
 const TABS: { id: Tab; label: string }[] = [
   { id: 'active', label: 'Active' },
-  { id: 'resolved', label: 'Resolved' },
+  { id: 'ended', label: 'Ended' },
   { id: 'my-bets', label: 'My Bets' },
 ];
 
@@ -37,8 +45,13 @@ export default function HomePage() {
     tab === 'my-bets'
       ? myBets?.map(({ id, market }) => ({ id, market }))
       : allMarkets?.filter(({ market }) => {
-          if (tab === 'active') return market.status !== MarketStatus.Resolved;
-          return market.status === MarketStatus.Resolved;
+          // v58: Ended tab = endTime has passed (any status). Covers
+          // Resolved markets + markets stuck in Open with endTime < now.
+          // Active = endTime in the future (any status, but in practice Open).
+          if (tab === 'active') {
+            return Number(market.endTime) * 1000 > Date.now();
+          }
+          return Number(market.endTime) * 1000 <= Date.now();
         });
 
   // v25 (L2): positions on a Resolved market where the user holds the
@@ -55,10 +68,14 @@ export default function HomePage() {
     }).length ?? 0;
 
   const showLoading = isLoading || (tab === 'my-bets' && myBetsLoading);
+  // v58: the home-page hero counts are time-based, not status-based.
+  // "Active" = endTime in the future (matches the Active tab).
+  // "Ended" = endTime in the past (matches the Ended tab).
+  // The Total Loaded count is the sum of both.
   const activeCount =
-    allMarkets?.filter(({ market }) => market.status !== MarketStatus.Resolved).length ?? 0;
-  const resolvedCount =
-    allMarkets?.filter(({ market }) => market.status === MarketStatus.Resolved).length ?? 0;
+    allMarkets?.filter(({ market }) => Number(market.endTime) * 1000 > Date.now()).length ?? 0;
+  const endedCount =
+    allMarkets?.filter(({ market }) => Number(market.endTime) * 1000 <= Date.now()).length ?? 0;
 
   return (
     <div className="space-y-8">
@@ -92,8 +109,8 @@ export default function HomePage() {
               <div className="mt-1 text-xs font-medium uppercase tracking-wider text-emerald-400/80">Active</div>
             </div>
             <div className="flex flex-col items-center justify-center rounded-xl border border-violet-500/20 bg-violet-500/10 p-4 backdrop-blur-md shadow-[0_0_20px_rgba(139,92,246,0.1)] shadow-inner transition-transform hover:scale-105">
-              <div className="text-3xl font-bold text-violet-300 drop-shadow-md">{resolvedCount}</div>
-              <div className="mt-1 text-xs font-medium uppercase tracking-wider text-violet-400/80">Resolved</div>
+              <div className="text-3xl font-bold text-violet-300 drop-shadow-md">{endedCount}</div>
+              <div className="mt-1 text-xs font-medium uppercase tracking-wider text-violet-400/80">Ended</div>
             </div>
           </div>
         </div>
@@ -177,7 +194,13 @@ export default function HomePage() {
       {!showLoading && filtered?.length === 0 && (tab !== 'my-bets' || isConnected) && (
         <EmptyState
           title={tab === 'my-bets' ? 'No bets placed yet' : `No ${tab} markets yet`}
-          description={tab === 'my-bets' ? 'Explore active markets and place your first bet.' : 'Be the first to create a new market for others to trade on.'}
+          description={
+            tab === 'my-bets'
+              ? 'Explore active markets and place your first bet.'
+              : tab === 'ended'
+                ? 'Markets that have resolved or hit their end time will appear here.'
+                : 'Be the first to create a new market for others to trade on.'
+          }
           actionLabel={tab === 'my-bets' ? 'Browse markets' : 'Create Market'}
           actionHref={tab === 'my-bets' ? '/' : '/create'}
         />
