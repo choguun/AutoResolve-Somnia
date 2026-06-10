@@ -301,6 +301,8 @@ export function DailyResolutionDemo() {
         functionName: 'requestMarketGeneration',
         args: [composed],
         value: topUpNeeded,
+        // v61 (H1.6): pin gas to 2_500_000n. See BetPanel.tsx.
+        gas: 2_500_000n,
       },
       {
         onSuccess: (h) =>

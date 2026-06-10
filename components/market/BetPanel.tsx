@@ -69,6 +69,31 @@ export function BetPanel({ marketId, market }: { marketId: bigint; market: Marke
         functionName: 'bet',
         args: [marketId, option],
         value: parseEther(amount),
+        // v61 (H1): pin an explicit gas limit. The pre-v61 call relied
+        // on viem's eth_estimateGas, but the user's wallet was returning
+        // a raw tx with `gas: 0x0` ("Gas limit is less than 21000") —
+        // a known MetaMask behavior when its own gas estimation fails
+        // (common on testnets with non-standard gas accounting).
+        // v61 (H1.5): bumped 300_000n → 1_200_000n. The first attempt
+        // at 300k reverted OOG on the user's first YES-side bet on
+        // market #3: the live on-chain gas usage was 879,988 (and
+        // eth_estimateGas returned 2,319,982 — a known over-estimate
+        // on Somnia testnet, but the real cost is the 880k figure).
+        // v61 (H1.6): bumped 1_200_000n → 2_500_000n. A subsequent
+        // bet on the same market with the 1.2M pin still reverted
+        // OOG (1.2M = 100% of limit used), but a 1.8M pin on the
+        // SAME call from the SAME state succeeded with gasUsed
+        // 479,988. The on-chain gas cost is non-deterministic
+        // across calls (it varies by Somnia's per-block state
+        // access cost, which is over-strict for cold slots). The
+        // safe pin is `eth_estimateGas` (~1.72M for this call) +
+        // ~45% headroom = 2.5M. On Somnia Shannon at 6 gwei base,
+        // 2.5M gas = 0.015 STT per bet — still under the 0.001 STT
+        // minimum bet in real cost terms. The on-chain reversion
+        // will still surface the real reason (e.g. MarketNotOpen,
+        // BetBelowMinimum) in the toast — pinning gas only affects
+        // the gas-limit field, not the execution semantics.
+        gas: 2_500_000n,
       },
       {
         onSuccess: (txHash) =>

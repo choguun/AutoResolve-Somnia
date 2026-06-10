@@ -273,6 +273,8 @@ export function AgentCommandCenter() {
         functionName: 'requestResolution',
         args: [context.marketId],
         value: context.topUpNeeded,
+        // v61 (H1.6): pin gas to 2_500_000n. See BetPanel.tsx.
+        gas: 2_500_000n,
       },
       {
         // v47 (M2): capture (txHash, marketId) in pendingInvoke so the
@@ -314,6 +316,8 @@ export function AgentCommandCenter() {
         functionName: 'requestMarketGeneration',
         args: [cleanTopic],
         value: genData.topUpNeeded,
+        // v61 (H1.6): pin gas to 2_500_000n. See BetPanel.tsx.
+        gas: 2_500_000n,
       },
       {
         // v47 (M2): capture (txHash, topic) so the success effect can
@@ -349,6 +353,8 @@ export function AgentCommandCenter() {
         abi: CONTRACT_ABI,
         functionName: 'forceResetMarket',
         args: [marketId],
+        // v61 (H1.6): pin gas to 2_500_000n. See BetPanel.tsx.
+        gas: 2_500_000n,
       },
       {
         onSuccess: (txHash) => {
@@ -377,6 +383,8 @@ export function AgentCommandCenter() {
         abi: CONTRACT_ABI,
         functionName: 'forceResetGeneration',
         args: [requestId],
+        // v61 (H1.6): pin gas to 2_500_000n. See BetPanel.tsx.
+        gas: 2_500_000n,
       },
       {
         onSuccess: (txHash) => {

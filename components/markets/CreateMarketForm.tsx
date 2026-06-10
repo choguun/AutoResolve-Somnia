@@ -72,6 +72,12 @@ export function CreateMarketForm() {
         abi: CONTRACT_ABI,
         functionName: 'createMarket',
         args: [question.trim(), source.trim(), BigInt(duration)],
+        // v61 (H1.6): pin gas to 2_500_000n. Same as BetPanel — the
+        // on-chain gas cost is non-deterministic per block on Somnia
+        // testnet (1.2M succeeded on one bet, failed on the next for
+        // the same call), so 2.5M is the safe upper bound. See
+        // BetPanel.tsx for the full rationale.
+        gas: 2_500_000n,
       },
       {
         onSuccess: (txHash) => showSubmittedTransactionToast(txHash, 'Creating market...', 'create-market'),

@@ -79,6 +79,11 @@ export function PayoutClaim({ marketId, market }: { marketId: bigint; market: Ma
         abi: CONTRACT_ABI,
         functionName: 'claimWinnings',
         args: [marketId],
+        // v61 (H1.6): pin gas to 2_500_000n. The function has a
+        // nonReentrant guard + a .call{value:} to the user. 2.5M
+        // matches the BetPanel pin for uniformity. See BetPanel.tsx
+        // for the full rationale.
+        gas: 2_500_000n,
       },
       {
         onSuccess: (txHash) => showSubmittedTransactionToast(txHash, 'Claiming winnings...', 'claim-winnings'),
