@@ -330,7 +330,16 @@ export function getAutoResolveAgentManifest() {
     // (the claim block no longer skips when the operator toggles
     // RELAYER_LIQUIDITY_STT to '0' mid-flight). No contract
     // bytecode change.
-    version: 'v63',
+    // v64 (M0+L1) bumps v63 -> v64 to advertise the dApp surface
+    // for the stranded-seed observability: the /api/stranded-seeds
+    // API route derives the stranded set from on-chain data
+    // (getUserMarkets + getMarket + getMarketBets), and a new
+    // StrandedSeedsCard on /proof renders the list with count +
+    // total STT locked. The v64 re-resolving log line fix replaces
+    // the misleading "re-resolving" message with "parse-failure
+    // cached; next scan will retry once LRU evicts URL" for the
+    // parse-failure case. No contract bytecode change.
+    version: 'v64',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {

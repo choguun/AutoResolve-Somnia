@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { AgentCommandCenter } from '@/components/proof/AgentCommandCenter';
 import { DailyResolutionDemo } from '@/components/proof/DailyResolutionDemo';
+import { StrandedSeedsCard } from '@/components/proof/StrandedSeedsCard';
 import { CONTRACT_ADDRESS } from '@/lib-web/contract';
 import { getAutoResolveAgentManifest } from '@/lib-web/agentManifest';
 import { getCachedAgentManifest } from '@/lib-web/agentManifestServer';
@@ -206,8 +207,15 @@ export default async function ProofPage() {
                   pure relayer-side change, no contract bytecode
                   shift), so the cumulative surface is now v22-v63
                   and the gap is 23. The Tooltip below reflects both
-                  numbers. */}
-              <Tooltip content="Frontend label = JSON manifest's `version` field (v63, the cumulative shipped v22-v63 frontend + relayer + tooling + contract surface — v63 is the v62-audit cleanup: stranded-seed observability (logs when a seeded market's URL is in the parse-failure LRU and detects LRU eviction so the seed can be recovered), dynamic MIN_BET (reads from the contract on startup instead of a hardcoded 0.001 STT), partial-seed completion (avoids double-betting on a YES+NO pair when a prior attempt placed one side before failing), and the env-toggle foot-gun fix (the claim block no longer skips when RELAYER_LIQUIDITY_STT is toggled to '0' mid-flight). v62 was the relayer-driven auto-liquidity feature itself; v61 was the bet-flow UX fix that lowered the default bet amount to 0.001 STT (= MIN_BET) and surfaced the FULL wallet error message in a toast with a specific 'top up your STT balance' hint; v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change. Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 23 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v63 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
+                  numbers.
+                  v64 (M0+L1): bumps v63 -> v64 (dApp surface for
+                  stranded-seed observability — /api/stranded-seeds
+                  API + StrandedSeedsCard on /proof that derives the
+                  stranded set from on-chain data; plus the
+                  re-resolving log fix in drainFailureEvents). No
+                  contract bytecode change, so the cumulative
+                  surface is now v22-v64 and the gap is 24. */}
+              <Tooltip content="Frontend label = JSON manifest's `version` field (v64, the cumulative shipped v22-v64 frontend + relayer + tooling + contract surface — v64 is the dApp surface for the v63 stranded-seed observability: /api/stranded-seeds API route that derives the stranded set from on-chain data (getUserMarkets + getMarket + getMarketBets) without needing direct access to the relayer's /app/state directory, plus a StrandedSeedsCard on /proof that polls the endpoint and renders count + total STT locked + per-market detail. v64 also fixes a misleading 're-resolving market N' log line in drainFailureEvents (the previous wording implied an action that the cache check immediately skipped). v63 was the v62-audit cleanup; v62 was the relayer-driven auto-liquidity feature itself; v61 was the bet-flow UX fix; v60 was the contract-side fix for the v59 daily auto-create 5-min → 24h prompt-suffix change. Contract label = live on-chain `agentManifest()` view (v40, the last ABI change). The gap of 24 is the count of shipped audit cycles since the last ABI change — v22-v39 + v41-v64 all touched the contract, frontend, relayer, or tooling without changing the on-chain agentManifest() string.">
                 <span className="cursor-help text-zinc-500 underline-offset-2 hover:underline">why two?</span>
               </Tooltip>
             </div>
@@ -334,6 +342,8 @@ export default async function ProofPage() {
       </section>
 
       <DailyResolutionDemo />
+
+      <StrandedSeedsCard />
 
       <section className="rounded-2xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 to-violet-500/5 p-6 backdrop-blur-md shadow-[0_0_30px_rgba(6,182,212,0.1)]">
         <h2 className="text-2xl font-bold text-cyan-100">Machine-Readable Agent Interface</h2>
