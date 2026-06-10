@@ -34,7 +34,7 @@
 // Requires `pnpm install` to have produced lib-web/abi.json (via `pnpm export-abi`).
 
 import { readFile } from 'node:fs/promises';
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
@@ -381,6 +381,23 @@ let submittedTopicsWriteTimer = null;
 let submittedTopicsWriteDirty = false;
 
 function loadSubmittedTopics() {
+  // v60 (L0): allow the operator to skip loading the submitted-topics
+  // Set on startup. Use case: a fresh contract deploy has different
+  // markets, so the Set entries (which key by topic text) are stale
+  // and the relayer would never re-submit today's daily markets
+  // (the Set thinks they were already submitted to the prior contract).
+  // Set RESET_SUBMITTED_TOPICS=1 in the relayer env for one deploy
+  // to clear the Set; remove it on the next deploy so the normal
+  // dedup resumes.
+  if (process.env.RESET_SUBMITTED_TOPICS === '1') {
+    try {
+      unlinkSync(SUBMITTED_TOPICS_FILE);
+    } catch {
+      // file didn't exist — that's fine
+    }
+    console.log('[relayer] RESET_SUBMITTED_TOPICS=1 — cleared submitted-topics Set');
+    return;
+  }
   if (!existsSync(SUBMITTED_TOPICS_FILE)) return;
   try {
     const raw = readFileSync(SUBMITTED_TOPICS_FILE, 'utf8');
