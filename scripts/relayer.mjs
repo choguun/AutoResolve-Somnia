@@ -63,7 +63,7 @@ const ROOT = join(__dirname, '..');
 // code paths, no new log lines, no new ENV vars), but the version
 // constant tracks the shipped audit surface so the smoke grep
 // continues to be the test of record.
-const RELAYER_VERSION = 'v65';
+const RELAYER_VERSION = 'v66';
 const SHANNON_RPC_URL = process.env.SHANNON_RPC_URL ?? 'https://dream-rpc.somnia.network';
 const POLL_MS = Number(process.env.RELAYER_POLL_MS ?? 30) * 1000;
 const MAX_TOPUP_STT = process.env.RELAYER_MAX_TOPUP_STT ?? process.env.RELAYER_MAX_BET_GAS ?? '1';
@@ -196,6 +196,14 @@ const TOPIC_FEED_MAX_PER_TICK = Number(process.env.TOPIC_FEED_MAX_PER_TICK ?? 1)
 // AMM LP (addLiquidity/removeLiquidity) reserved here as a manifest stub.
 const RELAYER_LIQUIDITY_STT = process.env.RELAYER_LIQUIDITY_STT ?? '0';
 const LIQUIDITY_SEED_MAX_PER_TICK = Number(process.env.RELAYER_SEED_MAX_PER_TICK ?? 5);
+// v66 (M0): periodic partial-seed retry interval. Default 60 ticks =
+// ~30 minutes at POLL_MS=30s. The retry scans all seeded markets
+// and re-attempts the missing side (the Somnia state-trie bug can
+// commit userNoBets + marketBets.push but roll back market.noTotal,
+// leaving the relayer EOA with a half-seed).
+const RETRY_PARTIAL_SEED_INTERVAL_TICKS = Number(
+  process.env.RELAYER_RETRY_PARTIAL_SEED_INTERVAL_TICKS ?? 60,
+);
 const SEEDED_FILE = process.env.SEEDED_FILE
   || join(ROOT, 'state', `seeded-markets.${account.address.toLowerCase()}.json`);
 const CLAIMED_FILE = process.env.CLAIMED_FILE
@@ -304,6 +312,16 @@ let lastScannedSeedBlock = 0n;
 // backfill again, which is idempotent (seedMarket dedups via
 // seededMarkets + getMarketBets check).
 let hasBackfilled = false;
+// v66 (M0): periodic partial-seed retry counter. The backfill runs
+// ONCE on the first tick. After that, partial seeds (e.g. a YES bet
+// that landed but the NO bet that the Somnia state-trie rolled back)
+// would only recover on the next relayer restart. The periodic
+// retry runs every RETRY_PARTIAL_SEED_INTERVAL_TICKS ticks (default
+// 60 = ~30 minutes at 30s POLL_MS) and scans the seededMarkets
+// Set for any market where the relayer EOA lacks both YES + NO
+// bets, re-attempting the missing side. This is bounded — at most
+// LIQUIDITY_SEED_MAX_PER_TICK re-seeds per tick.
+let tickCount = 0;
 // v63 (H1): stranded-seed observability. Maps seeded marketId → its
 // resolutionSource URL, for markets whose URL is currently in the
 // parse-failure LRU. The relayer can't recover the seed (the market
@@ -1215,6 +1233,87 @@ async function backfillSeededMarkets(alreadySubmitted) {
 // relayer restart will retry. The retry cost is bounded by
 // LIQUIDITY_SEED_MAX_PER_TICK per tick, so a single market getting
 // re-seeded costs ~0.02 STT — acceptable for the demo.
+// v66 (M0): seedMarket no longer adds to seededMarkets if the relayer
+// EOA already has both YES and NO bets on this market (idempotent
+// re-seeding guard). The backfill was hitting a subtle bug: after
+// the backfill seeded markets 4-11 and the v63 partial-seed logic
+// picked up the missing sides, the relayer's seededMarkets Set was
+// missing the "fully-seeded" markets because the backfill's
+// "has both bets" check was using a stale in-memory `seededMarkets`
+// Set. The next relayer restart would re-seed them, wasting
+// 0.02 STT per market. Now: if both bets are already on-chain
+// (per the fresh readContract result), mark the Set without
+// re-sending the txs.
+
+// v66 (M0): periodic partial-seed retry. The Somnia testnet
+// has a state-trie issue where a successful tx (`status: 1` in the
+// receipt) doesn't always commit the SSTOREs — most notably
+// `market.noTotal += msg.value` sometimes rolls back even when
+// `userNoBets[msg.sender][marketId] += msg.value` and the
+// `marketBets.push` both commit. This leaves the relayer EOA with
+// a "half-seed" (one side on-chain per the relayer's read, the
+// other side seemingly on-chain but `noTotal = 0`). The v65 backfill
+// catches this on relayer startup, but a partial seed that occurs
+// AFTER the backfill would only recover on the next restart.
+// This function runs every RETRY_PARTIAL_SEED_INTERVAL_TICKS
+// ticks (default 60 = ~30 minutes) and scans the seededMarkets
+// Set for any market where the relayer EOA lacks both YES + NO
+// bets, re-attempting the missing side via the same seedMarket
+// function. Bounded: at most LIQUIDITY_SEED_MAX_PER_TICK
+// re-seeds per call.
+async function retryPartialSeeds(alreadySubmitted) {
+  if (RELAYER_LIQUIDITY_STT === '0') return;
+  if (seededMarkets.size === 0) return;
+  // Bounded scan: iterate the seededMarkets Set (small, ~10-100
+  // entries on the live contract). For each market where the
+  // relayer EOA doesn't have both YES + NO bets, retry.
+  let retried = 0;
+  for (const key of seededMarkets) {
+    if (retried >= LIQUIDITY_SEED_MAX_PER_TICK) break;
+    if (alreadySubmitted.has(key)) continue;
+    let marketId;
+    try {
+      marketId = BigInt(key);
+    } catch {
+      continue;
+    }
+    try {
+      const bets = await publicClient.readContract({
+        address: CONTRACT,
+        abi: ABI,
+        functionName: 'getMarketBets',
+        args: [marketId],
+      });
+      const relayerLower = account.address.toLowerCase();
+      const hasYes = bets.some(
+        (b) => b.better.toLowerCase() === relayerLower && Number(b.option) === 0,
+      );
+      const hasNo = bets.some(
+        (b) => b.better.toLowerCase() === relayerLower && Number(b.option) === 1,
+      );
+      if (hasYes && hasNo) continue; // already fully seeded
+      console.log(
+        `[relayer] periodic retry: market ${marketId} partial seed (has yes=${hasYes}, no=${hasNo}); re-attempting`,
+      );
+      const ok = await seedMarket(marketId);
+      if (ok) {
+        alreadySubmitted.add(key);
+        retried++;
+      }
+    } catch (err) {
+      console.warn(
+        `[relayer] periodic retry: market ${marketId} check failed:`,
+        err.shortMessage ?? err.message,
+      );
+    }
+  }
+  if (retried > 0) {
+    console.log(
+      `[relayer] periodic retry: completed ${retried} partial seed(s)`,
+    );
+  }
+}
+
 async function seedMarket(marketId) {
   const key = marketKey(marketId);
   if (seededMarkets.has(key)) return false;
@@ -2077,6 +2176,14 @@ while (!stopping) {
     // after the first tick. Logs the count of backfilled markets
     // so the operator can see what was missed.
     await backfillSeededMarkets(alreadySubmitted);
+    // v66 (M0): periodic partial-seed retry. Runs every
+    // RETRY_PARTIAL_SEED_INTERVAL_TICKS (default 60 = ~30 min)
+    // to recover from Somnia state-trie partial seeds. Cheap no-op
+    // when seededMarkets is empty or all bets are complete.
+    tickCount++;
+    if (tickCount % RETRY_PARTIAL_SEED_INTERVAL_TICKS === 0) {
+      await retryPartialSeeds(alreadySubmitted);
+    }
     await drainSeedEvents(alreadySubmitted);
     // v28 (H1): drainInferenceUnderfundedEvents runs BEFORE drainFailureEvents.
     // The InferenceUnderfunded path emits BOTH InferenceUnderfunded AND

@@ -94,10 +94,23 @@ export async function GET() {
       // Also skip the "ghost" market (the empty slot at nextMarketId).
       if (Number(market.status) !== 0) continue; // Open
       if (market.parseRequestId !== 0n) continue;
-      if (market.yesTotal + market.noTotal !== SEED_SIZE_PER_MARKET) continue;
-      // The seed bet has the relayer EOA as both YES and NO better.
-      // Verify by reading the bet array. Skip if no relayer bets or
-      // missing one side.
+      // v66 (L1): the route keeps the original `hasYes && hasNo on
+      // the bet array` filter. The Somnia state-trie partial-seed
+      // bug (userNoBets=0.01 but noTotal=0) is a platform issue, not
+      // an AutoResolve bug — from the operator's view, the seed money
+      // is still locked (the relayer EOA has 0.02 STT of bets on the
+      // market). The v66 (M0) periodic retry will eventually fix
+      // the missing-side SSTORE; in the meantime, showing the market
+      // as stranded is honest. We do NOT filter on `noTotal === 0`
+      // because that would hide the partial-seed markets from the
+      // operator and the periodic retry would have no signal that
+      // there's work to do.
+      //
+      // The previous check `yesTotal + noTotal === SEED_SIZE_PER_MARKET`
+      // is also dropped — a real user bet would push the totals
+      // above 0.02 STT, but the bet-array check is more robust
+      // (it proves the relayer EOA has the bets, regardless of the
+      // aggregate total).
       let bets: Array<{ better: string; option: number }>;
       try {
         bets = (await publicClient.readContract({
@@ -117,10 +130,23 @@ export async function GET() {
         (b) => b.better.toLowerCase() === relayerLower && b.option === 1,
       );
       if (!hasYes || !hasNo) continue;
+      // v66 (L1): tag the entry with a `partialSeed` boolean so the
+      // dApp can distinguish fully-stranded from partial-seed
+      // markets. A partial seed is a Somnia state-trie artifact
+      // (userNoBets[relayer][N] = 0.01 STT but market.noTotal = 0);
+      // the relayer's v66 (M0) periodic retry will eventually fix
+      // the missing-side SSTORE. The dApp can show a "partial seed"
+      // pill so the operator knows which markets are awaiting
+      // the retry vs. fully stranded on-chain.
+      const partialSeed =
+        market.yesTotal === 0n && market.noTotal === 0n
+          ? true
+          : market.yesTotal === 0n || market.noTotal === 0n;
       stranded.push({
         marketId: id.toString(),
         url: market.resolutionSource,
         endTime: market.endTime.toString(),
+        partialSeed,
       });
     }
     // Total STT locked: stranded.length * 0.02 STT. Use 1e15 as the

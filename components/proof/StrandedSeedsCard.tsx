@@ -10,6 +10,7 @@ type StrandedMarket = {
   marketId: string;
   url: string;
   endTime: string;
+  partialSeed?: boolean;
 };
 
 type StrandedSeedsResponse = {
@@ -128,6 +129,7 @@ export function StrandedSeedsCard() {
                   <th className="py-2 pr-3">Market</th>
                   <th className="py-2 pr-3">Source URL</th>
                   <th className="py-2 pr-3">Expired</th>
+                  <th className="py-2 pr-3">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -150,6 +152,15 @@ export function StrandedSeedsCard() {
                     </td>
                     <td className="py-2 pr-3 text-xs text-zinc-500">
                       {new Date(Number(m.endTime) * 1000).toISOString()}
+                    </td>
+                    <td className="py-2 pr-3 text-xs">
+                      {m.partialSeed ? (
+                        <span className="inline-flex items-center gap-1 rounded-md border border-rose-400/30 bg-rose-400/10 px-2 py-0.5 font-semibold text-rose-200">
+                          partial
+                        </span>
+                      ) : (
+                        <span className="text-zinc-500">—</span>
+                      )}
                     </td>
                   </tr>
                 ))}
