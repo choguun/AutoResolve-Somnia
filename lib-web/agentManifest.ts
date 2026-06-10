@@ -299,7 +299,18 @@ export function getAutoResolveAgentManifest() {
     // does NOT change the on-chain agentManifest() string,
     // which is a static narrative that doesn't reference the
     // prompt suffix — so the v40 label is still accurate.
-    version: 'v60',
+    // v61 (H0) bumps the field v60 -> v61 to advertise the
+    // bet-flow UX fix: lowered the default bet amount from
+    // 0.01 to 0.001 STT (= MIN_BET) and added a useEffect
+    // that surfaces the full writeContract error in a toast
+    // with a specific "top up your STT balance" hint when
+    // the error looks like a gas/balance issue. The pre-v61
+    // behavior did `err.message.slice(0, 120)` in onError,
+    // which truncated the wallet's shortMessage and lost the
+    // distinction between a gas issue, a user-rejected tx, and
+    // a contract revert. v61 is a frontend-only change (no
+    // contract bytecode shift).
+    version: 'v61',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
     chain: {

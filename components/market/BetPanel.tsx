@@ -22,16 +22,44 @@ import {
 export function BetPanel({ marketId, market }: { marketId: bigint; market: Market }) {
   const { address } = useAccount();
   const queryClient = useQueryClient();
-  const [amount, setAmount] = useState('0.01');
+  const [amount, setAmount] = useState('0.001');
   // v22 (H2): use the shared endTimeMs helper. v19 (L2) added the uint32
   // clamping inline in formatCountdown but missed this callsite; see the
   // matching comment in useResolutionStatus. The contract caps
   // MAX_DURATION to 1 day, so the comparison is safe for any reasonable
   // endTime, but the helper is the right single source of truth.
+  // v61 (H0): lowered the default bet amount from 0.01 to 0.001 STT
+  // (= MIN_BET on the contract). The previous default was a "safety
+  // margin" against MIN_BET but it forced users to fund their wallet
+  // with >0.01 STT just to try the bet flow; 0.001 is enough to
+  // validate the integration, and a user who wants to bet more just
+  // changes the input.
   const disabled = market.status !== MarketStatus.Open || Date.now() >= endTimeMs(market.endTime);
 
-  const { writeContract, data: hash, isPending } = useWriteContract();
+  const { writeContract, data: hash, isPending, error: writeError } = useWriteContract();
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash });
+
+  // v61 (H0): better error surface. The pre-v61 onError did
+  // `err.message.slice(0, 120)` which truncated wallet gas
+  // errors to "insufficient funds for gas" or "User rejected
+  // transaction" without the actual shortAddress / reason code.
+  // Show the FULL error message (capped at 280 chars to avoid
+  // breaking the toast UI) AND a specific hint when the error
+  // looks like a gas/balance issue so the user knows what to fix.
+  useEffect(() => {
+    if (!writeError) return;
+    const msg = (writeError as Error & { shortMessage?: string }).shortMessage
+      ?? (writeError as Error).message
+      ?? 'Bet tx failed (unknown reason)';
+    const trimmed = msg.slice(0, 280);
+    const looksLikeGas = /gas|funds|insufficient|nonce|underpriced|rejected/i.test(msg);
+    toast.error(
+      looksLikeGas
+        ? `${trimmed}\n\nHint: this is usually a wallet-side issue — top up your STT balance (faucet at https://docs.somnia.network/) and retry.`
+        : trimmed,
+      { duration: 8000 }
+    );
+  }, [writeError]);
 
   const placeBet = (option: BetOption) => {
     writeContract(
@@ -49,7 +77,6 @@ export function BetPanel({ marketId, market }: { marketId: bigint; market: Marke
             `Placing ${option === BetOption.Yes ? 'YES' : 'NO'} bet...`,
             'place-bet'
           ),
-        onError: (err) => toast.error(err.message.slice(0, 120)),
       }
     );
   };

@@ -56,10 +56,10 @@ if kill -0 "$PID" 2>/dev/null; then
   kill -9 "$PID" 2>/dev/null
   # Look for the RELAYER_VERSION-prefixed startup line — the H0 fix is
   # specifically about getting this log to print without a TDZ throw.
-  if grep -q "starting (v60)" /tmp/relayer-smoke.log; then
-    echo "[relayer-smoke] OK: v60 startup line printed"
+  if grep -q "starting (v61)" /tmp/relayer-smoke.log; then
+    echo "[relayer-smoke] OK: v61 startup line printed"
   else
-    echo "[relayer-smoke] WARN: v60 startup line missing — relayer may be running an older version"
+    echo "[relayer-smoke] WARN: v61 startup line missing — relayer may be running an older version"
     cat /tmp/relayer-smoke.log
   fi
   # v56 (L0): the post-fix invariant is that the main loop has at
