@@ -379,7 +379,7 @@ export function getAutoResolveAgentManifest() {
     // RETRY_PARTIAL_SEED_INTERVAL_TICKS. Markets that remain
     // partial for 60 attempts (30 min) are dropped with an
     // advisory log. No contract bytecode change.
-    // v68 (M0) bumps v67 -> v68 to advertise the relayer-driven
+    // v68 (M0+L3) bumps v67 -> v68 to advertise the relayer-driven
     // auto-funding feature. The relayer now tops up the contract's
     // STT balance whenever it falls below RELAYER_AUTO_FUND_STT
     // (a new env var, default 0 = disabled). The refill is
@@ -388,7 +388,12 @@ export function getAutoResolveAgentManifest() {
     // single tick can't blow the operator's wallet. No contract
     // bytecode change — the contract's receive() function at L982
     // already accepts plain STT transfers, and the view functions
-    // at L467/L1022 already return the funding status.
+    // at L467/L1022 already return the funding status. (L3) fixed
+    // an early-return-order bug where the function returned early
+    // when `topUpNeeded === 0` even if the contract was below the
+    // operator-configured threshold; the new condition requires
+    // BOTH the contract balance to be at-or-above target AND
+    // topUpNeeded to be 0 to skip.
     version: 'v68',
     description:
       'Fully autonomous prediction market on Somnia: markets are created and resolved by validator-executed Somnia AI agents (LLM Parse Website + LLM Inference).',
